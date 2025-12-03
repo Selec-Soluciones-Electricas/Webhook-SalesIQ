@@ -293,9 +293,7 @@ def manejar_flujo_postventa(session: dict, message_text: str) -> dict:
         ]
     )
 
-
 if __name__ == "__main__":
-    # Para pruebas locales. En producción se recomienda gunicorn/uwsgi, etc.
-    port = int(os.environ.get("PORT", "3000"))
-    debug_flag = os.environ.get("FLASK_DEBUG", "1") in ("1", "true", "True")
-    app.run(host="0.0.0.0", port=port, debug=debug_flag)
+    import os
+    port = int(os.environ.get("PORT", 3000))
+    app.run(host="0.0.0.0", port=port, debug=True)

@@ -1,6 +1,7 @@
 # ServerHook.py
 # Webhook básico para Zobot (Zoho SalesIQ) en Python + Flask
 
+import os
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -295,4 +296,6 @@ def manejar_flujo_postventa(session: dict, message_text: str) -> dict:
 
 if __name__ == "__main__":
     # Para pruebas locales. En producción se recomienda gunicorn/uwsgi, etc.
-    app.run(host="0.0.0.0", port=3000, debug=True)
+    port = int(os.environ.get("PORT", "3000"))
+    debug_flag = os.environ.get("FLASK_DEBUG", "1") in ("1", "true", "True")
+    app.run(host="0.0.0.0", port=port, debug=debug_flag)

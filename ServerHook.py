@@ -2,6 +2,7 @@
 # Webhook básico para Zobot (Zoho SalesIQ) en Python + Flask
 
 import os
+import unicodedata
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -46,6 +47,21 @@ def build_reply(texts, input_card=None, action="reply") -> dict:
         response["input"] = input_card
 
     return response
+
+
+def normalizar_texto(txt: str) -> str:
+    """
+    Normaliza el texto para hacer comparaciones insensibles a mayúsculas y acentos.
+    """
+    if not txt:
+        return ""
+    txt = txt.lower()
+    # quitar acentos
+    txt = "".join(
+        c for c in unicodedata.normalize("NFD", txt)
+        if unicodedata.category(c) != "Mn"
+    )
+    return txt.strip()
 
 
 # Ruta simple para comprobar que el servidor está arriba
@@ -99,8 +115,8 @@ def salesiq_webhook():
         message_text = extraer_mensaje(payload)
         state = session.get("state", "inicio")
 
-        # Menú principal
-        if state == "menu_principal":
+        # Menú principal (también si venimos desde 'inicio' por seguridad)
+        if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
 
         # Flujo de solicitud de cotización
@@ -132,8 +148,11 @@ def extraer_mensaje(payload: dict) -> str:
     req_obj = payload.get("request") or {}
     msg_obj = req_obj.get("message") or ""
 
+    # Puede venir como dict con 'text' u otra clave
     if isinstance(msg_obj, dict):
-        return (msg_obj.get("text") or "").strip()
+        txt = msg_obj.get("text") or msg_obj.get("value") or ""
+        return str(txt).strip()
+
     if isinstance(msg_obj, str):
         return msg_obj.strip()
 
@@ -141,9 +160,14 @@ def extraer_mensaje(payload: dict) -> str:
 
 
 def manejar_menu_principal(session: dict, message_text: str) -> dict:
-    texto = message_text.lower()
+    texto_norm = normalizar_texto(message_text)
 
-    if "cotiz" in texto:
+    # Coincidencias amplias para "Solicitud Cotización"
+    if (
+        "cotiz" in texto_norm
+        or "solicitud cotizacion" in texto_norm
+        or texto_norm == "cotizacion"
+    ):
         session["state"] = "cotizacion_empresa"
         return build_reply(
             [
@@ -153,7 +177,12 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
             ]
         )
 
-    if "postventa" in texto or "post venta" in texto:
+    # Coincidencias amplias para "Servicio PostVenta"
+    if (
+        "postventa" in texto_norm
+        or "post venta" in texto_norm
+        or "servicio postventa" in texto_norm
+    ):
         session["state"] = "postventa_nombre"
         return build_reply(
             [

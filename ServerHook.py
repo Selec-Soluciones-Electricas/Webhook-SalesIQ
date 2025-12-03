@@ -8,15 +8,11 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # Sesiones en memoria: {visitor_id: {"state": "...", "data": {...}}}
-# En producción lo ideal es usar BD/Redis, etc.
 sessions = {}
 
 
 def get_visitor_id(payload: dict) -> str:
-    """
-    Intenta obtener un identificador estable del visitante.
-    Adáptelo según lo que vea en el JSON real de SalesIQ.
-    """
+    """Obtiene un identificador estable del visitante."""
     visitor = payload.get("visitor") or {}
     return str(
         visitor.get("id")
@@ -29,10 +25,7 @@ def get_visitor_id(payload: dict) -> str:
 
 
 def build_reply(texts, input_card=None, action="reply") -> dict:
-    """
-    Crea la estructura mínima de respuesta que Zobot entiende.
-    texts puede ser string o lista de strings.
-    """
+    """Crea la estructura mínima de respuesta que Zobot entiende."""
     if isinstance(texts, str):
         replies = [texts]
     else:
@@ -50,13 +43,10 @@ def build_reply(texts, input_card=None, action="reply") -> dict:
 
 
 def normalizar_texto(txt: str) -> str:
-    """
-    Normaliza el texto para hacer comparaciones insensibles a mayúsculas y acentos.
-    """
+    """Normaliza texto (minúsculas y sin acentos) para comparar opciones."""
     if not txt:
         return ""
     txt = txt.lower()
-    # quitar acentos
     txt = "".join(
         c for c in unicodedata.normalize("NFD", txt)
         if unicodedata.category(c) != "Mn"
@@ -76,7 +66,6 @@ def salesiq_webhook():
     if request.method == "GET":
         return jsonify({"status": "ok", "message": "Use POST desde Zoho SalesIQ"})
 
-    # Desde aquí hacia abajo es la lógica real del webhook (POST)
     payload = request.get_json(force=True, silent=True) or {}
     handler = payload.get("handler")          # "trigger", "message", "context", etc.
     operation = payload.get("operation")      # "chat", "message"... (puede venir vacío)
@@ -88,7 +77,6 @@ def salesiq_webhook():
         "data": {}
     })
 
-    # Log para debug
     print("=== SalesIQ payload ===")
     print(payload)
 
@@ -113,9 +101,10 @@ def salesiq_webhook():
     # 2) Mensajes del usuario
     if handler == "message":
         message_text = extraer_mensaje(payload)
+        print("=== mensaje extraído ===", repr(message_text))
         state = session.get("state", "inicio")
 
-        # Menú principal (también si venimos desde 'inicio' por seguridad)
+        # Menú principal (o inicio)
         if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
 
@@ -137,18 +126,23 @@ def salesiq_webhook():
         )
         return jsonify(respuesta)
 
-    # 3) Otros handlers (context, etc.) – respuesta simple
+    # 3) Otros handlers (context, etc.)
     return jsonify(build_reply("He recibido su mensaje."))
 
 
 def extraer_mensaje(payload: dict) -> str:
     """
     Extrae el texto del mensaje desde el JSON de SalesIQ.
+    Intenta primero en payload['message'], luego en payload['request']['message'].
     """
-    req_obj = payload.get("request") or {}
-    msg_obj = req_obj.get("message") or ""
+    # 1) Formato estándar: mensaje a nivel raíz
+    msg_obj = payload.get("message")
 
-    # Puede venir como dict con 'text' u otra clave
+    # 2) Alternativa: dentro de 'request'
+    if not msg_obj:
+        req_obj = payload.get("request") or {}
+        msg_obj = req_obj.get("message")
+
     if isinstance(msg_obj, dict):
         txt = msg_obj.get("text") or msg_obj.get("value") or ""
         return str(txt).strip()
@@ -208,73 +202,57 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
 
 
 def manejar_flujo_cotizacion(session: dict, message_text: str) -> dict:
-    """
-    Flujo detallado de solicitud de cotización, campo por campo:
-    Empresa, Giro, RUT, Contacto, Correo, Teléfono,
-    Número de parte/descripcion, Marca, Cantidad, Dirección de entrega.
-    """
     data = session["data"]
     state = session["state"]
 
-    # 1) Nombre de la empresa
     if state == "cotizacion_empresa":
         data["empresa"] = message_text
         session["state"] = "cotizacion_giro"
         return build_reply("Giro:")
 
-    # 2) Giro
     if state == "cotizacion_giro":
         data["giro"] = message_text
         session["state"] = "cotizacion_rut"
         return build_reply("RUT:")
 
-    # 3) RUT
     if state == "cotizacion_rut":
         data["rut"] = message_text
         session["state"] = "cotizacion_contacto"
         return build_reply("Nombre de contacto:")
 
-    # 4) Nombre de contacto
     if state == "cotizacion_contacto":
         data["contacto"] = message_text
         session["state"] = "cotizacion_correo"
         return build_reply("Correo:")
 
-    # 5) Correo
     if state == "cotizacion_correo":
         data["correo"] = message_text
         session["state"] = "cotizacion_telefono"
         return build_reply("Teléfono:")
 
-    # 6) Teléfono
     if state == "cotizacion_telefono":
         data["telefono"] = message_text
         session["state"] = "cotizacion_num_parte"
         return build_reply("Número de parte (o descripción detallada):")
 
-    # 7) Número de parte / descripción
     if state == "cotizacion_num_parte":
         data["num_parte"] = message_text
         session["state"] = "cotizacion_marca"
         return build_reply("Marca:")
 
-    # 8) Marca
     if state == "cotizacion_marca":
         data["marca"] = message_text
         session["state"] = "cotizacion_cantidad"
         return build_reply("Cantidad:")
 
-    # 9) Cantidad
     if state == "cotizacion_cantidad":
         data["cantidad"] = message_text
         session["state"] = "cotizacion_direccion"
         return build_reply("Dirección de entrega:")
 
-    # 10) Dirección de entrega
     if state == "cotizacion_direccion":
         data["direccion_entrega"] = message_text
 
-        # Aquí puede invocar Zoho CRM/Creator, enviar correo, etc.
         resumen = (
             "Resumen de su solicitud de cotización:\n"
             f"Nombre de la empresa: {data.get('empresa')}\n"
@@ -289,7 +267,6 @@ def manejar_flujo_cotizacion(session: dict, message_text: str) -> dict:
             f"Dirección de entrega: {data.get('direccion_entrega')}"
         )
 
-        # Volver al menú principal
         session["state"] = "menu_principal"
 
         return {
@@ -301,7 +278,6 @@ def manejar_flujo_cotizacion(session: dict, message_text: str) -> dict:
             ]
         }
 
-    # Si el estado no coincide, reiniciamos
     session["state"] = "menu_principal"
     return build_reply(
         [
@@ -340,8 +316,6 @@ def manejar_flujo_postventa(session: dict, message_text: str) -> dict:
             f"Número de factura: {data.get('numero_factura')}\n"
             f"Detalle: {data.get('detalle')}"
         )
-
-        # Aquí igualmente podría crear un ticket en Zoho Desk, CRM, etc.
 
         session["state"] = "menu_principal"
 

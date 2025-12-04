@@ -1,6 +1,3 @@
-# ServerHook.py
-# Webhook para Zobot (Zoho SalesIQ) + creación de Deals en Zoho CRM
-
 import os
 import time
 import unicodedata
@@ -12,7 +9,6 @@ app = Flask(__name__)
 
 # ===================== SESIONES EN MEMORIA =====================
 
-# Sesiones en memoria: {visitor_id: {"state": "...", "data": {...}}}
 sessions = {}
 
 
@@ -162,8 +158,6 @@ def crear_deal_en_zoho(campos: dict):
         ),
         "Stage": "Qualification",           # use un Stage existente en su CRM
         "Lead_Source": "SalesIQ Webhook",   # opcional
-        # Ejemplo de campo personalizado:
-        # "Canal_de_Entrada": "WhatsApp",
     }
 
     payload = {"data": [deal_data]}
@@ -334,7 +328,8 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     """
     Recibe un solo mensaje con el formulario completo, lo parsea línea por línea
-    y llena session['data'] con los campos. Luego crea el Deal en Zoho CRM.
+    y llena session['data'] con los campos. Luego valida obligatorios y,
+    si todo está correcto, crea el Deal en Zoho CRM.
     """
     data = session["data"]
     texto = message_text or ""
@@ -348,8 +343,8 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         "correo": "",
         "telefono": "",
         "num_parte": "",
-        "marca": "",
         "cantidad": "",
+        "marca": "",
         "direccion_entrega": ""
     }
 
@@ -370,20 +365,76 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             campos["contacto"] = valor
         elif "correo" in etiqueta_norm or "email" in etiqueta_norm:
             campos["correo"] = valor
-        elif "telefono" in etiqueta_norm or "telefono" in etiqueta_norm:
+        elif "telefono" in etiqueta_norm:
             campos["telefono"] = valor
         elif ("numero de parte" in etiqueta_norm
-              or "numero de parte" in etiqueta_norm
+              or "numero parte" in etiqueta_norm
               or "descripcion" in etiqueta_norm):
             campos["num_parte"] = valor
-        elif "marca" in etiqueta_norm:
-            campos["marca"] = valor
         elif "cantidad" in etiqueta_norm:
             campos["cantidad"] = valor
+        elif "marca" in etiqueta_norm:
+            campos["marca"] = valor
         elif "direccion de entrega" in etiqueta_norm:
             campos["direccion_entrega"] = valor
 
     data.update(campos)
+
+    # ========= VALIDACIÓN DE CAMPOS OBLIGATORIOS =========
+    obligatorios = [
+        "empresa",
+        "giro",
+        "rut",
+        "contacto",
+        "correo",
+        "telefono",
+        "num_parte",
+        "cantidad",
+    ]
+
+    nombres_legibles = {
+        "empresa": "Nombre de la empresa",
+        "giro": "Giro",
+        "rut": "RUT",
+        "contacto": "Nombre de contacto",
+        "correo": "Correo",
+        "telefono": "Teléfono",
+        "num_parte": "Número de parte o descripción detallada",
+        "cantidad": "Cantidad",
+    }
+
+    faltantes = [
+        nombres_legibles[campo]
+        for campo in obligatorios
+        if not str(campos.get(campo, "")).strip()
+    ]
+
+    # Validación extra: cantidad numérica > 0
+    try:
+        cantidad_val = float(str(campos["cantidad"]).replace(",", "."))
+        if cantidad_val <= 0:
+            faltantes.append("Cantidad (debe ser mayor a 0)")
+    except Exception:
+        # Si no es numérico, también lo marcamos como faltante
+        if "Cantidad" not in faltantes:
+            faltantes.append("Cantidad (valor numérico)")
+
+    if faltantes:
+        # No crear Deal, pedir al usuario que corrija
+        session["state"] = "cotizacion_bloque"
+        mensaje_error = (
+            "Hay datos obligatorios que faltan o son inválidos, por lo que no "
+            "hemos podido registrar su solicitud.\n\n"
+            "Campos a corregir:\n- " + "\n- ".join(faltantes) + "\n\n"
+            "Por favor, vuelva a enviar el formulario completo, "
+            "asegurándose de rellenar todos los campos."
+        )
+        return {
+            "action": "reply",
+            "replies": [mensaje_error]
+        }
+
+    # ========= SI TODO ESTÁ OK, CONTINUAMOS =========
 
     resumen = (
         "Resumen de su solicitud de cotización:\n"
@@ -394,8 +445,8 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         f"Correo: {campos['correo']}\n"
         f"Teléfono: {campos['telefono']}\n"
         f"Número de parte / descripción: {campos['num_parte']}\n"
-        f"Marca: {campos['marca']}\n"
         f"Cantidad: {campos['cantidad']}\n"
+        f"Marca: {campos['marca']}\n"
         f"Dirección de entrega: {campos['direccion_entrega']}"
     )
 

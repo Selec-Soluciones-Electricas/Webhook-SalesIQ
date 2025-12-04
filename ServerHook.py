@@ -289,8 +289,8 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
             "Correo:\n"
             "Teléfono:\n"
             "Número de parte o descripción detallada:\n"
-            "Marca:\n"
             "Cantidad:\n"
+            "Marca:\n"
             "Dirección de entrega:"
         )
         return build_reply(formulario)

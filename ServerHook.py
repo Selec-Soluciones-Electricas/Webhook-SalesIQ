@@ -1,7 +1,7 @@
 import os
 import time
 import unicodedata
-
+import random    
 import requests
 from flask import Flask, request, jsonify
 
@@ -177,6 +177,8 @@ def obtener_o_crear_account(campos: dict):
         "Account_Name": account_name,
         "Billing_Code": rut or None,
         "Phone": telefono or None
+        
+
     }
 
     create_url = f"{CRM_BASE}/Accounts"
@@ -205,6 +207,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     Crea un Deal en Zoho CRM usando los datos del formulario del bot.
     'campos' viene de manejar_flujo_cotizacion_bloque.
     Si viene account_id, lo vincula al campo Account_Name del Deal.
+    Además asigna Owner aleatoriamente entre María Rengifo y Joaquin Gonzalez.
     """
     access_token = get_access_token()
     if not access_token:
@@ -216,6 +219,22 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         "Authorization": f"Zoho-oauthtoken {access_token}",
         "Content-Type": "application/json"
     }
+
+    # IDs reales de usuarios en Zoho CRM (reemplazar por los tuyos)
+    owners_posibles = [
+        {
+            "nombre": "Maria Rengifo",
+            "id": "ID_USUARIO_MARIA"      # <-- reemplazar por el ID real de usuario en Zoho
+        },
+        {
+            "nombre": "Joaquin Gonzalez",
+            "id": "ID_USUARIO_JOAQUIN"    # <-- reemplazar por el ID real de usuario en Zoho
+        }
+    ]
+
+    # Elegir un dueño al azar
+    owner_elegido = random.choice(owners_posibles)
+    print(f"Owner elegido para el Deal: {owner_elegido['nombre']} ({owner_elegido['id']})")
 
     deal_data = {
         "Deal_Name": f"Cotización - {campos.get('empresa') or 'Sin empresa'}",
@@ -232,8 +251,10 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
             f"Cantidad: {campos.get('cantidad')}\n"
             f"Dirección de entrega: {campos.get('direccion_entrega')}"
         ),
-        "Stage": "Pendiente por cotizar",           # Stage debe existir en su CRM
-        "Lead_Source": "SalesIQ Webhook",
+        "Stage": "Pendiente por cotizar",           # Stage por defecto
+        "Lead_Source": "Chat Whatsapp",
+        # Propietario del negocio (campo Owner lookup a Users)
+        "Owner": {"id": owner_elegido["id"]},
     }
 
     if account_id:
@@ -250,6 +271,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     except Exception as e:
         print("ERROR llamando a Zoho CRM:", e)
         return None
+
 
 
 # ===================== ENDPOINT WEBHOOK SALESIQ =====================

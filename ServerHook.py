@@ -157,7 +157,6 @@ def obtener_o_crear_account(campos: dict):
         return None
 
     # ============ OWNER ALEATORIO PARA NUEVAS CUENTAS ============
-    # Sustituya los IDs por los IDs reales de usuarios en su CRM.
     owners_posibles = [
         {"name": "Maria Rengifo",   "id": "4358923000003278018"},
         {"name": "Joaquin Gonzales","id": "4358923000011940001"},
@@ -180,7 +179,6 @@ def obtener_o_crear_account(campos: dict):
                 if registros:
                     account_id = registros[0].get("id")
                     if account_id:
-                        # Si ya existe la cuenta, respetamos el Owner actual
                         return account_id
         except Exception as e:
             print("ERROR buscando Account:", e)
@@ -192,7 +190,7 @@ def obtener_o_crear_account(campos: dict):
         "Billing_Code": rut or None,
         "Phone": telefono or None,
         "Cliente_Selec": "NO",
-        # Owner del Account (campo propietario de cuenta)
+        # Owner del Account
         "Owner": {"id": owner_elegido["id"]},
     }
 

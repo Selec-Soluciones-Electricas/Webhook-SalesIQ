@@ -224,11 +224,11 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     owners_posibles = [
         {
             "nombre": "Maria Rengifo",
-            "id": "ID_USUARIO_MARIA"      # <-- reemplazar por el ID real de usuario en Zoho
+            "id": "4358923000003278018"      # <-- reemplazar por el ID real de usuario en Zoho
         },
         {
             "nombre": "Joaquin Gonzalez",
-            "id": "ID_USUARIO_JOAQUIN"    # <-- reemplazar por el ID real de usuario en Zoho
+            "id": "4358923000011940001"    # <-- reemplazar por el ID real de usuario en Zoho
         }
     ]
 

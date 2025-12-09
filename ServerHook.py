@@ -124,6 +124,9 @@ def get_access_token() -> str:
         return None
 
 
+import random   # ya debe estar arriba con el resto de imports
+
+
 def obtener_o_crear_account(campos: dict):
     """
     Busca un Account por Billing_Code (RUT).
@@ -132,6 +135,8 @@ def obtener_o_crear_account(campos: dict):
       - Account_Name = empresa
       - Billing_Code = rut
       - Phone       = telefono
+      - Cliente_Selec = "NO"
+      - Owner       = (María Rengifo o Joaquín Gonzales, al azar)
     """
     access_token = get_access_token()
     if not access_token:
@@ -151,6 +156,14 @@ def obtener_o_crear_account(campos: dict):
         # Sin datos, no intentamos crear/buscar
         return None
 
+    # ============ OWNER ALEATORIO PARA NUEVAS CUENTAS ============
+    # Sustituya los IDs por los IDs reales de usuarios en su CRM.
+    owners_posibles = [
+        {"name": "Maria Rengifo",   "id": "4358923000003278018"},
+        {"name": "Joaquin Gonzales","id": "4358923000011940001"},
+    ]
+    owner_elegido = random.choice(owners_posibles)
+
     # 1) Buscar por Billing_Code (RUT)
     if rut:
         try:
@@ -167,6 +180,7 @@ def obtener_o_crear_account(campos: dict):
                 if registros:
                     account_id = registros[0].get("id")
                     if account_id:
+                        # Si ya existe la cuenta, respetamos el Owner actual
                         return account_id
         except Exception as e:
             print("ERROR buscando Account:", e)
@@ -176,9 +190,10 @@ def obtener_o_crear_account(campos: dict):
     account_data = {
         "Account_Name": account_name,
         "Billing_Code": rut or None,
-        "Phone": telefono or None
-        
-
+        "Phone": telefono or None,
+        "Cliente_Selec": "NO",
+        # Owner del Account (campo propietario de cuenta)
+        "Owner": {"id": owner_elegido["id"]},
     }
 
     create_url = f"{CRM_BASE}/Accounts"

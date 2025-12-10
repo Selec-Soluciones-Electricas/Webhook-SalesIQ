@@ -537,14 +537,13 @@ def rellenar_campos_libres(lineas, campos):
 
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     """
-    Recibe un solo mensaje con el formulario completo, lo parsea línea por línea
-    y llena session['data'] con los campos. Luego valida obligatorios y,
-    si todo está correcto, crea Account + Deal en Zoho CRM.
-    Soporta tanto líneas con "Etiqueta: valor" como texto más libre.
+    Recibe un solo mensaje con el formulario completo (aunque venga desordenado
+    o sin dos puntos) y llena session['data'] con los campos. Luego valida
+    obligatorios y, si todo está correcto, crea Account + Deal en Zoho CRM.
     """
     data = session["data"]
     texto = message_text or ""
-    lineas = texto.splitlines()
+    lineas = [l for l in texto.splitlines() if l.strip()]
 
     campos = {
         "empresa": "",
@@ -559,40 +558,190 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         "direccion_entrega": ""
     }
 
-    # ===== PRIMER PASO: líneas con "Etiqueta: valor" =====
+    # Guardamos líneas que no se pudieron clasificar para usar como fallback
+    lineas_sin_label = []
+
     for linea in lineas:
-        if ":" not in linea:
+        linea = linea.strip()
+        if not linea:
             continue
 
-        etiqueta, valor = linea.split(":", 1)
-        etiqueta_norm = normalizar_texto(etiqueta)
-        valor = valor.strip()
+        # 1) Intentar parsear "Etiqueta: valor"
+        if ":" in linea:
+            etiqueta, valor = linea.split(":", 1)
+            etiqueta_norm = normalizar_texto(etiqueta)
+            valor = valor.strip()
 
-        if "empresa" in etiqueta_norm:
-            campos["empresa"] = valor
-        elif "giro" in etiqueta_norm:
-            campos["giro"] = valor
-        elif etiqueta_norm in ("rut", "r.u.t", "r u t"):
-            campos["rut"] = valor
-        elif "contacto" in etiqueta_norm:
-            campos["contacto"] = valor
-        elif "correo" in etiqueta_norm or "email" in etiqueta_norm:
-            campos["correo"] = valor
-        elif "telefono" in etiqueta_norm:
-            campos["telefono"] = valor
-        elif ("numero de parte" in etiqueta_norm
-              or "numero parte" in etiqueta_norm
-              or "descripcion" in etiqueta_norm):
-            campos["num_parte"] = valor
-        elif "cantidad" in etiqueta_norm:
-            campos["cantidad"] = valor
-        elif "marca" in etiqueta_norm:
-            campos["marca"] = valor
-        elif "direccion de entrega" in etiqueta_norm:
-            campos["direccion_entrega"] = valor
+            # ------- Mapeo de etiquetas a campos (con sinónimos) -------
+            if (
+                "empresa" in etiqueta_norm
+                or "razon social" in etiqueta_norm
+                or "razon_social" in etiqueta_norm
+            ):
+                campos["empresa"] = valor
 
-    # ===== SEGUNDO PASO: intentar rellenar vacíos con texto libre =====
-    campos = rellenar_campos_libres(lineas, campos)
+            elif "giro" in etiqueta_norm or "actividad" in etiqueta_norm:
+                campos["giro"] = valor
+
+            elif etiqueta_norm in ("rut", "r.u.t", "r u t"):
+                campos["rut"] = valor
+
+            elif "contacto" in etiqueta_norm:
+                campos["contacto"] = valor
+
+            elif "correo" in etiqueta_norm or "email" in etiqueta_norm:
+                campos["correo"] = valor
+
+            elif "telefono" in etiqueta_norm or "teléfono" in etiqueta_norm:
+                campos["telefono"] = valor
+
+            elif (
+                "numero de parte" in etiqueta_norm
+                or "numero parte" in etiqueta_norm
+                or "descripcion" in etiqueta_norm
+                or "descripción" in etiqueta_norm
+            ):
+                campos["num_parte"] = valor
+
+            elif "marca" in etiqueta_norm:
+                campos["marca"] = valor
+
+            elif (
+                "direccion de entrega" in etiqueta_norm
+                or "dirección de entrega" in etiqueta_norm
+                or "direccion" in etiqueta_norm
+                or "dirección" in etiqueta_norm
+                or "domicilio" in etiqueta_norm
+            ):
+                campos["direccion_entrega"] = valor
+
+            else:
+                # Etiqueta rara: la guardamos para usarla luego si falta algo
+                lineas_sin_label.append(linea)
+
+        # 2) Líneas SIN dos puntos: usar heurísticas
+        else:
+            linea_norm = normalizar_texto(linea)
+
+            # --- Correo por regex ---
+            if not campos["correo"]:
+                m_mail = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", linea)
+                if m_mail:
+                    campos["correo"] = m_mail.group(0)
+                    continue
+
+            # --- RUT chileno aproximado ---
+            if not campos["rut"]:
+                m_rut = re.search(r"\d{1,3}\.?\d{3}\.?\d{3}-[\dkK]", linea)
+                if m_rut:
+                    campos["rut"] = m_rut.group(0)
+                    continue
+                # También casos tipo "RUT 78290511-2"
+                if "rut" in linea_norm:
+                    partes = linea.split()
+                    # Tomar el último "trozo" como rut
+                    if len(partes) >= 2:
+                        campos["rut"] = partes[-1].strip()
+                        continue
+
+            # --- Teléfono: muchos dígitos, sin @ ni '-' de RUT ---
+            if not campos["telefono"]:
+                solo_digitos = re.sub(r"\D", "", linea)
+                if 7 <= len(solo_digitos) <= 12 and "@" not in linea:
+                    campos["telefono"] = solo_digitos
+                    continue
+
+            # --- Empresa explícita en la frase ---
+            if not campos["empresa"] and (
+                "nombre de la empresa" in linea_norm
+                or "razon social" in linea_norm
+            ):
+                # Extraemos lo que viene después de la frase clave
+                valor_emp = linea
+                for clave in ["nombre de la empresa", "razon social"]:
+                    idx = linea_norm.find(clave)
+                    if idx != -1:
+                        # Cortar a partir del final de la clave original
+                        offset = idx + len(clave)
+                        valor_emp = linea[offset:].strip(" :.-")
+                        break
+                campos["empresa"] = valor_emp or linea
+                continue
+
+            # --- Giro / actividad sin dos puntos ---
+            if not campos["giro"] and ("giro" in linea_norm or "actividad" in linea_norm):
+                # Tomar el texto después de la palabra clave si existe
+                valor_giro = linea
+                for clave in ["giro", "actividad"]:
+                    idx = linea_norm.find(clave)
+                    if idx != -1:
+                        offset = idx + len(clave)
+                        valor_giro = linea[offset:].strip(" :.-")
+                        break
+                campos["giro"] = valor_giro or linea
+                continue
+
+            # --- Dirección / domicilio sin dos puntos ---
+            if not campos["direccion_entrega"] and (
+                "direccion" in linea_norm
+                or "dirección" in linea_norm
+                or "domicilio" in linea_norm
+            ):
+                # Tomar lo que viene después de la palabra clave, si se puede
+                valor_dir = linea
+                for clave in ["direccion", "dirección", "domicilio"]:
+                    idx = linea_norm.find(clave)
+                    if idx != -1:
+                        offset = idx + len(clave)
+                        valor_dir = linea[offset:].strip(" :.-")
+                        break
+                campos["direccion_entrega"] = valor_dir or linea
+                continue
+
+            # --- Nombre de contacto sin dos puntos ---
+            if not campos["contacto"] and "contacto" in linea_norm:
+                partes = linea.split("contacto", 1)
+                if len(partes) > 1:
+                    campos["contacto"] = partes[1].strip(" :.-")
+                else:
+                    campos["contacto"] = linea
+                continue
+
+            # Si no lo pudimos clasificar, lo guardamos como candidato genérico
+            lineas_sin_label.append(linea)
+
+    # ======== Fallback con líneas sin clasificar ========
+
+    # Empresa: si sigue vacía, tomamos la primera línea "neutra"
+    if not campos["empresa"]:
+        for l in lineas_sin_label:
+            ln = normalizar_texto(l)
+            if "@" in l:
+                continue
+            # evitar usar líneas que claramente son rut, teléfono, etc.
+            if "rut" in ln:
+                continue
+            solo_digitos = re.sub(r"\D", "", l)
+            if 7 <= len(solo_digitos) <= 12:
+                continue
+            campos["empresa"] = l
+            lineas_sin_label.remove(l)
+            break
+
+    # Giro: siguiente línea candidata
+    if not campos["giro"]:
+        for l in list(lineas_sin_label):
+            ln = normalizar_texto(l)
+            if "giro" in ln or "actividad" in ln:
+                campos["giro"] = l
+                lineas_sin_label.remove(l)
+                break
+        if not campos["giro"] and lineas_sin_label:
+            campos["giro"] = lineas_sin_label.pop(0)
+
+    # Número de parte / descripción: lo que quede
+    if not campos["num_parte"] and lineas_sin_label:
+        campos["num_parte"] = " ".join(lineas_sin_label)
 
     data.update(campos)
 
@@ -626,19 +775,14 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     ]
 
     # Validación extra: cantidad numérica > 0
-    if campos.get("cantidad"):
-        try:
-            cantidad_val = float(str(campos["cantidad"]).replace(",", "."))
-            if cantidad_val <= 0:
-                faltantes.append("Cantidad (debe ser mayor a 0)")
-        except Exception:
-            faltantes.append("Cantidad (valor numérico)")
-    else:
-        # ya está en faltantes por estar vacío
-        pass
+    try:
+        cantidad_val = float(str(campos["cantidad"]).replace(",", "."))
+        if cantidad_val <= 0:
+            faltantes.append("Cantidad (debe ser mayor a 0)")
+    except Exception:
+        faltantes.append("Cantidad (valor numérico)")
 
     if faltantes:
-        # No crear Deal ni Account, pedir al usuario que corrija
         session["state"] = "cotizacion_bloque"
         mensaje_error = (
             "Hay datos obligatorios que faltan o son inválidos, por lo que no "
@@ -652,8 +796,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             "replies": [mensaje_error]
         }
 
-    # ========= SI TODO ESTÁ CORRECTO, CONTINUAMOS =========
-
+    # ========= SI TODO ESTÁ OK, CONTINUAMOS =========
     resumen = (
         "Resumen de su solicitud de cotización:\n"
         f"Nombre de la empresa: {campos['empresa']}\n"
@@ -668,10 +811,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         f"Dirección de entrega: {campos['direccion_entrega']}"
     )
 
-    # 1) Obtener o crear Account
     account_id = obtener_o_crear_account(campos)
-
-    # 2) Crear Deal en Zoho CRM vinculado al Account (si existe)
     crear_deal_en_zoho(campos, account_id=account_id)
 
     session["state"] = "menu_principal"
@@ -684,6 +824,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             "Un ejecutivo de Selec se pondrá en contacto con usted."
         ]
     }
+
 
 
 

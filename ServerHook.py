@@ -196,7 +196,7 @@ def obtener_o_crear_account(campos: dict):
         "Industry": "Por definir",
         "Region1": "Por definir",
         "Ciudad_I": "Por definir",
-        "Website": "Por definir"
+        "Website": "https://pordefinir.com"
     }
 
     create_url = f"{CRM_BASE}/Accounts"

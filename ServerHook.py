@@ -281,7 +281,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         "Description": (
             "Solicitud recibida desde SalesIQ Webhook.\n\n"
             f"Empresa: {campos.get('empresa')}\n"
-            f"Giro: {campos.get('giro')}\n"
             f"RUT: {campos.get('rut')}\n"
             f"Contacto: {campos.get('contacto')}\n"
             f"Correo: {campos.get('correo')}\n"
@@ -418,7 +417,6 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
             "Perfecto, trabajaremos en su solicitud de cotización.\n"
             "Por favor responda copiando y completando este formulario en un solo mensaje:\n\n"
             "Nombre de la empresa:\n"
-            "Giro:\n"
             "RUT:\n"
             "Nombre de contacto:\n"
             "Correo:\n"
@@ -471,7 +469,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     # Punto de partida: lo ya guardado en la sesión
     campos = {
         "empresa": data.get("empresa", ""),
-        "giro": data.get("giro", ""),
         "rut": data.get("rut", ""),
         "contacto": data.get("contacto", ""),
         "correo": data.get("correo", ""),
@@ -503,9 +500,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
                 or "razon_social" in etiqueta_norm
             ):
                 campos["empresa"] = valor_clean
-
-            elif "giro" in etiqueta_norm or "actividad" in etiqueta_norm:
-                campos["giro"] = valor_clean
 
             elif etiqueta_norm in ("rut", "r.u.t", "r u t"):
                 campos["rut"] = valor_clean
@@ -586,16 +580,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
                 campos["empresa"] = valor_emp or linea
                 continue
 
-            if not campos["giro"] and ("giro" in linea_norm or "actividad" in linea_norm):
-                valor_giro = linea
-                for clave in ["giro", "actividad"]:
-                    idx = linea_norm.find(clave)
-                    if idx != -1:
-                        offset = idx + len(clave)
-                        valor_giro = linea[offset:].strip(" :.-")
-                        break
-                campos["giro"] = valor_giro or linea
-                continue
+
 
             if not campos["direccion_entrega"] and (
                 "direccion" in linea_norm
@@ -637,16 +622,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             lineas_sin_label.remove(l)
             break
 
-    # Fallback giro
-    if not campos["giro"]:
-        for l in list(lineas_sin_label):
-            ln = normalizar_texto(l)
-            if "giro" in ln or "actividad" in ln:
-                campos["giro"] = l
-                lineas_sin_label.remove(l)
-                break
-        if not campos["giro"] and lineas_sin_label:
-            campos["giro"] = lineas_sin_label.pop(0)
 
     # Fallback num_parte
     if not campos["num_parte"] and lineas_sin_label:
@@ -663,7 +638,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
 
     obligatorios = [
         "empresa",
-        "giro",
         "rut",
         "contacto",
         "correo",
@@ -674,7 +648,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
 
     nombres_legibles = {
         "empresa": "Nombre de la empresa",
-        "giro": "Giro",
         "rut": "RUT",
         "contacto": "Nombre de contacto",
         "correo": "Correo",
@@ -718,7 +691,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     resumen = (
         "Resumen de su solicitud de cotización:\n"
         f"Nombre de la empresa: {data['empresa']}\n"
-        f"Giro: {data['giro']}\n"
         f"RUT: {data['rut']}\n"
         f"Nombre de contacto: {data['contacto']}\n"
         f"Correo: {data['correo']}\n"

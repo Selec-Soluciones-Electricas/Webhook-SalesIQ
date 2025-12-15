@@ -260,8 +260,10 @@ def calcular_closing_date(fecha_base: date) -> str:
 
 # ===================== CONFIG EMAIL CRM =====================
 
-# Este es mi ID, es decir id elian
-SENDER_USER_ID = "4358923000014266001"  # Si se necesita cambiar, ir a CRM y buscar el usuario.
+# Config remitente (tú en Zoho CRM)
+SENDER_USER_ID = "4358923000014266001"
+SENDER_USER_EMAIL = "elian@selec.cl"
+SENDER_USER_NAME = "Elian Barra"
 
 CC_GERENCIA_EMAIL = "gerencia@selec.cl"
 
@@ -282,7 +284,6 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
         "Content-Type": "application/json"
     }
 
-    # Destinatario (owner elegido)
     to_email = owner.get("email")
     to_name = owner.get("nombre", "Ejecutivo")
 
@@ -314,7 +315,9 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
         "data": [
             {
                 "from": {
-                    "id": SENDER_USER_ID
+                    "id": SENDER_USER_ID,
+                    "user_name": SENDER_USER_NAME,
+                    "email": SENDER_USER_EMAIL   # <-- obligatorio
                 },
                 "to": [
                     {
@@ -343,6 +346,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     except Exception as e:
         print("ERROR enviando correo de notificación:", e)
         return None
+
 
 
 def crear_deal_en_zoho(campos: dict, account_id: str = None):

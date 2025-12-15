@@ -223,11 +223,45 @@ def obtener_o_crear_account(campos: dict):
     return None
 
 
+# ===================== FUNCIÓN PARA CLOSING_DATE =====================
+
+def calcular_closing_date(fecha_base: date) -> str:
+    """
+    Replica la lógica Deluge usando fecha_base como fecha_limite_oferta:
+    - Si día < 15   => último día del mismo mes
+    - Si día >= 15  => último día del mes siguiente
+    Devuelve string en formato YYYY-MM-DD para Zoho (Closing_Date).
+    """
+    dia = fecha_base.day
+    mes = fecha_base.month
+    anio = fecha_base.year
+
+    target_mes = mes
+    target_anio = anio
+
+    if dia >= 15:
+        if mes == 12:
+            target_mes = 1
+            target_anio = anio + 1
+        else:
+            target_mes = mes + 1
+
+    if target_mes in (4, 6, 9, 11):
+        ultimo_dia = 30
+    elif target_mes == 2:
+        es_bisiesto = (target_anio % 400 == 0) or (target_anio % 4 == 0 and target_anio % 100 != 0)
+        ultimo_dia = 29 if es_bisiesto else 28
+    else:
+        ultimo_dia = 31
+
+    fecha_cierre = date(target_anio, target_mes, ultimo_dia)
+    return fecha_cierre.strftime("%Y-%m-%d")
+
+
 # ===================== CONFIG EMAIL CRM =====================
 
-
-# Este es mi ID, es decir id elian 
-SENDER_USER_ID = "4358923000014266001" #Si se necesita cambiar, se deberia ir a CRM y buscar los usuarios, en la url aparece el id.
+# Este es mi ID, es decir id elian
+SENDER_USER_ID = "4358923000014266001"  # Si se necesita cambiar, ir a CRM y buscar el usuario.
 
 CC_GERENCIA_EMAIL = "gerencia@selec.cl"
 
@@ -279,18 +313,15 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     payload = {
         "data": [
             {
-                # Remitente: usuario de Zoho CRM
                 "from": {
                     "id": SENDER_USER_ID
                 },
-                # Para: owner elegido
                 "to": [
                     {
                         "email": to_email,
                         "user_name": to_name
                     }
                 ],
-                # CC: Gerencia
                 "cc": [
                     {
                         "email": CC_GERENCIA_EMAIL,
@@ -312,8 +343,6 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     except Exception as e:
         print("ERROR enviando correo de notificación:", e)
         return None
-
-
 
 
 def crear_deal_en_zoho(campos: dict, account_id: str = None):
@@ -343,7 +372,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         "Content-Type": "application/json"
     }
 
-    # Añadimos también el email para poder notificar por correo
     owners_posibles = [
         {
             "nombre": "Maria Rengifo",
@@ -385,7 +413,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     }
 
     if account_id:
-        # Lookup del módulo Accounts (campo Account_Name en Deals)
         deal_data["Account_Name"] = {"id": account_id}
         print(f"[crear_deal_en_zoho] Enviando Account_Name={{'id': '{account_id}'}}")
     else:
@@ -398,7 +425,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         print("=== Respuesta Zoho CRM (Deals) ===")
         print(resp.status_code, resp.text)
 
-        # Si se creó bien el Deal, obtenemos su ID y enviamos correo
         if resp.status_code in (200, 201):
             try:
                 body = resp.json()
@@ -416,12 +442,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     except Exception as e:
         print("ERROR llamando a Zoho CRM:", e)
         return None
-
-
-
-
-
-
 
 
 # ===================== ENDPOINT WEBHOOK SALESIQ =====================

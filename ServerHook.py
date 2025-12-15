@@ -223,37 +223,97 @@ def obtener_o_crear_account(campos: dict):
     return None
 
 
-def calcular_closing_date(fecha_base: date) -> str:
+# ===================== CONFIG EMAIL CRM =====================
+
+
+# Este es mi ID, es decir id elian 
+SENDER_USER_ID = "4358923000014266001" #Si se necesita cambiar, se deberia ir a CRM y buscar los usuarios, en la url aparece el id.
+
+CC_GERENCIA_EMAIL = "gerencia@selec.cl"
+
+
+def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict):
     """
-    Replica la lógica Deluge usando fecha_base como fecha_limite_oferta:
-    - Si día < 15   => último día del mismo mes
-    - Si día >= 15  => último día del mes siguiente
-    Devuelve string en formato YYYY-MM-DD para Zoho (Closing_Date).
+    Envía un correo al propietario (Maria o Joaquin) avisando del nuevo Deal.
+    Usa el endpoint send_mail de Zoho CRM, con CC a gerencia@selec.cl.
     """
-    dia = fecha_base.day
-    mes = fecha_base.month
-    anio = fecha_base.year
+    access_token = get_access_token()
+    if not access_token:
+        print("[enviar_correo_owner] No se pudo obtener access token; no se envía correo.")
+        return None
 
-    target_mes = mes
-    target_anio = anio
+    url = f"{CRM_BASE}/Deals/{deal_id}/actions/send_mail"
+    headers = {
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+        "Content-Type": "application/json"
+    }
 
-    if dia >= 15:
-        if mes == 12:
-            target_mes = 1
-            target_anio = anio + 1
-        else:
-            target_mes = mes + 1
+    # Destinatario (owner elegido)
+    to_email = owner.get("email")
+    to_name = owner.get("nombre", "Ejecutivo")
 
-    if target_mes in (4, 6, 9, 11):
-        ultimo_dia = 30
-    elif target_mes == 2:
-        es_bisiesto = (target_anio % 400 == 0) or (target_anio % 4 == 0 and target_anio % 100 != 0)
-        ultimo_dia = 29 if es_bisiesto else 28
-    else:
-        ultimo_dia = 31
+    if not to_email:
+        print("[enviar_correo_owner] Owner sin email definido, no se envía correo.")
+        return None
 
-    fecha_cierre = date(target_anio, target_mes, ultimo_dia)
-    return fecha_cierre.strftime("%Y-%m-%d")
+    subject = f"Nuevo Deal asignado desde WhatsApp: {deal_name}"
+
+    content = f"""
+    <p>Hola {to_name},</p>
+    <p>Se ha creado un nuevo Deal asignado a usted desde el chatbot de WhatsApp.</p>
+
+    <p><b>Deal:</b> {deal_name}</p>
+    <p><b>Empresa:</b> {campos.get('empresa') or '(sin empresa)'}</p>
+    <p><b>RUT:</b> {campos.get('rut') or '(sin RUT)'}</p>
+    <p><b>Contacto:</b> {campos.get('contacto') or '(sin contacto)'}</p>
+    <p><b>Correo:</b> {campos.get('correo') or '(sin correo)'}</p>
+    <p><b>Teléfono:</b> {campos.get('telefono') or '(sin teléfono)'}</p>
+    <p><b>Número de parte / descripción:</b> {campos.get('num_parte') or '(sin descripción)'}</p>
+    <p><b>Marca:</b> {campos.get('marca') or '(sin marca)'}</p>
+    <p><b>Cantidad:</b> {campos.get('cantidad') or '(sin cantidad)'}</p>
+    <p><b>Dirección de entrega:</b> {campos.get('direccion_entrega') or '(sin dirección)'} </p>
+
+    <p>Saludos,<br/>Bot WhatsApp Selec</p>
+    """
+
+    payload = {
+        "data": [
+            {
+                # Remitente: usuario de Zoho CRM
+                "from": {
+                    "id": SENDER_USER_ID
+                },
+                # Para: owner elegido
+                "to": [
+                    {
+                        "email": to_email,
+                        "user_name": to_name
+                    }
+                ],
+                # CC: Gerencia
+                "cc": [
+                    {
+                        "email": CC_GERENCIA_EMAIL,
+                        "user_name": "Gerencia Selec"
+                    }
+                ],
+                "subject": subject,
+                "content": content,
+                "mail_format": "html"
+            }
+        ]
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        print("=== Respuesta Zoho CRM send_mail ===")
+        print(resp.status_code, resp.text)
+        return resp
+    except Exception as e:
+        print("ERROR enviando correo de notificación:", e)
+        return None
+
+
 
 
 def crear_deal_en_zoho(campos: dict, account_id: str = None):
@@ -261,7 +321,8 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     Crea un Deal en Zoho CRM usando los datos del formulario del bot.
     'campos' viene de manejar_flujo_cotizacion_bloque.
     Si viene account_id, lo vincula al campo Account_Name del Deal.
-    Asigna Owner aleatoriamente entre María Rengifo y Joaquín Gonzalez.
+    Asigna Owner aleatoriamente entre María Rengifo y Joaquín Gonzalez
+    y les envía un correo de notificación.
     """
     access_token = get_access_token()
     if not access_token:
@@ -282,17 +343,27 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         "Content-Type": "application/json"
     }
 
+    # Añadimos también el email para poder notificar por correo
     owners_posibles = [
-        {"nombre": "Maria Rengifo",   "id": "4358923000003278018"},
-        {"nombre": "Joaquin Gonzalez","id": "4358923000011940001"}
+        {
+            "nombre": "Maria Rengifo",
+            "id": "4358923000003278018",
+            "email": "maria@selec.cl"
+        },
+        {
+            "nombre": "Joaquin Gonzalez",
+            "id": "4358923000011940001",
+            "email": "joaquin@selec.cl"
+        }
     ]
     owner_elegido = random.choice(owners_posibles)
     print(f"Owner elegido para el Deal: {owner_elegido['nombre']} ({owner_elegido['id']})")
 
+    deal_name = f"Cotización - {campos.get('empresa') or 'Sin empresa'}"
+
     deal_data = {
-        "Deal_Name": f"Cotización - {campos.get('empresa') or 'Sin empresa'}",
+        "Deal_Name": deal_name,
         "Description": (
-            "Solicitud recibida desde SalesIQ Webhook.\n\n"
             f"Empresa: {campos.get('empresa')}\n"
             f"RUT: {campos.get('rut')}\n"
             f"Contacto: {campos.get('contacto')}\n"
@@ -314,6 +385,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     }
 
     if account_id:
+        # Lookup del módulo Accounts (campo Account_Name en Deals)
         deal_data["Account_Name"] = {"id": account_id}
         print(f"[crear_deal_en_zoho] Enviando Account_Name={{'id': '{account_id}'}}")
     else:
@@ -325,10 +397,31 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
         print("=== Respuesta Zoho CRM (Deals) ===")
         print(resp.status_code, resp.text)
+
+        # Si se creó bien el Deal, obtenemos su ID y enviamos correo
+        if resp.status_code in (200, 201):
+            try:
+                body = resp.json()
+                registros = body.get("data") or []
+                if registros:
+                    details = registros[0].get("details") or {}
+                    deal_id = details.get("id")
+                    print(f"[crear_deal_en_zoho] Deal creado con ID = {deal_id}")
+                    if deal_id:
+                        enviar_correo_owner(owner_elegido, deal_id, deal_name, campos)
+            except Exception as e:
+                print("Error leyendo respuesta de creación de Deal:", e)
+
         return resp
     except Exception as e:
         print("ERROR llamando a Zoho CRM:", e)
         return None
+
+
+
+
+
+
 
 
 # ===================== ENDPOINT WEBHOOK SALESIQ =====================

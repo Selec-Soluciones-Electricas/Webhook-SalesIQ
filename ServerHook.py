@@ -15,14 +15,14 @@ sessions = {}
 
 
 def get_visitor_id(payload: dict) -> str:
-    """Obtiene un identificador estable del visitante."""
+    """Obtiene un identificador estable del visitante (evita colisiones entre conversaciones)."""
     visitor = payload.get("visitor") or {}
     return str(
-        visitor.get("id")
+        visitor.get("active_conversation_id")
+        or visitor.get("phone")
+        or visitor.get("id")
         or visitor.get("visitor_id")
         or visitor.get("email")
-        or visitor.get("phone")
-        or visitor.get("ip")
         or "anon"
     )
 
@@ -43,6 +43,23 @@ def build_reply(texts, input_card=None, action="reply") -> dict:
         response["input"] = input_card
 
     return response
+
+
+def reply_menu_principal() -> dict:
+    """Respuesta de menú principal con botones (select)."""
+    return build_reply(
+        [
+            "¡Bienvenido! Gracias por contactar con Selec.",
+            "Por favor, seleccione una de las siguientes opciones para atender su solicitud."
+        ],
+        input_card={
+            "type": "select",
+            "options": [
+                "Solicitud Cotización",
+                "Servicio PostVenta"
+            ]
+        }
+    )
 
 
 def normalizar_texto(txt: str) -> str:
@@ -260,7 +277,6 @@ def calcular_closing_date(fecha_base: date) -> str:
 
 # ===================== CONFIG EMAIL CRM =====================
 
-# Config remitente (tú en Zoho CRM)
 SENDER_USER_ID = "4358923000014266001"
 SENDER_USER_EMAIL = "elian@selec.cl"
 SENDER_USER_NAME = "Elian Barra"
@@ -317,7 +333,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
                 "from": {
                     "id": SENDER_USER_ID,
                     "user_name": SENDER_USER_NAME,
-                    "email": SENDER_USER_EMAIL   # <-- obligatorio
+                    "email": SENDER_USER_EMAIL
                 },
                 "to": [
                     {
@@ -346,7 +362,6 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     except Exception as e:
         print("ERROR enviando correo de notificación:", e)
         return None
-
 
 
 def crear_deal_en_zoho(campos: dict, account_id: str = None):
@@ -475,25 +490,17 @@ def salesiq_webhook():
 
     if handler == "trigger":
         session["state"] = "menu_principal"
-        respuesta = build_reply(
-            [
-                "¡Bienvenido! Gracias por contactar con Selec.",
-                "Por favor, seleccione una de las siguientes opciones para atender su solicitud."
-            ],
-            input_card={
-                "type": "select",
-                "options": [
-                    "Solicitud Cotización",
-                    "Servicio PostVenta"
-                ]
-            }
-        )
-        return jsonify(respuesta)
+        return jsonify(reply_menu_principal())
 
     if handler == "message":
         message_text = extraer_mensaje(payload)
         print("=== mensaje extraído ===", repr(message_text))
         state = session.get("state", "inicio")
+
+        # En WhatsApp puede no dispararse el trigger; mostrar menú en el primer mensaje.
+        if state == "inicio":
+            session["state"] = "menu_principal"
+            return jsonify(reply_menu_principal())
 
         if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
@@ -504,14 +511,9 @@ def salesiq_webhook():
         if state == "postventa_bloque":
             return jsonify(manejar_flujo_postventa_bloque(session, message_text))
 
+        # Fallback: siempre re-mostrar el menú con botones (en vez de solo texto)
         session["state"] = "menu_principal"
-        respuesta = build_reply(
-            [
-                "No he comprendido su mensaje.",
-                "Por favor, indique si desea 'Solicitud Cotización' o 'Servicio PostVenta'."
-            ]
-        )
-        return jsonify(respuesta)
+        return jsonify(reply_menu_principal())
 
     return jsonify(build_reply("He recibido su mensaje."))
 
@@ -825,7 +827,6 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     account_id = obtener_o_crear_account(data)
     crear_deal_en_zoho(data, account_id=account_id)
 
-    # Reiniciar la “memoria” de este visitante para próximas cotizaciones
     session["state"] = "menu_principal"
     session["data"] = {}
 

@@ -240,7 +240,7 @@ def obtener_o_crear_account(campos: dict):
     return None
 
 
-# ===================== FUNCIÓN PARA CLOSING_DATE =====================
+# =====================  Funcion para fecha de cierree =====================
 
 def calcular_closing_date(fecha_base: date) -> str:
     """
@@ -275,13 +275,15 @@ def calcular_closing_date(fecha_base: date) -> str:
     return fecha_cierre.strftime("%Y-%m-%d")
 
 
-# ===================== CONFIG EMAIL CRM =====================
+# ===================== Estructura y configuracion de correo para CRM =====================
 
 SENDER_USER_ID = "4358923000014266001"
 SENDER_USER_EMAIL = "elian@selec.cl"
 SENDER_USER_NAME = "Elian Barra"
 
 CC_GERENCIA_EMAIL = "gerencia@selec.cl"
+
+CRM_ORG_UI = "org706345205"
 
 
 def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict):
@@ -309,11 +311,15 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
 
     subject = f"Nuevo Deal asignado desde WhatsApp: {deal_name}"
 
+    deal_link = f"https://crm.zoho.com/crm/{CRM_ORG_UI}/tab/Potentials/{deal_id}"
+
     content = f"""
     <p>Hola {to_name},</p>
     <p>Se ha creado un nuevo Deal asignado a usted desde el chatbot de WhatsApp.</p>
 
     <p><b>Deal:</b> {deal_name}</p>
+    <p><b>Link del Deal en Zoho CRM:</b> <a href="{deal_link}">Abrir Deal</a></p>
+
     <p><b>Empresa:</b> {campos.get('empresa') or '(sin empresa)'}</p>
     <p><b>RUT:</b> {campos.get('rut') or '(sin RUT)'}</p>
     <p><b>Contacto:</b> {campos.get('contacto') or '(sin contacto)'}</p>
@@ -497,7 +503,7 @@ def salesiq_webhook():
         print("=== mensaje extraído ===", repr(message_text))
         state = session.get("state", "inicio")
 
-        # En WhatsApp puede no dispararse el trigger; mostrar menú en el primer mensaje.
+        # En WhatsApp puede no dispararse el trigger; mostrar menu en el primer mensaje.
         if state == "inicio":
             session["state"] = "menu_principal"
             return jsonify(reply_menu_principal())
@@ -505,13 +511,18 @@ def salesiq_webhook():
         if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
 
+        # ===== CAMBIO SOLICITADO: flujo cotización por pasos + bloque final =====
+        if state.startswith("cotizacion_step_"):
+            return jsonify(manejar_flujo_cotizacion_step(session, message_text))
+
         if state == "cotizacion_bloque":
             return jsonify(manejar_flujo_cotizacion_bloque(session, message_text))
+        # ================================================================
 
         if state == "postventa_bloque":
             return jsonify(manejar_flujo_postventa_bloque(session, message_text))
 
-        # Fallback: siempre re-mostrar el menú con botones (en vez de solo texto)
+        # Fallback: siempre re-mostrar el menu con botones (en vez de solo texto)
         session["state"] = "menu_principal"
         return jsonify(reply_menu_principal())
 
@@ -546,21 +557,13 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
         or "solicitud cotizacion" in texto_norm
         or texto_norm == "cotizacion"
     ):
-        session["state"] = "cotizacion_bloque"
-        formulario = (
+        # ===== CAMBIO SOLICITADO: preguntar estos campos uno por uno =====
+        session["state"] = "cotizacion_step_empresa"
+        session["data"] = {}
+        return build_reply(
             "Perfecto, trabajaremos en su solicitud de cotización.\n"
-            "Por favor responda copiando y completando este formulario en un solo mensaje:\n\n"
-            "Nombre de la empresa:\n"
-            "RUT:\n"
-            "Nombre de contacto:\n"
-            "Correo:\n"
-            "Teléfono:\n"
-            "Número de parte o descripción detallada:\n"
-            "Marca:\n"
-            "Cantidad:\n"
-            "Dirección de entrega:"
+            "Nombre de la empresa:"
         )
-        return build_reply(formulario)
 
     if (
         "postventa" in texto_norm
@@ -588,6 +591,85 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
     }
 
 
+# ===== CAMBIO SOLICITADO: flujo cotización en pasos y bloque final =====
+def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
+    """
+    Pasos:
+      1) empresa
+      2) rut
+      3) contacto
+      4) correo
+      5) telefono
+      6) bloque final: número de parte + marca + descripción + cantidad (1 solo mensaje)
+    """
+    data = session.setdefault("data", {})
+    state = session.get("state", "cotizacion_step_empresa")
+    txt = (message_text or "").strip()
+
+    if state == "cotizacion_step_empresa":
+        if not txt:
+            return build_reply("Nombre de la empresa:")
+        data["empresa"] = txt
+        session["state"] = "cotizacion_step_rut"
+        return build_reply("RUT:")
+
+    if state == "cotizacion_step_rut":
+        if not txt:
+            return build_reply("RUT:")
+        data["rut"] = txt
+        session["state"] = "cotizacion_step_contacto"
+        return build_reply("Nombre de contacto:")
+
+    if state == "cotizacion_step_contacto":
+        if not txt:
+            return build_reply("Nombre de contacto:")
+        data["contacto"] = txt
+        session["state"] = "cotizacion_step_correo"
+        return build_reply("Correo:")
+
+    if state == "cotizacion_step_correo":
+        if not txt:
+            return build_reply("Correo:")
+        if not re.search(r"[\w\.-]+@[\w\.-]+\.\w+", txt):
+            return build_reply("Correo inválido. Por favor ingrese un correo válido:")
+        data["correo"] = txt
+        session["state"] = "cotizacion_step_telefono"
+        return build_reply("Teléfono:")
+
+    if state == "cotizacion_step_telefono":
+        if not txt:
+            return build_reply("Teléfono:")
+        solo_digitos = re.sub(r"\D", "", txt)
+        if len(solo_digitos) < 7:
+            return build_reply("Teléfono inválido. Por favor ingrese un teléfono válido:")
+        data["telefono"] = solo_digitos
+        session["state"] = "cotizacion_step_producto_bloque"
+        return build_reply(
+            "Ahora envíe en un SOLO mensaje:\n"
+            "Número de parte, marca, descripción detallada y cantidad.\n\n"
+            "Ejemplo:\n"
+            "Número de parte: ABC123\n"
+            "Marca: Siemens\n"
+            "Descripción: ...\n"
+            "Cantidad: 5"
+        )
+
+    if state == "cotizacion_step_producto_bloque":
+        if not txt:
+            return build_reply(
+                "Envíe en un SOLO mensaje:\n"
+                "Número de parte, marca, descripción detallada y cantidad."
+            )
+
+        # Se mantiene el parser actual: pasamos al estado cotizacion_bloque y procesamos el bloque final.
+        session["state"] = "cotizacion_bloque"
+        return manejar_flujo_cotizacion_bloque(session, txt)
+
+    session["state"] = "cotizacion_step_empresa"
+    return build_reply("Nombre de la empresa:")
+# ================================================================
+
+
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     """
     Acumula la información en session['data'].
@@ -598,6 +680,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     texto = message_text or ""
     lineas = [l for l in texto.splitlines() if l.strip()]
 
+    # (Se mantiene la lógica; solo se usan las claves separadas esperadas)
     campos = {
         "empresa": data.get("empresa", ""),
         "rut": data.get("rut", ""),
@@ -813,15 +896,15 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
 
     resumen = (
         "Resumen de su solicitud de cotización:\n"
-        f"Nombre de la empresa: {data['empresa']}\n"
-        f"RUT: {data['rut']}\n"
-        f"Nombre de contacto: {data['contacto']}\n"
-        f"Correo: {data['correo']}\n"
-        f"Teléfono: {data['telefono']}\n"
-        f"Número de parte / descripción: {data['num_parte']}\n"
-        f"Cantidad: {data['cantidad']}\n"
-        f"Marca: {data['marca']}\n"
-        f"Dirección de entrega: {data['direccion_entrega']}"
+        f"Nombre de la empresa: {data.get('empresa','')}\n"
+        f"RUT: {data.get('rut','')}\n"
+        f"Nombre de contacto: {data.get('contacto','')}\n"
+        f"Correo: {data.get('correo','')}\n"
+        f"Teléfono: {data.get('telefono','')}\n"
+        f"Número de parte / descripción: {data.get('num_parte','')}\n"
+        f"Cantidad: {data.get('cantidad','')}\n"
+        f"Marca: {data.get('marca','')}\n"
+        f"Dirección de entrega: {data.get('direccion_entrega','')}"
     )
 
     account_id = obtener_o_crear_account(data)

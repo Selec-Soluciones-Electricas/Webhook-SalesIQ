@@ -624,14 +624,19 @@ def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
             return build_reply("RUT:")
         data["rut"] = txt
         session["state"] = "cotizacion_step_contacto"
-        return build_reply("Nombre de contacto:")
+        return build_reply(
+            "Porfavor  rellenar el siguiente campo:\n"
+            "Nombre de contacto:")
 
     if state == "cotizacion_step_contacto":
         if not txt:
             return build_reply("Nombre de contacto:")
         data["contacto"] = txt
         session["state"] = "cotizacion_step_correo"
-        return build_reply("Correo:")
+        return build_reply(
+            "Porfavor  rellenar el siguiente campo:\n"
+            "Correo:"
+            )
 
     if state == "cotizacion_step_correo":
         if not txt:
@@ -640,7 +645,9 @@ def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
             return build_reply("Correo inválido. Por favor ingrese un correo válido:")
         data["correo"] = txt
         session["state"] = "cotizacion_step_telefono"
-        return build_reply("Teléfono:")
+        return build_reply(
+            "Porfavor  rellenar el siguiente campo:\n"
+            "Teléfono:")
 
     if state == "cotizacion_step_telefono":
         if not txt:
@@ -653,17 +660,13 @@ def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
         return build_reply(
             "Ahora envíe en un SOLO mensaje:\n"
             "Número de parte, marca, descripción detallada y cantidad.\n\n"
-            "Ejemplo:\n"
-            "Número de parte: ABC123\n"
-            "Marca: Siemens\n"
-            "Descripción: ...\n"
-            "Cantidad: 5"
         )
 
     if state == "cotizacion_step_producto_bloque":
         if not txt:
             return build_reply(
-                "Envíe en un SOLO mensaje:\n"
+
+                "Por favor envíe en un SOLO mensaje:\n"
                 "Número de parte, marca, descripción detallada y cantidad."
             )
 
@@ -672,7 +675,10 @@ def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
         return manejar_flujo_cotizacion_bloque(session, txt)
 
     session["state"] = "cotizacion_step_empresa"
-    return build_reply("Nombre de la empresa:")
+    return build_reply(
+        "Porfavor rellenar el siguiente campo:\n"
+        "Nombre de la empresa:"
+        )
 # ================================================================
 
 

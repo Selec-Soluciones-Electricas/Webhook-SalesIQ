@@ -561,7 +561,8 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
         session["state"] = "cotizacion_step_empresa"
         session["data"] = {}
         return build_reply(
-            "Perfecto, trabajaremos en su solicitud de cotización.\n"
+            "Perfecto, trabajaremos en su solicitud de cotización.\n" 
+            "Porfavor Rellenar el siguiente campo:\n\n"
             "Nombre de la empresa:"
         )
 

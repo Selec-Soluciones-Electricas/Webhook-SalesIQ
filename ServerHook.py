@@ -557,7 +557,6 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
         or "solicitud cotizacion" in texto_norm
         or texto_norm == "cotizacion"
     ):
-        # ===== CAMBIO SOLICITADO: preguntar estos campos uno por uno =====
         session["state"] = "cotizacion_step_empresa"
         session["data"] = {}
         return build_reply(

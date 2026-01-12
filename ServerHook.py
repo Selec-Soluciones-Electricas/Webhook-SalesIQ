@@ -562,7 +562,7 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
         session["data"] = {}
         return build_reply(
             "Perfecto, trabajaremos en su solicitud de cotización.\n" 
-            "Porfavor Rellenar el siguiente campo:\n\n"
+            "Porfavor Rellenar el siguiente campo:\n"
             "Nombre de la empresa:"
         )
 
@@ -612,7 +612,12 @@ def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
             return build_reply("Nombre de la empresa:")
         data["empresa"] = txt
         session["state"] = "cotizacion_step_rut"
-        return build_reply("RUT:")
+        return build_reply(
+            
+            "Porfavor  rellenar el siguiente campo:\n"
+            "RUT:"
+            
+            )
 
     if state == "cotizacion_step_rut":
         if not txt:

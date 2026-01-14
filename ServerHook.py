@@ -34,10 +34,7 @@ def build_reply(texts, input_card=None, action="reply") -> dict:
     else:
         replies = list(texts)
 
-    response = {
-        "action": action,
-        "replies": replies
-    }
+    response = {"action": action, "replies": replies}
 
     if input_card is not None:
         response["input"] = input_card
@@ -50,15 +47,9 @@ def reply_menu_principal() -> dict:
     return build_reply(
         [
             "¡Bienvenido! Gracias por contactar con Selec.",
-            "Por favor, seleccione una de las siguientes opciones para atender su solicitud."
+            "Por favor, seleccione una de las siguientes opciones para atender su solicitud.",
         ],
-        input_card={
-            "type": "select",
-            "options": [
-                "Solicitud Cotización",
-                "Servicio PostVenta"
-            ]
-        }
+        input_card={"type": "select", "options": ["Solicitud Cotización", "Servicio PostVenta"]},
     )
 
 
@@ -79,10 +70,7 @@ def normalizar_texto(txt: str) -> str:
 CRM_BASE = "https://www.zohoapis.com/crm/v2.1"
 ACCOUNTS_BASE = "https://accounts.zoho.com"
 
-access_token_cache = {
-    "token": None,
-    "expires_at": 0.0,  # timestamp UNIX
-}
+access_token_cache = {"token": None, "expires_at": 0.0}
 
 
 def get_access_token() -> str:
@@ -94,10 +82,7 @@ def get_access_token() -> str:
       - ZOHO_REFRESH_TOKEN
     """
     now = time.time()
-    if (
-        access_token_cache["token"]
-        and access_token_cache["expires_at"] - 60 > now
-    ):
+    if access_token_cache["token"] and (access_token_cache["expires_at"] - 60 > now):
         return access_token_cache["token"]
 
     client_id = os.environ.get("ZOHO_CLIENT_ID")
@@ -145,12 +130,7 @@ def obtener_o_crear_account(campos: dict):
     """
     Busca un Account por Billing_Code (RUT).
     Si existe, devuelve su ID.
-    Si no existe, crea uno nuevo con:
-      - Account_Name = empresa
-      - Billing_Code = rut
-      - Phone       = telefono
-      - Cliente_Selec = "NO"
-      - Owner       = (María Rengifo o Joaquín Gonzalez, al azar)
+    Si no existe, crea uno nuevo.
     """
     access_token = get_access_token()
     if not access_token:
@@ -159,7 +139,7 @@ def obtener_o_crear_account(campos: dict):
 
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     rut = (campos.get("rut") or "").strip()
@@ -173,7 +153,7 @@ def obtener_o_crear_account(campos: dict):
         return None
 
     owners_posibles = [
-        {"name": "Maria Rengifo",    "id": "4358923000003278018"},
+        {"name": "Maria Rengifo", "id": "4358923000003278018"},
         {"name": "Joaquin Gonzalez", "id": "4358923000011940001"},
     ]
     owner_elegido = random.choice(owners_posibles)
@@ -202,7 +182,7 @@ def obtener_o_crear_account(campos: dict):
         except Exception as e:
             print("ERROR buscando Account:", e)
 
-    # 2) Crear Account nuevo (solo campos seguros)
+    # 2) Crear Account nuevo
     account_name = empresa or rut or "Sin nombre"
     account_data = {
         "Account_Name": account_name,
@@ -213,7 +193,7 @@ def obtener_o_crear_account(campos: dict):
         "Industry": "Por definir",
         "Region1": "Por definir",
         "Ciudad_I": "Por definir",
-        "Website": "https://pordefinir.com"
+        "Website": "https://pordefinir.com",
     }
 
     create_url = f"{CRM_BASE}/Accounts"
@@ -240,14 +220,13 @@ def obtener_o_crear_account(campos: dict):
     return None
 
 
-# =====================  Funcion para fecha de cierree =====================
+# =====================  Función para fecha de cierre =====================
 
 def calcular_closing_date(fecha_base: date) -> str:
     """
-    Replica la lógica Deluge usando fecha_base como fecha_limite_oferta:
     - Si día < 15   => último día del mismo mes
     - Si día >= 15  => último día del mes siguiente
-    Devuelve string en formato YYYY-MM-DD para Zoho (Closing_Date).
+    Devuelve string YYYY-MM-DD (Closing_Date).
     """
     dia = fecha_base.day
     mes = fecha_base.month
@@ -275,7 +254,7 @@ def calcular_closing_date(fecha_base: date) -> str:
     return fecha_cierre.strftime("%Y-%m-%d")
 
 
-# ===================== Estructura y configuracion de correo para CRM =====================
+# ===================== Estructura y configuración de correo para CRM =====================
 
 SENDER_USER_ID = "4358923000014266001"
 SENDER_USER_EMAIL = "elian@selec.cl"
@@ -287,10 +266,6 @@ CRM_ORG_UI = "org706345205"
 
 
 def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict):
-    """
-    Envía un correo al propietario (Maria o Joaquin) avisando del nuevo Deal.
-    Usa el endpoint send_mail de Zoho CRM, con CC a gerencia@selec.cl.
-    """
     access_token = get_access_token()
     if not access_token:
         print("[enviar_correo_owner] No se pudo obtener access token; no se envía correo.")
@@ -299,7 +274,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     url = f"{CRM_BASE}/Deals/{deal_id}/actions/send_mail"
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     to_email = owner.get("email")
@@ -310,7 +285,6 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
         return None
 
     subject = f"Nuevo Deal asignado desde WhatsApp: {deal_name}"
-
     deal_link = f"https://crm.zoho.com/crm/{CRM_ORG_UI}/tab/Potentials/{deal_id}"
 
     content = f"""
@@ -336,26 +310,12 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     payload = {
         "data": [
             {
-                "from": {
-                    "id": SENDER_USER_ID,
-                    "user_name": SENDER_USER_NAME,
-                    "email": SENDER_USER_EMAIL
-                },
-                "to": [
-                    {
-                        "email": to_email,
-                        "user_name": to_name
-                    }
-                ],
-                "cc": [
-                    {
-                        "email": CC_GERENCIA_EMAIL,
-                        "user_name": "Gerencia Selec"
-                    }
-                ],
+                "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
+                "to": [{"email": to_email, "user_name": to_name}],
+                "cc": [{"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"}],
                 "subject": subject,
                 "content": content,
-                "mail_format": "html"
+                "mail_format": "html",
             }
         ]
     }
@@ -371,13 +331,6 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
 
 
 def crear_deal_en_zoho(campos: dict, account_id: str = None):
-    """
-    Crea un Deal en Zoho CRM usando los datos del formulario del bot.
-    'campos' viene de manejar_flujo_cotizacion_bloque.
-    Si viene account_id, lo vincula al campo Account_Name del Deal.
-    Asigna Owner aleatoriamente entre María Rengifo y Joaquín Gonzalez
-    y les envía un correo de notificación.
-    """
     access_token = get_access_token()
     if not access_token:
         print("No se pudo obtener access token de Zoho; se omite creación de Deal.")
@@ -389,25 +342,15 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     fecha_limite_oferta = manana.date()
     closing_date_str = calcular_closing_date(fecha_limite_oferta)
 
-    print(f"[crear_deal_en_zoho] account_id recibido = {account_id!r}")
-
     url = f"{CRM_BASE}/Deals"
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     owners_posibles = [
-        {
-            "nombre": "Maria Rengifo",
-            "id": "4358923000003278018",
-            "email": "maria@selec.cl"
-        },
-        {
-            "nombre": "Joaquin Gonzalez",
-            "id": "4358923000011940001",
-            "email": "joaquin@selec.cl"
-        }
+        {"nombre": "Maria Rengifo", "id": "4358923000003278018", "email": "maria@selec.cl"},
+        {"nombre": "Joaquin Gonzalez", "id": "4358923000011940001", "email": "joaquin@selec.cl"},
     ]
     owner_elegido = random.choice(owners_posibles)
     print(f"Owner elegido para el Deal: {owner_elegido['nombre']} ({owner_elegido['id']})")
@@ -439,9 +382,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
 
     if account_id:
         deal_data["Account_Name"] = {"id": account_id}
-        print(f"[crear_deal_en_zoho] Enviando Account_Name={{'id': '{account_id}'}}")
-    else:
-        print("[crear_deal_en_zoho] NO se enviará Account_Name porque account_id es vacío/None.")
 
     payload = {"data": [deal_data]}
 
@@ -483,13 +423,9 @@ def salesiq_webhook():
 
     payload = request.get_json(force=True, silent=True) or {}
     handler = payload.get("handler")
-    operation = payload.get("operation")
     visitor_id = get_visitor_id(payload)
 
-    session = sessions.setdefault(visitor_id, {
-        "state": "inicio",
-        "data": {}
-    })
+    session = sessions.setdefault(visitor_id, {"state": "inicio", "data": {}})
 
     print("=== SalesIQ payload ===")
     print(payload)
@@ -503,7 +439,6 @@ def salesiq_webhook():
         print("=== mensaje extraído ===", repr(message_text))
         state = session.get("state", "inicio")
 
-        # En WhatsApp puede no dispararse el trigger; mostrar menu en el primer mensaje.
         if state == "inicio":
             session["state"] = "menu_principal"
             return jsonify(reply_menu_principal())
@@ -511,18 +446,22 @@ def salesiq_webhook():
         if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
 
-        # ===== CAMBIO SOLICITADO: flujo cotización por pasos + bloque final =====
-        if state.startswith("cotizacion_step_"):
-            return jsonify(manejar_flujo_cotizacion_step(session, message_text))
+        # ===== NUEVO: Empresa/Contacto en un solo bloque; Producto en bloque separado =====
+        if state == "cotizacion_empresa_bloque":
+            return jsonify(manejar_flujo_cotizacion_empresa_bloque(session, message_text))
+
+        if state == "cotizacion_producto_bloque":
+            # Procesa producto en bloque final y crea Account/Deal
+            session["state"] = "cotizacion_bloque"
+            return jsonify(manejar_flujo_cotizacion_bloque(session, message_text))
+        # ==============================================================================
 
         if state == "cotizacion_bloque":
             return jsonify(manejar_flujo_cotizacion_bloque(session, message_text))
-        # ================================================================
 
         if state == "postventa_bloque":
             return jsonify(manejar_flujo_postventa_bloque(session, message_text))
 
-        # Fallback: siempre re-mostrar el menu con botones (en vez de solo texto)
         session["state"] = "menu_principal"
         return jsonify(reply_menu_principal())
 
@@ -552,28 +491,30 @@ def extraer_mensaje(payload: dict) -> str:
 def manejar_menu_principal(session: dict, message_text: str) -> dict:
     texto_norm = normalizar_texto(message_text)
 
-    if (
-        "cotiz" in texto_norm
-        or "solicitud cotizacion" in texto_norm
-        or texto_norm == "cotizacion"
-    ):
-        session["state"] = "cotizacion_step_empresa"
+    if ("cotiz" in texto_norm or "solicitud cotizacion" in texto_norm or texto_norm == "cotizacion"):
+        # Intro separado + tarjeta/segundo mensaje con los campos de empresa/contacto
+        session["state"] = "cotizacion_empresa_bloque"
         session["data"] = {}
         return build_reply(
-            "Perfecto, trabajaremos en su solicitud de cotización.\n" 
-            "Porfavor Rellenar el siguiente campo:\n"
-            "Nombre de la empresa:"
+            [
+                "Perfecto, trabajaremos en su solicitud de cotización.",
+                (
+                    "Por favor, complete los siguientes datos de la empresa y del contacto "
+                    "en un solo mensaje (puede copiar y pegar este formato):\n\n"
+                    "Nombre de la empresa:\n"
+                    "RUT:\n"
+                    "Nombre de contacto:\n"
+                    "Correo:\n"
+                    "Teléfono:"
+                ),
+            ]
         )
 
-    if (
-        "postventa" in texto_norm
-        or "post venta" in texto_norm
-        or "servicio postventa" in texto_norm
-    ):
+    if ("postventa" in texto_norm or "post venta" in texto_norm or "servicio postventa" in texto_norm):
         session["state"] = "postventa_bloque"
         formulario = (
             "Perfecto, trabajaremos en su solicitud de postventa.\n"
-            "Por favor responda copiando y completando este formulario en un solo mensaje:\n\n"
+            "Por favor, responda copiando y completando este formulario en un solo mensaje:\n\n"
             "Nombre:\n"
             "RUT:\n"
             "Número de factura:\n"
@@ -586,112 +527,142 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
         "action": "forward",
         "replies": [
             "En este momento no puedo gestionar esta solicitud automáticamente.",
-            "Le voy a derivar con un ejecutivo para que le ayude."
-        ]
+            "Le derivaré con un ejecutivo para que pueda asistirle.",
+        ],
     }
 
 
-# ===== CAMBIO SOLICITADO: flujo cotización en pasos y bloque final =====
-def manejar_flujo_cotizacion_step(session: dict, message_text: str) -> dict:
+def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) -> dict:
     """
-    Pasos:
-      1) empresa
-      2) rut
-      3) contacto
-      4) correo
-      5) telefono
-      6) bloque final: número de parte + marca + descripción + cantidad (1 solo mensaje)
+    Etapa 1 (un solo mensaje): empresa + rut + contacto + correo + teléfono.
+    Luego solicita producto en etapa 2 (mensaje separado).
     """
     data = session.setdefault("data", {})
-    state = session.get("state", "cotizacion_step_empresa")
-    txt = (message_text or "").strip()
+    texto = (message_text or "").strip()
+    lineas = [l for l in texto.splitlines() if l.strip()]
 
-    if state == "cotizacion_step_empresa":
-        if not txt:
-            return build_reply("Nombre de la empresa:")
-        data["empresa"] = txt
-        session["state"] = "cotizacion_step_rut"
-        return build_reply(
-            
-            "Porfavor  rellenar el siguiente campo:\n"
-            "RUT:"
-            
-            )
+    campos = {
+        "empresa": data.get("empresa", ""),
+        "rut": data.get("rut", ""),
+        "contacto": data.get("contacto", ""),
+        "correo": data.get("correo", ""),
+        "telefono": data.get("telefono", ""),
+    }
 
-    if state == "cotizacion_step_rut":
-        if not txt:
-            return build_reply("RUT:")
-        data["rut"] = txt
-        session["state"] = "cotizacion_step_contacto"
-        return build_reply(
-            "Porfavor  rellenar el siguiente campo:\n"
-            "Nombre de contacto:")
+    lineas_sin_label = []
 
-    if state == "cotizacion_step_contacto":
-        if not txt:
-            return build_reply("Nombre de contacto:")
-        data["contacto"] = txt
-        session["state"] = "cotizacion_step_correo"
-        return build_reply(
-            "Porfavor  rellenar el siguiente campo:\n"
-            "Correo:"
-            )
+    for linea in lineas:
+        linea = linea.strip()
+        if ":" in linea:
+            etiqueta, valor = linea.split(":", 1)
+            etiqueta_norm = normalizar_texto(etiqueta)
+            valor_clean = valor.strip()
+            if not valor_clean:
+                continue
 
-    if state == "cotizacion_step_correo":
-        if not txt:
-            return build_reply("Correo:")
-        if not re.search(r"[\w\.-]+@[\w\.-]+\.\w+", txt):
-            return build_reply("Correo inválido. Por favor ingrese un correo válido:")
-        data["correo"] = txt
-        session["state"] = "cotizacion_step_telefono"
-        return build_reply(
-            "Porfavor  rellenar el siguiente campo:\n"
-            "Teléfono:")
+            if "empresa" in etiqueta_norm or "razon social" in etiqueta_norm or "razon_social" in etiqueta_norm:
+                campos["empresa"] = valor_clean
+            elif etiqueta_norm in ("rut", "r.u.t", "r u t"):
+                campos["rut"] = valor_clean
+            elif "contacto" in etiqueta_norm:
+                campos["contacto"] = valor_clean
+            elif "correo" in etiqueta_norm or "email" in etiqueta_norm:
+                campos["correo"] = valor_clean
+            elif "telefono" in etiqueta_norm or "teléfono" in etiqueta_norm:
+                campos["telefono"] = valor_clean
+            else:
+                lineas_sin_label.append(linea)
+        else:
+            lineas_sin_label.append(linea)
 
-    if state == "cotizacion_step_telefono":
-        if not txt:
-            return build_reply("Teléfono:")
-        solo_digitos = re.sub(r"\D", "", txt)
-        if len(solo_digitos) < 7:
-            return build_reply("Teléfono inválido. Por favor ingrese un teléfono válido:")
-        data["telefono"] = solo_digitos
-        session["state"] = "cotizacion_step_producto_bloque"
+    # Heurísticas mínimas para completar si vienen sin etiqueta
+    for linea in list(lineas_sin_label):
+        if not campos["correo"]:
+            m_mail = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", linea)
+            if m_mail:
+                campos["correo"] = m_mail.group(0).strip()
+                lineas_sin_label.remove(linea)
+                continue
+
+    for linea in list(lineas_sin_label):
+        if not campos["rut"]:
+            m_rut = re.search(r"\d{1,3}\.?\d{3}\.?\d{3}-[\dkK]", linea)
+            if m_rut:
+                campos["rut"] = m_rut.group(0).strip()
+                lineas_sin_label.remove(linea)
+                continue
+
+    for linea in list(lineas_sin_label):
+        if not campos["telefono"]:
+            solo_digitos = re.sub(r"\D", "", linea)
+            if 7 <= len(solo_digitos) <= 12 and "@" not in linea:
+                campos["telefono"] = solo_digitos
+                lineas_sin_label.remove(linea)
+                continue
+
+    if not campos["empresa"] and lineas_sin_label:
+        # primera línea plausible como empresa
+        campos["empresa"] = lineas_sin_label[0].strip()
+
+    data.update(campos)
+
+    # Validación obligatorios etapa 1
+    obligatorios = ["empresa", "rut", "contacto", "correo", "telefono"]
+    nombres_legibles = {
+        "empresa": "Nombre de la empresa",
+        "rut": "RUT",
+        "contacto": "Nombre de contacto",
+        "correo": "Correo",
+        "telefono": "Teléfono",
+    }
+
+    faltantes = [nombres_legibles[c] for c in obligatorios if not str(data.get(c, "")).strip()]
+
+    if data.get("correo") and not re.search(r"[\w\.-]+@[\w\.-]+\.\w+", str(data["correo"])):
+        if "Correo (formato inválido)" not in faltantes:
+            faltantes.append("Correo (formato inválido)")
+
+    tel = re.sub(r"\D", "", str(data.get("telefono", "")))
+    if tel and len(tel) < 7:
+        if "Teléfono (formato inválido)" not in faltantes:
+            faltantes.append("Teléfono (formato inválido)")
+
+    if faltantes:
+        session["state"] = "cotizacion_empresa_bloque"
         return build_reply(
-            "Ahora envíe en un SOLO mensaje:\n"
-            "Número de parte, marca, descripción detallada y cantidad.\n\n"
+            [
+                "No fue posible registrar la información, ya que faltan datos obligatorios o presentan un formato inválido.",
+                "Campos a corregir:\n- " + "\n- ".join(faltantes),
+                "Por favor, envíe únicamente los campos faltantes o corregidos, por ejemplo:\nCorreo: cliente@empresa.com\nTeléfono: 56912345678",
+            ]
         )
 
-    if state == "cotizacion_step_producto_bloque":
-        if not txt:
-            return build_reply(
-
-                "Por favor envíe en un SOLO mensaje:\n"
-                "Número de parte, marca, descripción detallada y cantidad."
-            )
-
-        # Se mantiene el parser actual: pasamos al estado cotizacion_bloque y procesamos el bloque final.
-        session["state"] = "cotizacion_bloque"
-        return manejar_flujo_cotizacion_bloque(session, txt)
-
-    session["state"] = "cotizacion_step_empresa"
+    # Etapa 2: solicitar producto en bloque separado
+    session["state"] = "cotizacion_producto_bloque"
     return build_reply(
-        "Porfavor rellenar el siguiente campo:\n"
-        "Nombre de la empresa:"
-        )
-# ================================================================
+        [
+            "Gracias. A continuación, por favor envíe la información del producto.",
+            (
+                "En un SOLO mensaje, indique:\n"
+                "Número de parte, marca, descripción detallada y cantidad.\n\n"
+                "Ejemplo:\n"
+                "Número de parte: ABC123\n"
+                "Marca: Siemens\n"
+                "Descripción: ...\n"
+                "Cantidad: 5"
+            ),
+        ]
+    )
 
 
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     """
-    Acumula la información en session['data'].
-    El usuario puede enviar primero el formulario casi completo y luego,
-    en mensajes posteriores, solo los datos que falten o correcciones.
+    Acumula la información en session['data'] y valida todo (incluye producto).
     """
     data = session["data"]
     texto = message_text or ""
     lineas = [l for l in texto.splitlines() if l.strip()]
 
-    # (Se mantiene la lógica; solo se usan las claves separadas esperadas)
     campos = {
         "empresa": data.get("empresa", ""),
         "rut": data.get("rut", ""),
@@ -701,7 +672,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         "num_parte": data.get("num_parte", ""),
         "cantidad": data.get("cantidad", ""),
         "marca": data.get("marca", ""),
-        "direccion_entrega": data.get("direccion_entrega", "")
+        "direccion_entrega": data.get("direccion_entrega", ""),
     }
 
     lineas_sin_label = []
@@ -718,130 +689,28 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             if not valor_clean:
                 continue
 
-            if (
-                "empresa" in etiqueta_norm
-                or "razon social" in etiqueta_norm
-                or "razon_social" in etiqueta_norm
-            ):
+            if "empresa" in etiqueta_norm or "razon social" in etiqueta_norm or "razon_social" in etiqueta_norm:
                 campos["empresa"] = valor_clean
-
             elif etiqueta_norm in ("rut", "r.u.t", "r u t"):
                 campos["rut"] = valor_clean
-
             elif "contacto" in etiqueta_norm:
                 campos["contacto"] = valor_clean
-
             elif "correo" in etiqueta_norm or "email" in etiqueta_norm:
                 campos["correo"] = valor_clean
-
             elif "telefono" in etiqueta_norm or "teléfono" in etiqueta_norm:
                 campos["telefono"] = valor_clean
-
-            elif (
-                "numero de parte" in etiqueta_norm
-                or "numero parte" in etiqueta_norm
-                or "descripcion" in etiqueta_norm
-                or "descripción" in etiqueta_norm
-            ):
+            elif ("numero de parte" in etiqueta_norm or "numero parte" in etiqueta_norm or "descripcion" in etiqueta_norm or "descripción" in etiqueta_norm):
                 campos["num_parte"] = valor_clean
-
             elif "marca" in etiqueta_norm:
                 campos["marca"] = valor_clean
-
-            elif (
-                "direccion de entrega" in etiqueta_norm
-                or "dirección de entrega" in etiqueta_norm
-                or "direccion" in etiqueta_norm
-                or "dirección" in etiqueta_norm
-                or "domicilio" in etiqueta_norm
-            ):
+            elif ("direccion de entrega" in etiqueta_norm or "dirección de entrega" in etiqueta_norm or "direccion" in etiqueta_norm or "dirección" in etiqueta_norm or "domicilio" in etiqueta_norm):
                 campos["direccion_entrega"] = valor_clean
-
             elif "cantidad" in etiqueta_norm:
                 campos["cantidad"] = valor_clean
-
             else:
                 lineas_sin_label.append(linea)
-
         else:
-            linea_norm = normalizar_texto(linea)
-
-            if not campos["correo"]:
-                m_mail = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", linea)
-                if m_mail:
-                    campos["correo"] = m_mail.group(0)
-                    continue
-
-            if not campos["rut"]:
-                m_rut = re.search(r"\d{1,3}\.?\d{3}\.?\d{3}-[\dkK]", linea)
-                if m_rut:
-                    campos["rut"] = m_rut.group(0)
-                    continue
-
-                if "rut" in linea_norm:
-                    partes = linea.split()
-                    if len(partes) >= 2:
-                        campos["rut"] = partes[-1].strip()
-                        continue
-
-            if not campos["telefono"]:
-                solo_digitos = re.sub(r"\D", "", linea)
-                if 7 <= len(solo_digitos) <= 12 and "@" not in linea:
-                    campos["telefono"] = solo_digitos
-                    continue
-
-            if not campos["empresa"] and (
-                "nombre de la empresa" in linea_norm
-                or "razon social" in linea_norm
-            ):
-                valor_emp = linea
-                for clave in ["nombre de la empresa", "razon social"]:
-                    idx = linea_norm.find(clave)
-                    if idx != -1:
-                        offset = idx + len(clave)
-                        valor_emp = linea[offset:].strip(" :.-")
-                        break
-                campos["empresa"] = valor_emp or linea
-                continue
-
-            if not campos["direccion_entrega"] and (
-                "direccion" in linea_norm
-                or "dirección" in linea_norm
-                or "domicilio" in linea_norm
-            ):
-                valor_dir = linea
-                for clave in ["direccion", "dirección", "domicilio"]:
-                    idx = linea_norm.find(clave)
-                    if idx != -1:
-                        offset = idx + len(clave)
-                        valor_dir = linea[offset:].strip(" :.-")
-                        break
-                campos["direccion_entrega"] = valor_dir or linea
-                continue
-
-            if not campos["contacto"] and "contacto" in linea_norm:
-                partes = linea.split("contacto", 1)
-                if len(partes) > 1:
-                    campos["contacto"] = partes[1].strip(" :.-")
-                else:
-                    campos["contacto"] = linea
-                continue
-
             lineas_sin_label.append(linea)
-
-    if not campos["empresa"]:
-        for l in list(lineas_sin_label):
-            ln = normalizar_texto(l)
-            if "@" in l:
-                continue
-            if "rut" in ln:
-                continue
-            solo_digitos = re.sub(r"\D", "", l)
-            if 7 <= len(solo_digitos) <= 12:
-                continue
-            campos["empresa"] = l
-            lineas_sin_label.remove(l)
-            break
 
     if not campos["num_parte"] and lineas_sin_label:
         campos["num_parte"] = " ".join(lineas_sin_label)
@@ -853,16 +722,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
 
     data.update(campos)
 
-    obligatorios = [
-        "empresa",
-        "rut",
-        "contacto",
-        "correo",
-        "telefono",
-        "num_parte",
-        "cantidad",
-    ]
-
+    obligatorios = ["empresa", "rut", "contacto", "correo", "telefono", "num_parte", "cantidad"]
     nombres_legibles = {
         "empresa": "Nombre de la empresa",
         "rut": "RUT",
@@ -873,11 +733,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         "cantidad": "Cantidad",
     }
 
-    faltantes = [
-        nombres_legibles[campo]
-        for campo in obligatorios
-        if not str(data.get(campo, "")).strip()
-    ]
+    faltantes = [nombres_legibles[c] for c in obligatorios if not str(data.get(c, "")).strip()]
 
     try:
         cantidad_val = float(str(data.get("cantidad", "")).replace(",", "."))
@@ -890,20 +746,13 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
 
     if faltantes:
         session["state"] = "cotizacion_bloque"
-        mensaje_error = (
-            "Hay datos obligatorios que faltan o son inválidos, por lo que no "
-            "hemos podido registrar su solicitud.\n\n"
-            "Campos a corregir:\n- " + "\n- ".join(faltantes) + "\n\n"
-            "No es necesario que vuelva a copiar todo el formulario; "
-            "en su próximo mensaje puede enviar únicamente los datos faltantes, "
-            "por ejemplo:\n"
-            "Correo: cliente@empresa.com\n"
-            "Cantidad: 5"
+        return build_reply(
+            [
+                "No fue posible registrar su solicitud, ya que existen campos obligatorios faltantes o inválidos.",
+                "Campos a corregir:\n- " + "\n- ".join(faltantes),
+                "Por favor, envíe únicamente los datos faltantes o corregidos.",
+            ]
         )
-        return {
-            "action": "reply",
-            "replies": [mensaje_error]
-        }
 
     resumen = (
         "Resumen de su solicitud de cotización:\n"
@@ -924,21 +773,16 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     session["state"] = "menu_principal"
     session["data"] = {}
 
-    return {
-        "action": "reply",
-        "replies": [
+    return build_reply(
+        [
             "Gracias. Hemos registrado su solicitud con el siguiente detalle:",
             resumen,
-            "Un ejecutivo de Selec se pondrá en contacto con usted."
+            "Un ejecutivo de Selec se pondrá en contacto con usted.",
         ]
-    }
+    )
 
 
 def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
-    """
-    Postventa en un solo mensaje, pero también acumula campos en session['data']
-    para permitir correcciones parciales.
-    """
     data = session["data"]
     texto = message_text or ""
     lineas = texto.splitlines()
@@ -954,10 +798,7 @@ def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
         if ":" not in linea:
             linea_plana = linea.strip()
             if linea_plana:
-                if campos["detalle"]:
-                    campos["detalle"] += " " + linea_plana
-                else:
-                    campos["detalle"] = linea_plana
+                campos["detalle"] = (campos["detalle"] + " " + linea_plana).strip() if campos["detalle"] else linea_plana
             continue
 
         etiqueta, valor = linea.split(":", 1)
@@ -978,34 +819,19 @@ def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
     data.update(campos)
 
     obligatorios = ["nombre", "rut", "numero_factura"]
-    nombres_legibles = {
-        "nombre": "Nombre",
-        "rut": "RUT",
-        "numero_factura": "Número de factura",
-    }
+    nombres_legibles = {"nombre": "Nombre", "rut": "RUT", "numero_factura": "Número de factura"}
 
-    faltantes = [
-        nombres_legibles[campo]
-        for campo in obligatorios
-        if not str(data.get(campo, "")).strip()
-    ]
+    faltantes = [nombres_legibles[c] for c in obligatorios if not str(data.get(c, "")).strip()]
 
     if faltantes:
         session["state"] = "postventa_bloque"
-        mensaje_error = (
-            "Hay datos obligatorios que faltan o son inválidos, por lo que no "
-            "hemos podido registrar correctamente su solicitud de postventa.\n\n"
-            "Campos a corregir:\n- " + "\n- ".join(faltantes) + "\n\n"
-            "No es necesario que vuelva a copiar todo el formulario; "
-            "en su próximo mensaje puede enviar únicamente los datos faltantes, "
-            "por ejemplo:\n"
-            "Nombre: Juan Pérez\n"
-            "Número de factura: 12345"
+        return build_reply(
+            [
+                "No fue posible registrar correctamente su solicitud de postventa, ya que faltan datos obligatorios.",
+                "Campos a corregir:\n- " + "\n- ".join(faltantes),
+                "Por favor, envíe únicamente los datos faltantes o corregidos (por ejemplo: Número de factura: 12345).",
+            ]
         )
-        return {
-            "action": "reply",
-            "replies": [mensaje_error]
-        }
 
     resumen = (
         "Resumen de su solicitud de postventa:\n"
@@ -1017,14 +843,13 @@ def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
 
     session["state"] = "menu_principal"
 
-    return {
-        "action": "reply",
-        "replies": [
+    return build_reply(
+        [
             "Gracias. Hemos registrado su solicitud de postventa con el siguiente detalle:",
             resumen,
-            "En unos momentos un operador de Selec revisará su caso."
+            "En unos momentos un operador de Selec revisará su caso.",
         ]
-    }
+    )
 
 
 if __name__ == "__main__":

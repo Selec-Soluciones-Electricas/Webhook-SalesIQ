@@ -446,15 +446,13 @@ def salesiq_webhook():
         if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
 
-        # ===== NUEVO: Empresa/Contacto en un solo bloque; Producto en bloque separado =====
+        # Empresa/contacto en un solo bloque; producto en bloque separado
         if state == "cotizacion_empresa_bloque":
             return jsonify(manejar_flujo_cotizacion_empresa_bloque(session, message_text))
 
         if state == "cotizacion_producto_bloque":
-            # Procesa producto en bloque final y crea Account/Deal
             session["state"] = "cotizacion_bloque"
             return jsonify(manejar_flujo_cotizacion_bloque(session, message_text))
-        # ==============================================================================
 
         if state == "cotizacion_bloque":
             return jsonify(manejar_flujo_cotizacion_bloque(session, message_text))
@@ -469,10 +467,6 @@ def salesiq_webhook():
 
 
 def extraer_mensaje(payload: dict) -> str:
-    """
-    Extrae el texto del mensaje desde el JSON de SalesIQ.
-    Intenta primero en payload['message'], luego en payload['request']['message'].
-    """
     msg_obj = payload.get("message")
     if not msg_obj:
         req_obj = payload.get("request") or {}
@@ -492,7 +486,6 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
     texto_norm = normalizar_texto(message_text)
 
     if ("cotiz" in texto_norm or "solicitud cotizacion" in texto_norm or texto_norm == "cotizacion"):
-        # Intro separado + tarjeta/segundo mensaje con los campos de empresa/contacto
         session["state"] = "cotizacion_empresa_bloque"
         session["data"] = {}
         return build_reply(
@@ -532,14 +525,18 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
     }
 
 
+# ===================== CAMBIO SOLICITADO AQUÍ =====================
 def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) -> dict:
     """
     Etapa 1 (un solo mensaje): empresa + rut + contacto + correo + teléfono.
+    Acepta:
+      - Formato con etiquetas (Empresa:..., RUT:..., etc.)
+      - Texto libre por líneas (sin etiquetas), asignando por heurísticas y, si corresponde, por orden.
     Luego solicita producto en etapa 2 (mensaje separado).
     """
     data = session.setdefault("data", {})
     texto = (message_text or "").strip()
-    lineas = [l for l in texto.splitlines() if l.strip()]
+    lineas = [l.strip() for l in texto.splitlines() if l.strip()]
 
     campos = {
         "empresa": data.get("empresa", ""),
@@ -549,10 +546,30 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
         "telefono": data.get("telefono", ""),
     }
 
-    lineas_sin_label = []
+    # Helpers tolerantes (sin exigir copiar formato)
+    def extraer_email(s: str):
+        m = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", s or "")
+        return m.group(0).strip() if m else None
 
+    def limpiar_digitos(s: str) -> str:
+        return re.sub(r"\D", "", s or "")
+
+    def es_rut_plausible(s: str) -> bool:
+        # Acepta RUT con o sin puntos/guión y también solo dígitos (7 a 12) para tolerancia.
+        s_norm = (s or "").strip()
+        if re.search(r"\d{1,3}\.?\d{3}\.?\d{3}-[\dkK]", s_norm):
+            return True
+        d = limpiar_digitos(s_norm)
+        return 7 <= len(d) <= 12
+
+    def es_telefono_plausible(s: str) -> bool:
+        # Acepta teléfono 5 a 12 dígitos (tolerante para evitar bloquear por errores).
+        d = limpiar_digitos(s or "")
+        return 5 <= len(d) <= 12
+
+    # 1) Parseo por etiquetas (si vienen)
+    sin_label = []
     for linea in lineas:
-        linea = linea.strip()
         if ":" in linea:
             etiqueta, valor = linea.split(":", 1)
             etiqueta_norm = normalizar_texto(etiqueta)
@@ -571,69 +588,91 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             elif "telefono" in etiqueta_norm or "teléfono" in etiqueta_norm:
                 campos["telefono"] = valor_clean
             else:
-                lineas_sin_label.append(linea)
+                sin_label.append(linea)
         else:
-            lineas_sin_label.append(linea)
+            sin_label.append(linea)
 
-    # Heurísticas mínimas para completar si vienen sin etiqueta
-    for linea in list(lineas_sin_label):
+    # 2) Heurísticas: email / rut / teléfono en cualquier orden, aunque no haya etiquetas
+    for linea in list(sin_label):
         if not campos["correo"]:
-            m_mail = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", linea)
-            if m_mail:
-                campos["correo"] = m_mail.group(0).strip()
-                lineas_sin_label.remove(linea)
-                continue
+            em = extraer_email(linea)
+            if em:
+                campos["correo"] = em
+                sin_label.remove(linea)
 
-    for linea in list(lineas_sin_label):
-        if not campos["rut"]:
-            m_rut = re.search(r"\d{1,3}\.?\d{3}\.?\d{3}-[\dkK]", linea)
-            if m_rut:
-                campos["rut"] = m_rut.group(0).strip()
-                lineas_sin_label.remove(linea)
-                continue
+    for linea in list(sin_label):
+        if not campos["rut"] and es_rut_plausible(linea):
+            # Preferir el texto original (por si trae guion/k)
+            campos["rut"] = linea.strip()
+            sin_label.remove(linea)
 
-    for linea in list(lineas_sin_label):
-        if not campos["telefono"]:
-            solo_digitos = re.sub(r"\D", "", linea)
-            if 7 <= len(solo_digitos) <= 12 and "@" not in linea:
-                campos["telefono"] = solo_digitos
-                lineas_sin_label.remove(linea)
-                continue
+    for linea in list(sin_label):
+        if not campos["telefono"] and es_telefono_plausible(linea):
+            campos["telefono"] = limpiar_digitos(linea)
+            sin_label.remove(linea)
 
-    if not campos["empresa"] and lineas_sin_label:
-        # primera línea plausible como empresa
-        campos["empresa"] = lineas_sin_label[0].strip()
+    # 3) Asignación por orden para lo restante (evita exigir “copiar/pegar formato”)
+    #    Regla: empresa = primera línea no numérica; contacto = siguiente línea no numérica.
+    def es_mayormente_numerico(s: str) -> bool:
+        d = limpiar_digitos(s)
+        return bool(d) and (len(d) / max(len(s.replace(" ", "")), 1)) > 0.6
+
+    # Empresa
+    if not campos["empresa"]:
+        for linea in list(sin_label):
+            if extraer_email(linea):
+                continue
+            if es_mayormente_numerico(linea):
+                continue
+            campos["empresa"] = linea
+            sin_label.remove(linea)
+            break
+
+    # Contacto
+    if not campos["contacto"]:
+        for linea in list(sin_label):
+            if extraer_email(linea):
+                continue
+            if es_mayormente_numerico(linea):
+                continue
+            campos["contacto"] = linea
+            sin_label.remove(linea)
+            break
 
     data.update(campos)
 
-    # Validación obligatorios etapa 1
-    obligatorios = ["empresa", "rut", "contacto", "correo", "telefono"]
-    nombres_legibles = {
-        "empresa": "Nombre de la empresa",
-        "rut": "RUT",
-        "contacto": "Nombre de contacto",
-        "correo": "Correo",
-        "telefono": "Teléfono",
-    }
+    # 4) Validación (tolerante): no bloquea por RUT sin guión o teléfono “corto”, pero sí exige correo válido.
+    faltantes = []
 
-    faltantes = [nombres_legibles[c] for c in obligatorios if not str(data.get(c, "")).strip()]
+    if not str(data.get("empresa", "")).strip():
+        faltantes.append("Nombre de la empresa")
 
-    if data.get("correo") and not re.search(r"[\w\.-]+@[\w\.-]+\.\w+", str(data["correo"])):
-        if "Correo (formato inválido)" not in faltantes:
-            faltantes.append("Correo (formato inválido)")
+    if not str(data.get("rut", "")).strip():
+        faltantes.append("RUT")
 
-    tel = re.sub(r"\D", "", str(data.get("telefono", "")))
-    if tel and len(tel) < 7:
-        if "Teléfono (formato inválido)" not in faltantes:
-            faltantes.append("Teléfono (formato inválido)")
+    if not str(data.get("contacto", "")).strip():
+        faltantes.append("Nombre de contacto")
+
+    correo_val = str(data.get("correo", "")).strip()
+    if not correo_val:
+        faltantes.append("Correo")
+    elif not re.search(r"[\w\.-]+@[\w\.-]+\.\w+", correo_val):
+        faltantes.append("Correo (formato inválido)")
+
+    tel_val = str(data.get("telefono", "")).strip()
+    if not tel_val:
+        faltantes.append("Teléfono")
 
     if faltantes:
         session["state"] = "cotizacion_empresa_bloque"
         return build_reply(
             [
-                "No fue posible registrar la información, ya que faltan datos obligatorios o presentan un formato inválido.",
+                "No fue posible registrar la información, ya que faltan datos obligatorios o el correo presenta un formato inválido.",
                 "Campos a corregir:\n- " + "\n- ".join(faltantes),
-                "Por favor, envíe únicamente los campos faltantes o corregidos, por ejemplo:\nCorreo: cliente@empresa.com\nTeléfono: 56912345678",
+                (
+                    "Por favor, envíe únicamente los campos faltantes o corregidos. "
+                    "Ejemplo:\nCorreo: cliente@empresa.com\nTeléfono: 56912345678"
+                ),
             ]
         )
 
@@ -653,12 +692,10 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             ),
         ]
     )
+# ===================== FIN CAMBIO SOLICITADO =====================
 
 
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
-    """
-    Acumula la información en session['data'] y valida todo (incluye producto).
-    """
     data = session["data"]
     texto = message_text or ""
     lineas = [l for l in texto.splitlines() if l.strip()]

@@ -130,11 +130,11 @@ def obtener_o_crear_account(campos: dict):
     """
     Busca un Account por Billing_Code (RUT).
     Si existe, devuelve su ID.
-    Si no existe, crea uno nuevo.
+    Si no existe, crea uno nuevo (con fallback si Zoho rechaza campos).
     """
     access_token = get_access_token()
     if not access_token:
-        print("No se pudo obtener access token; se omite Accounts.")
+        print("[obtener_o_crear_account] No se pudo obtener access token; se omite Accounts.")
         return None
 
     headers = {
@@ -142,13 +142,16 @@ def obtener_o_crear_account(campos: dict):
         "Content-Type": "application/json",
     }
 
-    rut = (campos.get("rut") or "").strip()
+    rut_raw = (campos.get("rut") or "").strip()
     empresa = (campos.get("empresa") or "").strip()
     telefono = (campos.get("telefono") or "").strip()
 
-    print(f"[obtener_o_crear_account] rut={rut!r}, empresa={empresa!r}, telefono={telefono!r}")
+    # Normalizar RUT para búsquedas (sin puntos/espacios; mantiene guión y K si viene)
+    rut_norm = rut_raw.replace(".", "").replace(" ", "").upper()
 
-    if not rut and not empresa:
+    print(f"[obtener_o_crear_account] rut_raw={rut_raw!r} rut_norm={rut_norm!r} empresa={empresa!r} telefono={telefono!r}")
+
+    if not rut_norm and not empresa:
         print("[obtener_o_crear_account] Sin RUT ni empresa, no se crea/busca Account.")
         return None
 
@@ -157,36 +160,39 @@ def obtener_o_crear_account(campos: dict):
         {"name": "Joaquin Gonzalez", "id": "4358923000011940001"},
     ]
     owner_elegido = random.choice(owners_posibles)
-    print(f"Owner elegido para Account: {owner_elegido['name']} ({owner_elegido['id']})")
+    print(f"[obtener_o_crear_account] Owner elegido: {owner_elegido['name']} ({owner_elegido['id']})")
 
-    # 1) Buscar por Billing_Code (RUT)
-    if rut:
+    # 1) Buscar por Billing_Code (RUT) si viene
+    if rut_norm:
         try:
-            criteria = f"(Billing_Code:equals:{rut})"
+            criteria = f"(Billing_Code:equals:{rut_norm})"
             search_url = f"{CRM_BASE}/Accounts/search"
             params = {"criteria": criteria}
             resp = requests.get(search_url, headers=headers, params=params, timeout=10)
-            print("=== Búsqueda Account por Billing_Code ===")
+            print("[obtener_o_crear_account] === Búsqueda Account por Billing_Code ===")
             print(resp.status_code, resp.text)
 
             if resp.status_code == 200:
-                data = resp.json()
-                registros = data.get("data") or []
-                if registros:
-                    account_id = registros[0].get("id")
-                    if account_id:
-                        print(f"[obtener_o_crear_account] Account encontrado ID={account_id}")
-                        return account_id
+                body = resp.json()
+                registros = body.get("data") or []
+                if registros and registros[0].get("id"):
+                    account_id = registros[0]["id"]
+                    print(f"[obtener_o_crear_account] Account encontrado ID={account_id}")
+                    return account_id
+            elif resp.status_code == 204:
+                # Sin resultados
+                pass
             else:
-                print("[obtener_o_crear_account] Error en búsqueda:", resp.status_code, resp.text)
+                print("[obtener_o_crear_account] Búsqueda falló. Continuará a creación.")
         except Exception as e:
-            print("ERROR buscando Account:", e)
+            print("[obtener_o_crear_account] ERROR buscando Account:", e)
 
-    # 2) Crear Account nuevo
-    account_name = empresa or rut or "Sin nombre"
-    account_data = {
+    # 2) Crear Account nuevo (intento 1: payload completo)
+    account_name = empresa or rut_norm or "Sin nombre"
+
+    account_data_full = {
         "Account_Name": account_name,
-        "Billing_Code": rut or None,
+        "Billing_Code": rut_norm or None,
         "Phone": telefono or None,
         "Cliente_Selec": "NO",
         "Owner": {"id": owner_elegido["id"]},
@@ -196,28 +202,56 @@ def obtener_o_crear_account(campos: dict):
         "Website": "https://pordefinir.com",
     }
 
-    create_url = f"{CRM_BASE}/Accounts"
-    payload = {"data": [account_data]}
+    def post_account(account_data: dict):
+        create_url = f"{CRM_BASE}/Accounts"
+        payload = {"data": [account_data]}
+        resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
+        print("[obtener_o_crear_account] === Creación Account ===")
+        print(resp.status_code, resp.text)
+        return resp
 
     try:
-        resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
-        print("=== Creación Account ===")
-        print(resp.status_code, resp.text)
+        resp = post_account(account_data_full)
 
         if resp.status_code in (200, 201):
-            data = resp.json()
-            registros = data.get("data") or []
+            body = resp.json()
+            registros = body.get("data") or []
             if registros:
                 details = registros[0].get("details") or registros[0]
                 account_id = details.get("id")
                 print(f"[obtener_o_crear_account] Account creado ID={account_id}")
                 return account_id
-        else:
-            print("[obtener_o_crear_account] Error al crear Account:", resp.status_code, resp.text)
+
+        # Fallback si Zoho rechaza campos (400 invalid_data)
+        if resp.status_code == 400:
+            print("[obtener_o_crear_account] Creación rechazada (400). Reintentando con payload mínimo...")
+
+            account_data_min = {
+                "Account_Name": account_name,
+                "Phone": telefono or None,
+                "Owner": {"id": owner_elegido["id"]},
+            }
+            # Intentar mantener el RUT si el campo existe; si no, Zoho lo rechazará igual.
+            if rut_norm:
+                account_data_min["Billing_Code"] = rut_norm
+
+            resp2 = post_account(account_data_min)
+            if resp2.status_code in (200, 201):
+                body2 = resp2.json()
+                registros2 = body2.get("data") or []
+                if registros2:
+                    details2 = registros2[0].get("details") or registros2[0]
+                    account_id2 = details2.get("id")
+                    print(f"[obtener_o_crear_account] Account creado (fallback) ID={account_id2}")
+                    return account_id2
+            else:
+                print("[obtener_o_crear_account] Fallback falló. Revise el detalle del error en Zoho (resp2).")
+
     except Exception as e:
-        print("ERROR creando Account:", e)
+        print("[obtener_o_crear_account] ERROR creando Account:", e)
 
     return None
+
 
 
 # =====================  Función para fecha de cierre =====================

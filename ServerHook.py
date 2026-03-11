@@ -313,6 +313,7 @@ SENDER_USER_EMAIL = "elian@selec.cl"
 SENDER_USER_NAME = "Elian Barra"
 
 CC_GERENCIA_EMAIL = "gerencia@selec.cl"
+CC_Elian_EMAIL = "elian@selec.cl"
 
 CRM_ORG_UI = "org706345205"
 
@@ -364,7 +365,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
             {
                 "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
                 "to": [{"email": to_email, "user_name": to_name}],
-                "cc": [{"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"}],
+                "cc": [{"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"}, {"email": CC_Elian_EMAIL, "user_name": "Elian Barra"}],
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",

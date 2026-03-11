@@ -949,7 +949,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             "Un ejecutivo de Selec se pondrá en contacto con usted.",
         ]
     )
-
+#Testeo ejemplo GitBook
 
 def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
     data = session["data"]

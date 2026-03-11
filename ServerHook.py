@@ -64,11 +64,41 @@ def normalizar_texto(txt: str) -> str:
     )
     return txt.strip()
 
+def elegir_owner_session(session: dict) -> dict:
+    data = session.setdefault("data", {})
+    owner = data.get("owner_asignado")
+    if owner:
+        return owner
+
+    owner = random.choice(OWNERS_POSIBLES)
+    data["owner_asignado"] = owner
+    return owner
+
+
+def construir_link_chat(payload: dict) -> str:
+    visitor = payload.get("visitor") or {}
+    conversation_id = str(visitor.get("active_conversation_id") or "").strip()
+
+    if not conversation_id:
+        return ""
+
+    template = os.environ.get("SALESIQ_CHAT_URL_TEMPLATE", "").strip()
+    if template:
+        return template.replace("{conversation_id}", conversation_id)
+
+    return ""
 
 # ===================== INTEGRACIÓN ZOHO CRM =====================
 
 CRM_BASE = "https://www.zohoapis.com/crm/v2.1"
 ACCOUNTS_BASE = "https://accounts.zoho.com"
+
+OWNERS_POSIBLES = [
+    {"nombre": "Maria Rengifo", "id": "4358923000003278018", "email": "maria@selec.cl"},
+    {"nombre": "Joaquin Gonzalez", "id": "4358923000011940001", "email": "joaquin@selec.cl"},
+    {"nombre": "Alexander Leiva", "id": "4358923000065728001", "email": "alexander@selec.cl"},
+]
+
 
 access_token_cache = {"token": None, "expires_at": 0.0}
 
@@ -126,7 +156,7 @@ def get_access_token() -> str:
         return None
 
 
-def obtener_o_crear_account(campos: dict):
+def obtener_o_crear_account(campos: dict, owner: dict = None):  
     """
     Busca un Account por Billing_Code (RUT).
     Si existe, devuelve su ID.
@@ -155,12 +185,10 @@ def obtener_o_crear_account(campos: dict):
         print("[obtener_o_crear_account] Sin RUT ni empresa, no se crea/busca Account.")
         return None
 
-    owners_posibles = [
-        {"name": "Maria Rengifo", "id": "4358923000003278018"},
-        {"name": "Joaquin Gonzalez", "id": "4358923000011940001"},
-    ]
-    owner_elegido = random.choice(owners_posibles)
-    print(f"[obtener_o_crear_account] Owner elegido: {owner_elegido['name']} ({owner_elegido['id']})")
+    if owner is None:
+        owner = random.choice(OWNERS_POSIBLES)
+
+    print(f"[obtener_o_crear_account] Owner elegido: {owner['nombre']} ({owner['id']})")
 
     if rut_norm:
         try:
@@ -191,7 +219,7 @@ def obtener_o_crear_account(campos: dict):
         "Billing_Code": rut_norm or None,
         "Phone": telefono or None,
         "Cliente_Selec": "NO",
-        "Owner": {"id": owner_elegido["id"]},
+"Owner": {"id": owner["id"]},
         "Industry": "Por definir",
         "Region1": "Por definir",
         "Ciudad_I": "Por definir",
@@ -225,7 +253,7 @@ def obtener_o_crear_account(campos: dict):
             account_data_min = {
                 "Account_Name": account_name,
                 "Phone": telefono or None,
-                "Owner": {"id": owner_elegido["id"]},
+                "Owner": {"id": owner["id"]},
             }
             if rut_norm:
                 account_data_min["Billing_Code"] = rut_norm
@@ -354,7 +382,82 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
         return None
 
 
-def crear_deal_en_zoho(campos: dict, account_id: str = None):
+def enviar_correo_primer_contacto(owner: dict, payload: dict):
+    access_token = get_access_token()
+    if not access_token:
+        print("[enviar_correo_primer_contacto] No se pudo obtener access token.")
+        return None
+
+    to_email = owner.get("email")
+    to_name = owner.get("nombre", "Ejecutivo")
+
+    if not to_email:
+        print("[enviar_correo_primer_contacto] Owner sin email.")
+        return None
+
+    visitor = payload.get("visitor") or {}
+    visitor_name = visitor.get("name") or visitor.get("email") or visitor.get("phone") or "Cliente sin identificar"
+    visitor_email = visitor.get("email") or ""
+    visitor_phone = visitor.get("phone") or ""
+    conversation_id = str(visitor.get("active_conversation_id") or "").strip()
+    current_page = visitor.get("current_page_url") or ""
+    question = visitor.get("question") or ""
+    chat_link = construir_link_chat(payload)
+
+    subject = f"Nuevo contacto recibido por SalesIQ: {visitor_name}"
+
+    if chat_link:
+        bloque_chat = f'<p><b>Link directo del chat:</b> <a href="{chat_link}">Abrir conversación</a></p>'
+    else:
+        bloque_chat = f"<p><b>ID conversación:</b> {conversation_id or '(no disponible)'}</p>"
+
+    content = f"""
+    <p>Estimado/a {to_name},</p>
+
+    <p>Se informa que un cliente se ha contactado con Selec mediante SalesIQ.</p>
+
+    <p><b>Nombre:</b> {visitor_name}</p>
+    <p><b>Correo:</b> {visitor_email or '(no informado)'}</p>
+    <p><b>Teléfono:</b> {visitor_phone or '(no informado)'}</p>
+    <p><b>Consulta inicial:</b> {question or '(sin mensaje inicial)'}</p>
+    <p><b>Página actual:</b> {current_page or '(no disponible)'}</p>
+    {bloque_chat}
+
+    <p>Por favor, revisar la conversación para continuar con la atención del cliente.</p>
+
+    <p>Saludos cordiales,<br/>Sistema de atención Selec</p>
+    """
+
+    url = f"{CRM_BASE}/Deals/actions/send_mail"
+    headers = {
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+        "Content-Type": "application/json",
+    }
+
+    payload_mail = {
+        "data": [
+            {
+                "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
+                "to": [{"email": to_email, "user_name": to_name}],
+                "cc": [{"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"}],
+                "subject": subject,
+                "content": content,
+                "mail_format": "html",
+            }
+        ]
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload_mail, timeout=10)
+        print("=== Respuesta correo primer contacto ===")
+        print(resp.status_code, resp.text)
+        return resp
+    except Exception as e:
+        print("[enviar_correo_primer_contacto] ERROR:", e)
+        return None
+
+
+def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None):
     access_token = get_access_token()
     if not access_token:
         print("No se pudo obtener access token de Zoho; se omite creación de Deal.")
@@ -372,13 +475,10 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         "Content-Type": "application/json",
     }
 
-    owners_posibles = [
-        {"nombre": "Maria Rengifo", "id": "4358923000003278018", "email": "maria@selec.cl"},
-        {"nombre": "Joaquin Gonzalez", "id": "4358923000011940001", "email": "joaquin@selec.cl"},
-        {"nombre": "Alexander Leiva", "id": "4358923000065728001", "email": "alexander@selec.cl"}
-    ]
-    owner_elegido = random.choice(owners_posibles)
-    print(f"Owner elegido para el Deal: {owner_elegido['nombre']} ({owner_elegido['id']})")
+    if owner is None:
+        owner = random.choice(OWNERS_POSIBLES)
+
+    print(f"[obtener_o_crear_account] Owner elegido: {owner['nombre']} ({owner['id']})")
 
     deal_name = f"Cotización - {campos.get('empresa') or 'Sin empresa'}"
 
@@ -398,8 +498,8 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
         "Stage": "Pendiente por cotizar",
         "Lead_Source": "Chat Whatsapp",
         "Amount": "1",
-        "Owner": {"id": owner_elegido["id"]},
-        "Asignado_a": {"id": owner_elegido["id"]},
+        "Owner": {"id": owner["id"]},
+        "Asignado_a": {"id": owner["id"]},
         "Type": "Industrias",
         "Fecha_hora_1": fecha_hora_1_str,
         "Closing_Date": closing_date_str,
@@ -424,7 +524,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
                     deal_id = details.get("id")
                     print(f"[crear_deal_en_zoho] Deal creado con ID = {deal_id}")
                     if deal_id:
-                        enviar_correo_owner(owner_elegido, deal_id, deal_name, campos)
+                        enviar_correo_owner(owner, deal_id, deal_name, campos)
             except Exception as e:
                 print("Error leyendo respuesta de creación de Deal:", e)
 
@@ -457,7 +557,12 @@ def salesiq_webhook():
 
     if handler == "trigger":
         session["state"] = "menu_principal"
+        owner = elegir_owner_session(session)
+        if not session.get("primer_correo_enviado"):
+            enviar_correo_primer_contacto(owner, payload)
+            session["primer_correo_enviado"] = True
         return jsonify(reply_menu_principal())
+    
 
     if handler == "message":
         message_text = extraer_mensaje(payload)
@@ -829,11 +934,13 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         f"Dirección de entrega: {data.get('direccion_entrega','')}"
     )
 
-    account_id = obtener_o_crear_account(data)
-    crear_deal_en_zoho(data, account_id=account_id)
+    owner = data.get("owner_asignado")
+    account_id = obtener_o_crear_account(data, owner=owner)
+    crear_deal_en_zoho(data, account_id=account_id, owner=owner)
 
     session["state"] = "menu_principal"
     session["data"] = {}
+    session["primer_correo_enviado"] = False
 
     return build_reply(
         [

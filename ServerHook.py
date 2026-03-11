@@ -94,8 +94,7 @@ CRM_BASE = "https://www.zohoapis.com/crm/v2.1"
 ACCOUNTS_BASE = "https://accounts.zoho.com"
 
 OWNERS_POSIBLES = [
-    {"nombre": "Maria Rengifo", "id": "4358923000003278018", "email": "maria@selec.cl"},
-    {"nombre": "Joaquin Gonzalez", "id": "4358923000011940001", "email": "joaquin@selec.cl"},
+
     {"nombre": "Alexander Leiva", "id": "4358923000065728001", "email": "alexander@selec.cl"},
 ]
 

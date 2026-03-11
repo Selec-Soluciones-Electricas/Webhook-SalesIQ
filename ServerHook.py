@@ -162,7 +162,6 @@ def obtener_o_crear_account(campos: dict):
     owner_elegido = random.choice(owners_posibles)
     print(f"[obtener_o_crear_account] Owner elegido: {owner_elegido['name']} ({owner_elegido['id']})")
 
-    # 1) Buscar por Billing_Code (RUT) si viene
     if rut_norm:
         try:
             criteria = f"(Billing_Code:equals:{rut_norm})"
@@ -180,16 +179,13 @@ def obtener_o_crear_account(campos: dict):
                     print(f"[obtener_o_crear_account] Account encontrado ID={account_id}")
                     return account_id
             elif resp.status_code == 204:
-                # Sin resultados
                 pass
             else:
                 print("[obtener_o_crear_account] Búsqueda falló. Continuará a creación.")
         except Exception as e:
             print("[obtener_o_crear_account] ERROR buscando Account:", e)
 
-    # 2) Crear Account nuevo (intento 1: payload completo)
     account_name = empresa or rut_norm or "Sin nombre"
-
     account_data_full = {
         "Account_Name": account_name,
         "Billing_Code": rut_norm or None,
@@ -231,7 +227,6 @@ def obtener_o_crear_account(campos: dict):
                 "Phone": telefono or None,
                 "Owner": {"id": owner_elegido["id"]},
             }
-            # Intentar mantener el RUT si el campo existe; si no, Zoho lo rechazará igual.
             if rut_norm:
                 account_data_min["Billing_Code"] = rut_norm
 
@@ -251,11 +246,6 @@ def obtener_o_crear_account(campos: dict):
         print("[obtener_o_crear_account] ERROR creando Account:", e)
 
     return None
-
-
-
-# =====================  Función para fecha de cierre =====================
-
 def calcular_closing_date(fecha_base: date) -> str:
     """
     - Si día < 15   => último día del mismo mes
@@ -385,6 +375,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None):
     owners_posibles = [
         {"nombre": "Maria Rengifo", "id": "4358923000003278018", "email": "maria@selec.cl"},
         {"nombre": "Joaquin Gonzalez", "id": "4358923000011940001", "email": "joaquin@selec.cl"},
+        {"nombre": "Alexander Leiva", "id": "4358923000065728001", "email": "alexander@selec.cl"}
     ]
     owner_elegido = random.choice(owners_posibles)
     print(f"Owner elegido para el Deal: {owner_elegido['nombre']} ({owner_elegido['id']})")

@@ -500,7 +500,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
         "Amount": "1",
         "Owner": {"id": owner["id"]},
         "Asignado_a": {"id": owner["id"]},
-        "Type": "Web /WSP",
+        "Type": "Industrias",
         "Fecha_hora_1": fecha_hora_1_str,
         "Closing_Date": closing_date_str,
     }

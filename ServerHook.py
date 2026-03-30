@@ -7,7 +7,18 @@ import re
 from datetime import datetime, date, timedelta
 from flask import Flask, request, jsonify
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
 app = Flask(__name__)
+
+if load_dotenv:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # Prioridad: archivo local "credentials"; fallback: .env estándar.
+    load_dotenv(os.path.join(base_dir, "credentials"))
+    load_dotenv(os.path.join(base_dir, ".env"))
 
 # ===================== SESIONES EN MEMORIA =====================
 

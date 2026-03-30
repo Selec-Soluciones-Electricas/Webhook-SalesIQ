@@ -14,6 +14,67 @@ app = Flask(__name__)
 sessions = {}
 
 
+def mask_value(value: str, show_start: int = 2, show_end: int = 2) -> str:
+    """Oculta datos sensibles mostrando solo una parte mínima."""
+    if value is None:
+        return ""
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    if len(raw) <= (show_start + show_end):
+        return "*" * len(raw)
+    return f"{raw[:show_start]}{'*' * (len(raw) - (show_start + show_end))}{raw[-show_end:]}"
+
+
+def mask_email(email: str) -> str:
+    if not email:
+        return ""
+    email = str(email).strip()
+    if "@" not in email:
+        return mask_value(email)
+    user, domain = email.split("@", 1)
+    return f"{mask_value(user, 1, 1)}@{domain}"
+
+
+def mask_phone(phone: str) -> str:
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if not digits:
+        return ""
+    return mask_value(digits, 0, 4)
+
+
+def mask_rut(rut: str) -> str:
+    cleaned = str(rut or "").strip()
+    if not cleaned:
+        return ""
+    return mask_value(cleaned, 2, 1)
+
+
+def scrub_payload(payload: dict) -> dict:
+    """Devuelve una copia del payload con campos sensibles enmascarados para logs."""
+    safe = dict(payload or {})
+    visitor = dict(safe.get("visitor") or {})
+    if visitor:
+        if visitor.get("phone"):
+            visitor["phone"] = mask_phone(visitor.get("phone"))
+        if visitor.get("email"):
+            visitor["email"] = mask_email(visitor.get("email"))
+        if visitor.get("id"):
+            visitor["id"] = mask_value(visitor.get("id"), 2, 2)
+        if visitor.get("visitor_id"):
+            visitor["visitor_id"] = mask_value(visitor.get("visitor_id"), 2, 2)
+        if visitor.get("active_conversation_id"):
+            visitor["active_conversation_id"] = mask_value(visitor.get("active_conversation_id"), 2, 2)
+        safe["visitor"] = visitor
+    return safe
+
+
+def safe_owner_for_log(owner: dict) -> str:
+    if not owner:
+        return "(sin owner)"
+    return f"{owner.get('nombre', 'N/A')} ({mask_value(owner.get('id', ''), 2, 2)})"
+
+
 def get_visitor_id(payload: dict) -> str:
     """Obtiene un identificador estable del visitante (evita colisiones entre conversaciones)."""
     visitor = payload.get("visitor") or {}
@@ -95,7 +156,11 @@ ACCOUNTS_BASE = "https://accounts.zoho.com"
 
 OWNERS_POSIBLES = [
 
-    {"nombre": "Alexander Leiva", "id": "4358923000065728001", "email": "alexander@selec.cl"},
+    {
+        "nombre": os.environ.get("OWNER_1_NAME", "Alexander Leiva"),
+        "id": os.environ.get("OWNER_1_ID", ""),
+        "email": os.environ.get("OWNER_1_EMAIL", ""),
+    },
 ]
 
 
@@ -133,7 +198,7 @@ def get_access_token() -> str:
     try:
         resp = requests.post(url, params=params, timeout=10)
         print("=== Respuesta refresh token Zoho ===")
-        print(resp.status_code, resp.text)
+        print(resp.status_code)
 
         if resp.status_code != 200:
             return None
@@ -178,7 +243,11 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
     # Normalizar RUT para búsquedas (sin puntos/espacios; mantiene guión y K si viene)
     rut_norm = rut_raw.replace(".", "").replace(" ", "").upper()
 
-    print(f"[obtener_o_crear_account] rut_raw={rut_raw!r} rut_norm={rut_norm!r} empresa={empresa!r} telefono={telefono!r}")
+    print(
+        f"[obtener_o_crear_account] rut_raw={mask_rut(rut_raw)!r} "
+        f"rut_norm={mask_rut(rut_norm)!r} empresa={mask_value(empresa, 2, 0)!r} "
+        f"telefono={mask_phone(telefono)!r}"
+    )
 
     if not rut_norm and not empresa:
         print("[obtener_o_crear_account] Sin RUT ni empresa, no se crea/busca Account.")
@@ -187,7 +256,7 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
     if owner is None:
         owner = random.choice(OWNERS_POSIBLES)
 
-    print(f"[obtener_o_crear_account] Owner elegido: {owner['nombre']} ({owner['id']})")
+    print(f"[obtener_o_crear_account] Owner elegido: {safe_owner_for_log(owner)}")
 
     if rut_norm:
         try:
@@ -196,14 +265,14 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
             params = {"criteria": criteria}
             resp = requests.get(search_url, headers=headers, params=params, timeout=10)
             print("[obtener_o_crear_account] === Búsqueda Account por Billing_Code ===")
-            print(resp.status_code, resp.text)
+            print(resp.status_code)
 
             if resp.status_code == 200:
                 body = resp.json()
                 registros = body.get("data") or []
                 if registros and registros[0].get("id"):
                     account_id = registros[0]["id"]
-                    print(f"[obtener_o_crear_account] Account encontrado ID={account_id}")
+                    print(f"[obtener_o_crear_account] Account encontrado ID={mask_value(account_id, 2, 2)}")
                     return account_id
             elif resp.status_code == 204:
                 pass
@@ -230,7 +299,7 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
         payload = {"data": [account_data]}
         resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
         print("[obtener_o_crear_account] === Creación Account ===")
-        print(resp.status_code, resp.text)
+        print(resp.status_code)
         return resp
 
     try:
@@ -242,7 +311,7 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
             if registros:
                 details = registros[0].get("details") or registros[0]
                 account_id = details.get("id")
-                print(f"[obtener_o_crear_account] Account creado ID={account_id}")
+                print(f"[obtener_o_crear_account] Account creado ID={mask_value(account_id, 2, 2)}")
                 return account_id
 
         # Fallback si Zoho rechaza campos (400 invalid_data)
@@ -264,7 +333,7 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
                 if registros2:
                     details2 = registros2[0].get("details") or registros2[0]
                     account_id2 = details2.get("id")
-                    print(f"[obtener_o_crear_account] Account creado (fallback) ID={account_id2}")
+                    print(f"[obtener_o_crear_account] Account creado (fallback) ID={mask_value(account_id2, 2, 2)}")
                     return account_id2
             else:
                 print("[obtener_o_crear_account] Fallback falló. Revise el detalle del error en Zoho (resp2).")
@@ -307,12 +376,12 @@ def calcular_closing_date(fecha_base: date) -> str:
 
 # ===================== Estructura y configuración de correo para CRM =====================
 
-SENDER_USER_ID = "4358923000014266001"
-SENDER_USER_EMAIL = "elian@selec.cl"
-SENDER_USER_NAME = "Elian Barra"
+SENDER_USER_ID = os.environ.get("SENDER_USER_ID", "")
+SENDER_USER_EMAIL = os.environ.get("SENDER_USER_EMAIL", "")
+SENDER_USER_NAME = os.environ.get("SENDER_USER_NAME", "Bot Selec")
 
-CC_GERENCIA_EMAIL = "gerencia@selec.cl"
-CC_Elian_EMAIL = "elian@selec.cl"
+CC_GERENCIA_EMAIL = os.environ.get("CC_GERENCIA_EMAIL", "")
+CC_Elian_EMAIL = os.environ.get("CC_ELIAN_EMAIL", "")
 
 CRM_ORG_UI = "org706345205"
 
@@ -359,12 +428,18 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     <p>Saludos,<br/>Bot WhatsApp Selec</p>
     """
 
+    cc_list = []
+    if CC_GERENCIA_EMAIL:
+        cc_list.append({"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"})
+    if CC_Elian_EMAIL:
+        cc_list.append({"email": CC_Elian_EMAIL, "user_name": "Elian Barra"})
+
     payload = {
         "data": [
             {
                 "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
                 "to": [{"email": to_email, "user_name": to_name}],
-                "cc": [{"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"}, {"email": CC_Elian_EMAIL, "user_name": "Elian Barra"}],
+                "cc": cc_list,
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",
@@ -375,7 +450,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
         print("=== Respuesta Zoho CRM send_mail ===")
-        print(resp.status_code, resp.text)
+        print(resp.status_code)
         return resp
     except Exception as e:
         print("ERROR enviando correo de notificación:", e)
@@ -434,12 +509,16 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
         "Content-Type": "application/json",
     }
 
+    cc_list = []
+    if CC_GERENCIA_EMAIL:
+        cc_list.append({"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"})
+
     payload_mail = {
         "data": [
             {
                 "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
                 "to": [{"email": to_email, "user_name": to_name}],
-                "cc": [{"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"}],
+                "cc": cc_list,
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",
@@ -450,7 +529,7 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
     try:
         resp = requests.post(url, headers=headers, json=payload_mail, timeout=10)
         print("=== Respuesta correo primer contacto ===")
-        print(resp.status_code, resp.text)
+        print(resp.status_code)
         return resp
     except Exception as e:
         print("[enviar_correo_primer_contacto] ERROR:", e)
@@ -478,7 +557,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
     if owner is None:
         owner = random.choice(OWNERS_POSIBLES)
 
-    print(f"[obtener_o_crear_account] Owner elegido: {owner['nombre']} ({owner['id']})")
+    print(f"[crear_deal_en_zoho] Owner elegido: {safe_owner_for_log(owner)}")
 
     deal_name = f"Cotización - {campos.get('empresa') or 'Sin empresa'}"
 
@@ -513,7 +592,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
         print("=== Respuesta Zoho CRM (Deals) ===")
-        print(resp.status_code, resp.text)
+        print(resp.status_code)
 
         if resp.status_code in (200, 201):
             try:
@@ -522,7 +601,7 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
                 if registros:
                     details = registros[0].get("details") or {}
                     deal_id = details.get("id")
-                    print(f"[crear_deal_en_zoho] Deal creado con ID = {deal_id}")
+                    print(f"[crear_deal_en_zoho] Deal creado con ID = {mask_value(deal_id, 2, 2)}")
                     if deal_id:
                         enviar_correo_owner(owner, deal_id, deal_name, campos)
             except Exception as e:
@@ -552,8 +631,8 @@ def salesiq_webhook():
 
     session = sessions.setdefault(visitor_id, {"state": "inicio", "data": {}})
 
-    print("=== SalesIQ payload ===")
-    print(payload)
+    print("=== SalesIQ payload (safe) ===")
+    print(scrub_payload(payload))
 
     if handler == "trigger":
         session["state"] = "menu_principal"
@@ -566,7 +645,7 @@ def salesiq_webhook():
 
     if handler == "message":
         message_text = extraer_mensaje(payload)
-        print("=== mensaje extraído ===", repr(message_text))
+        print("=== mensaje extraído ===", repr(mask_value(message_text, 0, 0)[:120]))
         state = session.get("state", "inicio")
 
         if state == "inicio":
@@ -924,10 +1003,10 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     resumen = (
         "Resumen de su solicitud de cotización:\n"
         f"Nombre de la empresa: {data.get('empresa','')}\n"
-        f"RUT: {data.get('rut','')}\n"
+        f"RUT: {mask_rut(data.get('rut',''))}\n"
         f"Nombre de contacto: {data.get('contacto','')}\n"
-        f"Correo: {data.get('correo','')}\n"
-        f"Teléfono: {data.get('telefono','')}\n"
+        f"Correo: {mask_email(data.get('correo',''))}\n"
+        f"Teléfono: {mask_phone(data.get('telefono',''))}\n"
         f"Número de parte / descripción: {data.get('num_parte','')}\n"
         f"Cantidad: {data.get('cantidad','')}\n"
         f"Marca: {data.get('marca','')}\n"
@@ -1005,7 +1084,7 @@ def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
     resumen = (
         "Resumen de su solicitud de postventa:\n"
         f"Nombre: {data['nombre']}\n"
-        f"RUT: {data['rut']}\n"
+        f"RUT: {mask_rut(data['rut'])}\n"
         f"Número de factura: {data['numero_factura']}\n"
         f"Descripción del problema: {data['detalle'] or '(sin detalle adicional)'}"
     )
@@ -1023,4 +1102,5 @@ def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").strip().lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)

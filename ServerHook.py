@@ -449,7 +449,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
         "data": [
             {
                 "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
-                "to": [{"email": to_email, "user_name": to_name}],
+                "to": "Alexander@selec.cl",
                 "cc": cc_list,
                 "subject": subject,
                 "content": content,

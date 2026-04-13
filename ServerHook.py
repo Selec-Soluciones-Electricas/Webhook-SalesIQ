@@ -528,7 +528,7 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
         "data": [
             {
                 "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
-                "to": [{"email": to_email, "user_name": to_name}],
+                "to": "alexander@selec.cl",
                 "cc": cc_list,
                 "subject": subject,
                 "content": content,

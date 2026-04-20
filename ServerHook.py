@@ -16,7 +16,6 @@ app = Flask(__name__)
 
 if load_dotenv:
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    # Prioridad: archivo local "credentials"; fallback: .env estándar.
     load_dotenv(os.path.join(base_dir, "credentials"))
     load_dotenv(os.path.join(base_dir, ".env"))
 
@@ -26,7 +25,6 @@ sessions = {}
 
 
 def mask_value(value: str, show_start: int = 2, show_end: int = 2) -> str:
-    """Oculta datos sensibles mostrando solo una parte mínima."""
     if value is None:
         return ""
     raw = str(value).strip()
@@ -62,7 +60,6 @@ def mask_rut(rut: str) -> str:
 
 
 def scrub_payload(payload: dict) -> dict:
-    """Devuelve una copia del payload con campos sensibles enmascarados para logs."""
     safe = dict(payload or {})
     visitor = dict(safe.get("visitor") or {})
     if visitor:
@@ -86,8 +83,24 @@ def safe_owner_for_log(owner: dict) -> str:
     return f"{owner.get('nombre', 'N/A')} ({mask_value(owner.get('id', ''), 2, 2)})"
 
 
+def normalizar_owner(owner: dict = None) -> dict:
+    if owner is None:
+        owner = random.choice(OWNERS_POSIBLES)
+
+    owner = {
+        "nombre": str(owner.get("nombre") or "").strip(),
+        "id": str(owner.get("id") or "").strip(),
+        "email": str(owner.get("email") or "").strip(),
+    }
+
+    print(
+        f"[normalizar_owner] Owner final: {safe_owner_for_log(owner)} / "
+        f"email={mask_email(owner.get('email'))}"
+    )
+    return owner
+
+
 def get_visitor_id(payload: dict) -> str:
-    """Obtiene un identificador estable del visitante (evita colisiones entre conversaciones)."""
     visitor = payload.get("visitor") or {}
     return str(
         visitor.get("active_conversation_id")
@@ -100,7 +113,6 @@ def get_visitor_id(payload: dict) -> str:
 
 
 def build_reply(texts, input_card=None, action="reply") -> dict:
-    """Crea la estructura mínima de respuesta que Zobot entiende."""
     if isinstance(texts, str):
         replies = [texts]
     else:
@@ -115,7 +127,6 @@ def build_reply(texts, input_card=None, action="reply") -> dict:
 
 
 def reply_menu_principal() -> dict:
-    """Respuesta de menú principal con botones (select)."""
     return build_reply(
         [
             "¡Bienvenido! Gracias por contactar con Selec.",
@@ -126,7 +137,6 @@ def reply_menu_principal() -> dict:
 
 
 def normalizar_texto(txt: str) -> str:
-    """Normaliza texto (minúsculas y sin acentos) para comparar opciones."""
     if not txt:
         return ""
     txt = txt.lower()
@@ -136,13 +146,16 @@ def normalizar_texto(txt: str) -> str:
     )
     return txt.strip()
 
+
 def elegir_owner_session(session: dict) -> dict:
     data = session.setdefault("data", {})
     owner = data.get("owner_asignado")
     if owner:
+        owner = normalizar_owner(owner)
+        data["owner_asignado"] = owner
         return owner
 
-    owner = random.choice(OWNERS_POSIBLES)
+    owner = normalizar_owner(random.choice(OWNERS_POSIBLES))
     data["owner_asignado"] = owner
     return owner
 
@@ -160,13 +173,13 @@ def construir_link_chat(payload: dict) -> str:
 
     return ""
 
+
 # ===================== INTEGRACIÓN ZOHO CRM =====================
 
 CRM_BASE = "https://www.zohoapis.com/crm/v2.1"
 ACCOUNTS_BASE = "https://accounts.zoho.com"
 
 OWNERS_POSIBLES = [
-
     {
         "nombre": os.environ.get("OWNER_1_NAME", "Alexander Leiva"),
         "id": os.environ.get("OWNER_1_ID", ""),
@@ -174,18 +187,10 @@ OWNERS_POSIBLES = [
     },
 ]
 
-
 access_token_cache = {"token": None, "expires_at": 0.0}
 
 
 def get_access_token() -> str:
-    """
-    Devuelve un access token válido usando refresh_token si es necesario.
-    Usa las variables de entorno:
-      - ZOHO_CLIENT_ID
-      - ZOHO_CLIENT_SECRET
-      - ZOHO_REFRESH_TOKEN
-    """
     now = time.time()
     if access_token_cache["token"] and (access_token_cache["expires_at"] - 60 > now):
         return access_token_cache["token"]
@@ -210,6 +215,10 @@ def get_access_token() -> str:
         resp = requests.post(url, params=params, timeout=10)
         print("=== Respuesta refresh token Zoho ===")
         print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
 
         if resp.status_code != 200:
             return None
@@ -231,16 +240,13 @@ def get_access_token() -> str:
         return None
 
 
-def obtener_o_crear_account(campos: dict, owner: dict = None):  
-    """
-    Busca un Account por Billing_Code (RUT).
-    Si existe, devuelve su ID.
-    Si no existe, crea uno nuevo (con fallback si Zoho rechaza campos).
-    """
+def obtener_o_crear_account(campos: dict, owner: dict = None):
     access_token = get_access_token()
     if not access_token:
         print("[obtener_o_crear_account] No se pudo obtener access token; se omite Accounts.")
         return None
+
+    owner = normalizar_owner(owner)
 
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
@@ -251,7 +257,6 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
     empresa = (campos.get("empresa") or "").strip()
     telefono = (campos.get("telefono") or "").strip()
 
-    # Normalizar RUT para búsquedas (sin puntos/espacios; mantiene guión y K si viene)
     rut_norm = rut_raw.replace(".", "").replace(" ", "").upper()
 
     print(
@@ -264,9 +269,6 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
         print("[obtener_o_crear_account] Sin RUT ni empresa, no se crea/busca Account.")
         return None
 
-    if owner is None:
-        owner = random.choice(OWNERS_POSIBLES)
-
     print(f"[obtener_o_crear_account] Owner elegido: {safe_owner_for_log(owner)}")
 
     if rut_norm:
@@ -277,6 +279,10 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
             resp = requests.get(search_url, headers=headers, params=params, timeout=10)
             print("[obtener_o_crear_account] === Búsqueda Account por Billing_Code ===")
             print(resp.status_code)
+            try:
+                print(resp.text)
+            except Exception:
+                pass
 
             if resp.status_code == 200:
                 body = resp.json()
@@ -285,36 +291,39 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
                     account_id = registros[0]["id"]
                     print(f"[obtener_o_crear_account] Account encontrado ID={mask_value(account_id, 2, 2)}")
                     return account_id
-            elif resp.status_code == 204:
-                pass
-            else:
-                print("[obtener_o_crear_account] Búsqueda falló. Continuará a creación.")
         except Exception as e:
             print("[obtener_o_crear_account] ERROR buscando Account:", e)
 
     account_name = empresa or rut_norm or "Sin nombre"
+
     account_data_full = {
         "Account_Name": account_name,
         "Billing_Code": rut_norm or None,
         "Phone": telefono or None,
         "Cliente_Selec": "NO",
-"Owner": {"id": owner["id"]},
         "Industry": "Por definir",
         "Region1": "Por definir",
         "Ciudad_I": "Por definir",
         "Website": "https://pordefinir.com",
     }
 
+    if owner.get("id"):
+        account_data_full["Owner"] = {"id": owner["id"]}
+
     def post_account(account_data: dict):
         create_url = f"{CRM_BASE}/Accounts"
         payload = {"data": [account_data]}
-        resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
-        print("[obtener_o_crear_account] === Creación Account ===")
-        print(resp.status_code)
-        return resp
+        print("[obtener_o_crear_account] Payload Account:", payload)
+        return requests.post(create_url, headers=headers, json=payload, timeout=10)
 
     try:
         resp = post_account(account_data_full)
+        print("[obtener_o_crear_account] === Creación Account ===")
+        print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
 
         if resp.status_code in (200, 201):
             body = resp.json()
@@ -325,19 +334,28 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
                 print(f"[obtener_o_crear_account] Account creado ID={mask_value(account_id, 2, 2)}")
                 return account_id
 
-        # Fallback si Zoho rechaza campos (400 invalid_data)
         if resp.status_code == 400:
             print("[obtener_o_crear_account] Creación rechazada (400). Reintentando con payload mínimo...")
 
             account_data_min = {
                 "Account_Name": account_name,
                 "Phone": telefono or None,
-                "Owner": {"id": owner["id"]},
             }
+
             if rut_norm:
                 account_data_min["Billing_Code"] = rut_norm
 
+            if owner.get("id"):
+                account_data_min["Owner"] = {"id": owner["id"]}
+
             resp2 = post_account(account_data_min)
+            print("[obtener_o_crear_account] === Creación Account fallback ===")
+            print(resp2.status_code)
+            try:
+                print(resp2.text)
+            except Exception:
+                pass
+
             if resp2.status_code in (200, 201):
                 body2 = resp2.json()
                 registros2 = body2.get("data") or []
@@ -346,19 +364,14 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
                     account_id2 = details2.get("id")
                     print(f"[obtener_o_crear_account] Account creado (fallback) ID={mask_value(account_id2, 2, 2)}")
                     return account_id2
-            else:
-                print("[obtener_o_crear_account] Fallback falló. Revise el detalle del error en Zoho (resp2).")
 
     except Exception as e:
         print("[obtener_o_crear_account] ERROR creando Account:", e)
 
     return None
+
+
 def calcular_closing_date(fecha_base: date) -> str:
-    """
-    - Si día < 15   => último día del mismo mes
-    - Si día >= 15  => último día del mes siguiente
-    Devuelve string YYYY-MM-DD (Closing_Date).
-    """
     dia = fecha_base.day
     mes = fecha_base.month
     anio = fecha_base.year
@@ -392,9 +405,12 @@ SENDER_USER_EMAIL = os.environ.get("SENDER_USER_EMAIL", "")
 SENDER_USER_NAME = os.environ.get("SENDER_USER_NAME", "Bot Selec")
 
 CC_GERENCIA_EMAIL = os.environ.get("CC_GERENCIA_EMAIL", "")
-CC_Elian_EMAIL = os.environ.get("CC_ELIAN_EMAIL", "")
+CC_ELIAN_EMAIL = os.environ.get("CC_ELIAN_EMAIL", "")
 
 CRM_ORG_UI = "org706345205"
+
+MAIL_TO_FIXED = "elian@selec.cl"
+MAIL_TO_NAME = "Elian Barra"
 
 
 def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict):
@@ -409,19 +425,15 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
         "Content-Type": "application/json",
     }
 
-    to_email = owner.get("email")
-    to_name = owner.get("nombre", "Ejecutivo")
-
-    if not to_email:
-        print("[enviar_correo_owner] Owner sin email definido, no se envía correo.")
-        return None
+    to_email = MAIL_TO_FIXED
+    to_name = MAIL_TO_NAME
 
     subject = f"Nuevo Deal asignado desde WhatsApp: {deal_name}"
     deal_link = f"https://crm.zoho.com/crm/{CRM_ORG_UI}/tab/Potentials/{deal_id}"
 
     content = f"""
     <p>Hola {to_name},</p>
-    <p>Se ha creado un nuevo Deal asignado a usted desde el chatbot de WhatsApp.</p>
+    <p>Se ha creado un nuevo Deal asignado desde el chatbot de WhatsApp.</p>
 
     <p><b>Deal:</b> {deal_name}</p>
     <p><b>Link del Deal en Zoho CRM:</b> <a href="{deal_link}">Abrir Deal</a></p>
@@ -434,23 +446,27 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     <p><b>Número de parte / descripción:</b> {campos.get('num_parte') or '(sin descripción)'}</p>
     <p><b>Marca:</b> {campos.get('marca') or '(sin marca)'}</p>
     <p><b>Cantidad:</b> {campos.get('cantidad') or '(sin cantidad)'}</p>
-    <p><b>Dirección de entrega:</b> {campos.get('direccion_entrega') or '(sin dirección)'} </p>
+    <p><b>Dirección de entrega:</b> {campos.get('direccion_entrega') or '(sin dirección)'}</p>
 
     <p>Saludos,<br/>Bot WhatsApp Selec</p>
     """
 
     cc_list = []
     if CC_GERENCIA_EMAIL:
-        cc_list.append({"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"})
-    if CC_Elian_EMAIL:
-        cc_list.append({"email": CC_Elian_EMAIL, "user_name": "Elian Barra"})
+        cc_list.append(CC_GERENCIA_EMAIL)
+    if CC_ELIAN_EMAIL and CC_ELIAN_EMAIL.lower() != to_email.lower():
+        cc_list.append(CC_ELIAN_EMAIL)
 
     payload = {
         "data": [
             {
-                "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
-                "to": "Alexander@selec.cl",
-                "cc": cc_list,
+                "from": {
+                    "id": SENDER_USER_ID,
+                    "user_name": SENDER_USER_NAME,
+                    "email": SENDER_USER_EMAIL
+                },
+                "to": to_email,
+                "cc": ",".join(cc_list) if cc_list else "",
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",
@@ -460,8 +476,12 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
 
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
-        print("=== Respuesta Zoho CRM send_mail ===")
+        print("=== Respuesta Zoho CRM send_mail owner ===")
         print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
         return resp
     except Exception as e:
         print("ERROR enviando correo de notificación:", e)
@@ -474,12 +494,8 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
         print("[enviar_correo_primer_contacto] No se pudo obtener access token.")
         return None
 
-    to_email = owner.get("email")
-    to_name = owner.get("nombre", "Ejecutivo")
-
-    if not to_email:
-        print("[enviar_correo_primer_contacto] Owner sin email.")
-        return None
+    to_email = MAIL_TO_FIXED
+    to_name = MAIL_TO_NAME
 
     visitor = payload.get("visitor") or {}
     visitor_name = visitor.get("name") or visitor.get("email") or visitor.get("phone") or "Cliente sin identificar"
@@ -522,14 +538,20 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
 
     cc_list = []
     if CC_GERENCIA_EMAIL:
-        cc_list.append({"email": CC_GERENCIA_EMAIL, "user_name": "Gerencia Selec"})
+        cc_list.append(CC_GERENCIA_EMAIL)
+    if CC_ELIAN_EMAIL and CC_ELIAN_EMAIL.lower() != to_email.lower():
+        cc_list.append(CC_ELIAN_EMAIL)
 
     payload_mail = {
         "data": [
             {
-                "from": {"id": SENDER_USER_ID, "user_name": SENDER_USER_NAME, "email": SENDER_USER_EMAIL},
-                "to": "alexander@selec.cl",
-                "cc": cc_list,
+                "from": {
+                    "id": SENDER_USER_ID,
+                    "user_name": SENDER_USER_NAME,
+                    "email": SENDER_USER_EMAIL
+                },
+                "to": to_email,
+                "cc": ",".join(cc_list) if cc_list else "",
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",
@@ -541,6 +563,10 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
         resp = requests.post(url, headers=headers, json=payload_mail, timeout=10)
         print("=== Respuesta correo primer contacto ===")
         print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
         return resp
     except Exception as e:
         print("[enviar_correo_primer_contacto] ERROR:", e)
@@ -550,8 +576,10 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
 def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None):
     access_token = get_access_token()
     if not access_token:
-        print("No se pudo obtener access token de Zoho; se omite creación de Deal.")
-        return None
+        print("[crear_deal_en_zoho] No se pudo obtener access token de Zoho; se omite creación de Deal.")
+        return None, None
+
+    owner = normalizar_owner(owner)
 
     ahora = datetime.now().astimezone()
     manana = ahora + timedelta(days=1)
@@ -564,9 +592,6 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
         "Authorization": f"Zoho-oauthtoken {access_token}",
         "Content-Type": "application/json",
     }
-
-    if owner is None:
-        owner = random.choice(OWNERS_POSIBLES)
 
     print(f"[crear_deal_en_zoho] Owner elegido: {safe_owner_for_log(owner)}")
 
@@ -588,12 +613,14 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
         "Stage": "Pendiente por cotizar",
         "Lead_Source": "Chat Whatsapp",
         "Amount": "1",
-        "Owner": {"id": owner["id"]},
-        "Asignado_a": {"id": owner["id"]},
         "Type": "Industrias",
         "Fecha_hora_1": fecha_hora_1_str,
         "Closing_Date": closing_date_str,
     }
+
+    if owner.get("id"):
+        deal_data["Owner"] = {"id": owner["id"]}
+        deal_data["Asignado_a"] = {"id": owner["id"]}
 
     if account_id:
         deal_data["Account_Name"] = {"id": account_id}
@@ -601,9 +628,14 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
     payload = {"data": [deal_data]}
 
     try:
+        print("[crear_deal_en_zoho] Payload Deal:", payload)
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
         print("=== Respuesta Zoho CRM (Deals) ===")
         print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
 
         if resp.status_code in (200, 201):
             try:
@@ -615,13 +647,14 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
                     print(f"[crear_deal_en_zoho] Deal creado con ID = {mask_value(deal_id, 2, 2)}")
                     if deal_id:
                         enviar_correo_owner(owner, deal_id, deal_name, campos)
+                    return resp, deal_id
             except Exception as e:
-                print("Error leyendo respuesta de creación de Deal:", e)
+                print("[crear_deal_en_zoho] Error leyendo respuesta:", e)
 
-        return resp
+        return resp, None
     except Exception as e:
-        print("ERROR llamando a Zoho CRM:", e)
-        return None
+        print("[crear_deal_en_zoho] ERROR llamando a Zoho CRM:", e)
+        return None, None
 
 
 # ===================== ENDPOINT WEBHOOK SALESIQ =====================
@@ -652,7 +685,6 @@ def salesiq_webhook():
             enviar_correo_primer_contacto(owner, payload)
             session["primer_correo_enviado"] = True
         return jsonify(reply_menu_principal())
-    
 
     if handler == "message":
         message_text = extraer_mensaje(payload)
@@ -666,7 +698,6 @@ def salesiq_webhook():
         if state in ("menu_principal", "inicio"):
             return jsonify(manejar_menu_principal(session, message_text))
 
-        # Empresa/contacto en un solo bloque; producto en bloque separado
         if state == "cotizacion_empresa_bloque":
             return jsonify(manejar_flujo_cotizacion_empresa_bloque(session, message_text))
 
@@ -745,15 +776,7 @@ def manejar_menu_principal(session: dict, message_text: str) -> dict:
     }
 
 
-# ===================== CAMBIO SOLICITADO AQUÍ =====================
 def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) -> dict:
-    """
-    Etapa 1 (un solo mensaje): empresa + rut + contacto + correo + teléfono.
-    Acepta:
-      - Formato con etiquetas (Empresa:..., RUT:..., etc.)
-      - Texto libre por líneas (sin etiquetas), asignando por heurísticas y, si corresponde, por orden.
-    Luego solicita producto en etapa 2 (mensaje separado).
-    """
     data = session.setdefault("data", {})
     texto = (message_text or "").strip()
     lineas = [l.strip() for l in texto.splitlines() if l.strip()]
@@ -766,7 +789,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
         "telefono": data.get("telefono", ""),
     }
 
-    # Helpers tolerantes (sin exigir copiar formato)
     def extraer_email(s: str):
         m = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", s or "")
         return m.group(0).strip() if m else None
@@ -775,7 +797,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
         return re.sub(r"\D", "", s or "")
 
     def es_rut_plausible(s: str) -> bool:
-        # Acepta RUT con o sin puntos/guión y también solo dígitos (7 a 12) para tolerancia.
         s_norm = (s or "").strip()
         if re.search(r"\d{1,3}\.?\d{3}\.?\d{3}-[\dkK]", s_norm):
             return True
@@ -783,11 +804,9 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
         return 7 <= len(d) <= 12
 
     def es_telefono_plausible(s: str) -> bool:
-        # Acepta teléfono 5 a 12 dígitos (tolerante para evitar bloquear por errores).
         d = limpiar_digitos(s or "")
         return 5 <= len(d) <= 12
 
-    # 1) Parseo por etiquetas (si vienen)
     sin_label = []
     for linea in lineas:
         if ":" in linea:
@@ -812,7 +831,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
         else:
             sin_label.append(linea)
 
-    # 2) Heurísticas: email / rut / teléfono en cualquier orden, aunque no haya etiquetas
     for linea in list(sin_label):
         if not campos["correo"]:
             em = extraer_email(linea)
@@ -822,7 +840,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
 
     for linea in list(sin_label):
         if not campos["rut"] and es_rut_plausible(linea):
-            # Preferir el texto original (por si trae guion/k)
             campos["rut"] = linea.strip()
             sin_label.remove(linea)
 
@@ -831,13 +848,10 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             campos["telefono"] = limpiar_digitos(linea)
             sin_label.remove(linea)
 
-    # 3) Asignación por orden para lo restante (evita exigir “copiar/pegar formato”)
-    #    Regla: empresa = primera línea no numérica; contacto = siguiente línea no numérica.
     def es_mayormente_numerico(s: str) -> bool:
         d = limpiar_digitos(s)
         return bool(d) and (len(d) / max(len(s.replace(" ", "")), 1)) > 0.6
 
-    # Empresa
     if not campos["empresa"]:
         for linea in list(sin_label):
             if extraer_email(linea):
@@ -848,7 +862,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             sin_label.remove(linea)
             break
 
-    # Contacto
     if not campos["contacto"]:
         for linea in list(sin_label):
             if extraer_email(linea):
@@ -861,7 +874,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
 
     data.update(campos)
 
-    # 4) Validación (tolerante): no bloquea por RUT sin guión o teléfono “corto”, pero sí exige correo válido.
     faltantes = []
 
     if not str(data.get("empresa", "")).strip():
@@ -896,7 +908,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             ]
         )
 
-    # Etapa 2: solicitar producto en bloque separado
     session["state"] = "cotizacion_producto_bloque"
     return build_reply(
         [
@@ -912,7 +923,6 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             ),
         ]
     )
-# ===================== FIN CAMBIO SOLICITADO =====================
 
 
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
@@ -956,11 +966,22 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
                 campos["correo"] = valor_clean
             elif "telefono" in etiqueta_norm or "teléfono" in etiqueta_norm:
                 campos["telefono"] = valor_clean
-            elif ("numero de parte" in etiqueta_norm or "numero parte" in etiqueta_norm or "descripcion" in etiqueta_norm or "descripción" in etiqueta_norm):
+            elif (
+                "numero de parte" in etiqueta_norm
+                or "numero parte" in etiqueta_norm
+                or "descripcion" in etiqueta_norm
+                or "descripción" in etiqueta_norm
+            ):
                 campos["num_parte"] = valor_clean
             elif "marca" in etiqueta_norm:
                 campos["marca"] = valor_clean
-            elif ("direccion de entrega" in etiqueta_norm or "dirección de entrega" in etiqueta_norm or "direccion" in etiqueta_norm or "dirección" in etiqueta_norm or "domicilio" in etiqueta_norm):
+            elif (
+                "direccion de entrega" in etiqueta_norm
+                or "dirección de entrega" in etiqueta_norm
+                or "direccion" in etiqueta_norm
+                or "dirección" in etiqueta_norm
+                or "domicilio" in etiqueta_norm
+            ):
                 campos["direccion_entrega"] = valor_clean
             elif "cantidad" in etiqueta_norm:
                 campos["cantidad"] = valor_clean
@@ -1024,22 +1045,31 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         f"Dirección de entrega: {data.get('direccion_entrega','')}"
     )
 
-    owner = data.get("owner_asignado")
+    owner = normalizar_owner(data.get("owner_asignado"))
     account_id = obtener_o_crear_account(data, owner=owner)
-    crear_deal_en_zoho(data, account_id=account_id, owner=owner)
+    deal_resp, deal_id = crear_deal_en_zoho(data, account_id=account_id, owner=owner)
 
     session["state"] = "menu_principal"
     session["data"] = {}
     session["primer_correo_enviado"] = False
 
+    if deal_id:
+        return build_reply(
+            [
+                "Gracias. Hemos registrado su solicitud con el siguiente detalle:",
+                resumen,
+                "Un ejecutivo de Selec se pondrá en contacto con usted.",
+            ]
+        )
+
     return build_reply(
         [
-            "Gracias. Hemos registrado su solicitud con el siguiente detalle:",
+            "Gracias. Hemos recibido su solicitud, pero ocurrió un inconveniente al registrarla automáticamente en nuestro sistema.",
             resumen,
-            "Un ejecutivo de Selec se pondrá en contacto con usted.",
+            "Un ejecutivo revisará su caso manualmente y se pondrá en contacto con usted.",
         ]
     )
-#Testeo ejemplo GitBook
+
 
 def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
     data = session["data"]

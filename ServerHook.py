@@ -189,7 +189,7 @@ OWNERS_POSIBLES = [
 
 access_token_cache = {"token": None, "expires_at": 0.0}
 
-# Contacto obligatorio en CRM
+# Contacto obligatorio anterior en CRM
 CONTACT_NAME_ID = "4358923000074108191"
 CONTACT_NAME_DEFAULT = "Cliente Web Cliente Web"
 
@@ -371,6 +371,161 @@ def obtener_o_crear_account(campos: dict, owner: dict = None):
 
     except Exception as e:
         print("[obtener_o_crear_account] ERROR creando Account:", e)
+
+    return None
+
+
+def obtener_o_crear_contact(campos: dict, account_id: str = None, owner: dict = None):
+    access_token = get_access_token()
+    if not access_token:
+        print("[obtener_o_crear_contact] No se pudo obtener access token; se omite Contacts.")
+        return None
+
+    owner = normalizar_owner(owner)
+
+    headers = {
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+        "Content-Type": "application/json",
+    }
+
+    contacto_full = str(campos.get("contacto") or "").strip()
+    correo = str(campos.get("correo") or "").strip()
+    telefono = str(campos.get("telefono") or "").strip()
+
+    print(
+        f"[obtener_o_crear_contact] contacto={mask_value(contacto_full, 2, 0)!r} "
+        f"correo={mask_email(correo)!r} telefono={mask_phone(telefono)!r} "
+        f"account_id={mask_value(account_id, 2, 2)!r}"
+    )
+
+    if not correo:
+        print("[obtener_o_crear_contact] Sin correo, no se puede crear/buscar Contact.")
+        return None
+
+    nombre_partes = [p for p in contacto_full.split() if p.strip()]
+    if len(nombre_partes) >= 2:
+        first_name = " ".join(nombre_partes[:-1]).strip()
+        last_name = nombre_partes[-1].strip()
+    elif len(nombre_partes) == 1:
+        first_name = nombre_partes[0].strip()
+        last_name = "Cliente"
+    else:
+        first_name = "Cliente Web"
+        last_name = "Cliente Web"
+
+    try:
+        search_url = f"{CRM_BASE}/Contacts/search"
+        params = {"email": correo}
+        resp = requests.get(search_url, headers=headers, params=params, timeout=10)
+
+        print("[obtener_o_crear_contact] === Búsqueda Contact por email ===")
+        print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
+
+        if resp.status_code == 200:
+            body = resp.json()
+            registros = body.get("data") or []
+            if registros and registros[0].get("id"):
+                contact_id = registros[0]["id"]
+                print(f"[obtener_o_crear_contact] Contact encontrado ID={mask_value(contact_id, 2, 2)}")
+
+                try:
+                    actual = registros[0]
+                    acc_actual = actual.get("Account_Name")
+                    acc_actual_id = ""
+                    if isinstance(acc_actual, dict):
+                        acc_actual_id = str(acc_actual.get("id") or "").strip()
+
+                    needs_update = False
+                    update_data = {"id": contact_id}
+
+                    if account_id and acc_actual_id != account_id:
+                        update_data["Account_Name"] = {"id": account_id}
+                        needs_update = True
+
+                    if not str(actual.get("Cargo") or "").strip():
+                        update_data["Cargo"] = "Cliente Web"
+                        needs_update = True
+
+                    if not str(actual.get("Lead_Source") or "").strip():
+                        update_data["Lead_Source"] = "Chat Pag Web"
+                        needs_update = True
+
+                    if telefono and not str(actual.get("Phone") or "").strip():
+                        update_data["Phone"] = telefono
+                        needs_update = True
+
+                    if needs_update:
+                        payload_upd = {"data": [update_data]}
+                        upd_url = f"{CRM_BASE}/Contacts"
+                        upd_resp = requests.put(upd_url, headers=headers, json=payload_upd, timeout=10)
+
+                        print("[obtener_o_crear_contact] === Update Contact existente ===")
+                        print(upd_resp.status_code)
+                        try:
+                            print(upd_resp.text)
+                        except Exception:
+                            pass
+
+                except Exception as e_upd:
+                    print("[obtener_o_crear_contact] ERROR actualizando Contact existente:", e_upd)
+
+                return contact_id
+
+    except Exception as e:
+        print("[obtener_o_crear_contact] ERROR buscando Contact por email:", e)
+
+    contact_data = {
+        "First_Name": first_name,
+        "Last_Name": last_name,
+        "Cargo": "Cliente Web",
+        "Lead_Source": "Chat Pag Web",
+        "Email": correo,
+    }
+
+    if telefono:
+        contact_data["Phone"] = telefono
+
+    if account_id:
+        contact_data["Account_Name"] = {"id": account_id}
+
+    if owner.get("id"):
+        contact_data["Owner"] = {"id": owner["id"]}
+
+    payload = {"data": [contact_data]}
+    create_url = f"{CRM_BASE}/Contacts"
+
+    try:
+        print("[obtener_o_crear_contact] === Creación Contact ===")
+        print("[obtener_o_crear_contact] Payload Contact:", payload)
+
+        resp = requests.post(create_url, headers=headers, json=payload, timeout=10)
+        print(resp.status_code)
+        try:
+            print(resp.text)
+        except Exception:
+            pass
+
+        if resp.status_code in (200, 201):
+            body = resp.json()
+            registros = body.get("data") or []
+            if registros:
+                details = registros[0].get("details") or registros[0]
+                contact_id = details.get("id")
+                if contact_id:
+                    print(f"[obtener_o_crear_contact] Contact creado ID={mask_value(contact_id, 2, 2)}")
+                    return contact_id
+
+        try:
+            print("[obtener_o_crear_contact] Error JSON:", resp.json())
+        except Exception:
+            pass
+
+    except Exception as e:
+        print("[obtener_o_crear_contact] ERROR creando Contact:", e)
 
     return None
 
@@ -588,7 +743,7 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
         return None
 
 
-def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None):
+def crear_deal_en_zoho(campos: dict, account_id: str = None, contact_id: str = None, owner: dict = None):
     access_token = get_access_token()
     if not access_token:
         print("[crear_deal_en_zoho] No se pudo obtener access token de Zoho; se omite creación de Deal.")
@@ -628,13 +783,9 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
         "Stage": "Pendiente por cotizar",
         "Lead_Source": "Chat Whatsapp",
         "Amount": "1",
-        "Type": "Industrias",
+        "Type": "Web /WSP",
         "Fecha_hora_1": fecha_hora_1_str,
         "Closing_Date": closing_date_str,
-        "Contact_Name": {
-            "id": CONTACT_NAME_ID,
-            "name": CONTACT_NAME_DEFAULT
-        },
     }
 
     if owner.get("id"):
@@ -643,6 +794,14 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
 
     if account_id:
         deal_data["Account_Name"] = {"id": account_id}
+
+    if contact_id:
+        deal_data["Contact_Name"] = {"id": contact_id}
+    else:
+        deal_data["Contact_Name"] = {
+            "id": CONTACT_NAME_ID,
+            "name": CONTACT_NAME_DEFAULT
+        }
 
     payload = {"data": [deal_data]}
 
@@ -1066,7 +1225,8 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
 
     owner = normalizar_owner(data.get("owner_asignado"))
     account_id = obtener_o_crear_account(data, owner=owner)
-    deal_resp, deal_id = crear_deal_en_zoho(data, account_id=account_id, owner=owner)
+    contact_id = obtener_o_crear_contact(data, account_id=account_id, owner=owner)
+    deal_resp, deal_id = crear_deal_en_zoho(data, account_id=account_id, contact_id=contact_id, owner=owner)
 
     session["state"] = "menu_principal"
     session["data"] = {}

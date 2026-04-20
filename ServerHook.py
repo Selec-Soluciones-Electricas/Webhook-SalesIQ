@@ -189,6 +189,10 @@ OWNERS_POSIBLES = [
 
 access_token_cache = {"token": None, "expires_at": 0.0}
 
+# Contacto obligatorio en CRM
+CONTACT_NAME_ID = "4358923000074108191"
+CONTACT_NAME_DEFAULT = "Cliente Web Cliente Web"
+
 
 def get_access_token() -> str:
     now = time.time()
@@ -404,13 +408,13 @@ SENDER_USER_ID = os.environ.get("SENDER_USER_ID", "")
 SENDER_USER_EMAIL = os.environ.get("SENDER_USER_EMAIL", "")
 SENDER_USER_NAME = os.environ.get("SENDER_USER_NAME", "Bot Selec")
 
-CC_GERENCIA_EMAIL = os.environ.get("CC_GERENCIA_EMAIL", "")
-CC_ELIAN_EMAIL = os.environ.get("CC_ELIAN_EMAIL", "")
+CC_GERENCIA_EMAIL = "gerencia@selec.cl"
+CC_ELIAN_EMAIL = "elian@selec.cl"
 
 CRM_ORG_UI = "org706345205"
 
-MAIL_TO_FIXED = "elian@selec.cl"
-MAIL_TO_NAME = "Elian Barra"
+MAIL_TO_FIXED = "alexander@selec.cl"
+MAIL_TO_NAME = "Alexander Leiva"
 
 
 def build_mail_recipient(email: str, name: str = "") -> dict:
@@ -458,11 +462,10 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     <p>Saludos,<br/>Bot WhatsApp Selec</p>
     """
 
-    cc_list = []
-    if CC_GERENCIA_EMAIL:
-        cc_list.append(build_mail_recipient(CC_GERENCIA_EMAIL, "Gerencia Selec"))
-    if CC_ELIAN_EMAIL and CC_ELIAN_EMAIL.lower() != to_email.lower():
-        cc_list.append(build_mail_recipient(CC_ELIAN_EMAIL, "Elian Barra"))
+    cc_list = [
+        build_mail_recipient("elian@selec.cl", "Elian Barra"),
+        build_mail_recipient("gerencia@selec.cl", "Gerencia Selec"),
+    ]
 
     payload = {
         "data": [
@@ -473,7 +476,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
                     "email": SENDER_USER_EMAIL
                 },
                 "to": [
-                    "Alexander@selec.cl"
+                    build_mail_recipient(to_email, to_name)
                 ],
                 "cc": cc_list,
                 "subject": subject,
@@ -546,11 +549,10 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
         "Content-Type": "application/json",
     }
 
-    cc_list = []
-    if CC_GERENCIA_EMAIL:
-        cc_list.append(build_mail_recipient(CC_GERENCIA_EMAIL, "Gerencia Selec"))
-    if CC_ELIAN_EMAIL and CC_ELIAN_EMAIL.lower() != to_email.lower():
-        cc_list.append(build_mail_recipient(CC_ELIAN_EMAIL, "Elian Barra"))
+    cc_list = [
+        build_mail_recipient("elian@selec.cl", "Elian Barra"),
+        build_mail_recipient("gerencia@selec.cl", "Gerencia Selec"),
+    ]
 
     payload_mail = {
         "data": [
@@ -561,7 +563,7 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
                     "email": SENDER_USER_EMAIL
                 },
                 "to": [
-                    "Alexander@selec.cl"
+                    build_mail_recipient(to_email, to_name)
                 ],
                 "cc": cc_list,
                 "subject": subject,
@@ -629,6 +631,10 @@ def crear_deal_en_zoho(campos: dict, account_id: str = None, owner: dict = None)
         "Type": "Industrias",
         "Fecha_hora_1": fecha_hora_1_str,
         "Closing_Date": closing_date_str,
+        "Contact_Name": {
+            "id": CONTACT_NAME_ID,
+            "name": CONTACT_NAME_DEFAULT
+        },
     }
 
     if owner.get("id"):

@@ -413,6 +413,13 @@ MAIL_TO_FIXED = "elian@selec.cl"
 MAIL_TO_NAME = "Elian Barra"
 
 
+def build_mail_recipient(email: str, name: str = "") -> dict:
+    recipient = {"email": str(email).strip()}
+    if str(name or "").strip():
+        recipient["user_name"] = str(name).strip()
+    return recipient
+
+
 def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict):
     access_token = get_access_token()
     if not access_token:
@@ -453,9 +460,9 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
 
     cc_list = []
     if CC_GERENCIA_EMAIL:
-        cc_list.append(CC_GERENCIA_EMAIL)
+        cc_list.append(build_mail_recipient(CC_GERENCIA_EMAIL, "Gerencia Selec"))
     if CC_ELIAN_EMAIL and CC_ELIAN_EMAIL.lower() != to_email.lower():
-        cc_list.append(CC_ELIAN_EMAIL)
+        cc_list.append(build_mail_recipient(CC_ELIAN_EMAIL, "Elian Barra"))
 
     payload = {
         "data": [
@@ -465,8 +472,10 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
                     "user_name": SENDER_USER_NAME,
                     "email": SENDER_USER_EMAIL
                 },
-                "to": to_email,
-                "cc": ",".join(cc_list) if cc_list else "",
+                "to": [
+                    build_mail_recipient(to_email, to_name)
+                ],
+                "cc": cc_list,
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",
@@ -475,6 +484,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
     }
 
     try:
+        print("[enviar_correo_owner] Payload:", payload)
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
         print("=== Respuesta Zoho CRM send_mail owner ===")
         print(resp.status_code)
@@ -538,9 +548,9 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
 
     cc_list = []
     if CC_GERENCIA_EMAIL:
-        cc_list.append(CC_GERENCIA_EMAIL)
+        cc_list.append(build_mail_recipient(CC_GERENCIA_EMAIL, "Gerencia Selec"))
     if CC_ELIAN_EMAIL and CC_ELIAN_EMAIL.lower() != to_email.lower():
-        cc_list.append(CC_ELIAN_EMAIL)
+        cc_list.append(build_mail_recipient(CC_ELIAN_EMAIL, "Elian Barra"))
 
     payload_mail = {
         "data": [
@@ -550,8 +560,10 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
                     "user_name": SENDER_USER_NAME,
                     "email": SENDER_USER_EMAIL
                 },
-                "to": to_email,
-                "cc": ",".join(cc_list) if cc_list else "",
+                "to": [
+                    build_mail_recipient(to_email, to_name)
+                ],
+                "cc": cc_list,
                 "subject": subject,
                 "content": content,
                 "mail_format": "html",
@@ -560,6 +572,7 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
     }
 
     try:
+        print("[enviar_correo_primer_contacto] Payload:", payload_mail)
         resp = requests.post(url, headers=headers, json=payload_mail, timeout=10)
         print("=== Respuesta correo primer contacto ===")
         print(resp.status_code)

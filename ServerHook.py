@@ -473,7 +473,7 @@ def enviar_correo_owner(owner: dict, deal_id: str, deal_name: str, campos: dict)
                     "email": SENDER_USER_EMAIL
                 },
                 "to": [
-                    build_mail_recipient(to_email, to_name)
+                    "Alexander@selec.cl"
                 ],
                 "cc": cc_list,
                 "subject": subject,
@@ -561,7 +561,7 @@ def enviar_correo_primer_contacto(owner: dict, payload: dict):
                     "email": SENDER_USER_EMAIL
                 },
                 "to": [
-                    build_mail_recipient(to_email, to_name)
+                    "Alexander@selec.cl"
                 ],
                 "cc": cc_list,
                 "subject": subject,

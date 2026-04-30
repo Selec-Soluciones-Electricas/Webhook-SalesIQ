@@ -181,7 +181,7 @@ ACCOUNTS_BASE = "https://accounts.zoho.com"
 
 OWNERS_POSIBLES = [
     {
-        "nombre": os.environ.get("OWNER_1_NAME", "Alexander Leiva"),
+        "nombre": os.environ.get("OWNER_1_NAME", "Joaquin Gonzales"),
         "id": os.environ.get("OWNER_1_ID", ""),
         "email": os.environ.get("OWNER_1_EMAIL", ""),
     },
@@ -568,8 +568,8 @@ CC_ELIAN_EMAIL = "elian@selec.cl"
 
 CRM_ORG_UI = "org706345205"
 
-MAIL_TO_FIXED = "alexander@selec.cl"
-MAIL_TO_NAME = "Alexander Leiva"
+MAIL_TO_FIXED = "Joaquin@selec.cl"
+MAIL_TO_NAME = "Joaquin Gonzales"
 
 
 def build_mail_recipient(email: str, name: str = "") -> dict:
@@ -1050,7 +1050,12 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
             sin_label.remove(linea)
             break
 
+
+
     data.update(campos)
+
+
+
 
     faltantes = []
 
@@ -1102,7 +1107,7 @@ def manejar_flujo_cotizacion_empresa_bloque(session: dict, message_text: str) ->
         ]
     )
 
-
+ # Manejar flujo de cotizacion bloque.
 def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
     data = session["data"]
     texto = message_text or ""
@@ -1177,7 +1182,7 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
             campos["cantidad"] = numeros[-1].replace(",", ".")
 
     data.update(campos)
-
+    # Listado para definir campos obligatorios
     obligatorios = ["empresa", "rut", "contacto", "correo", "telefono", "num_parte", "cantidad"]
     nombres_legibles = {
         "empresa": "Nombre de la empresa",
@@ -1249,8 +1254,8 @@ def manejar_flujo_cotizacion_bloque(session: dict, message_text: str) -> dict:
         ]
     )
 
-
 def manejar_flujo_postventa_bloque(session: dict, message_text: str) -> dict:
+
     data = session["data"]
     texto = message_text or ""
     lineas = texto.splitlines()

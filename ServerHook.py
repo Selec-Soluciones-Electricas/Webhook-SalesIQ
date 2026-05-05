@@ -181,7 +181,7 @@ ACCOUNTS_BASE = "https://accounts.zoho.com"
 
 OWNERS_POSIBLES = [
     {
-        "nombre": os.environ.get("OWNER_1_NAME", "Joaquin Gonzales"),
+        "nombre": os.environ.get("OWNER_1_NAME", "Joaquin Gonzalez"),
         "id": os.environ.get("OWNER_1_ID", ""),
         "email": os.environ.get("OWNER_1_EMAIL", ""),
     },
@@ -569,7 +569,7 @@ CC_ELIAN_EMAIL = "elian@selec.cl"
 CRM_ORG_UI = "org706345205"
 
 MAIL_TO_FIXED = "Joaquin@selec.cl"
-MAIL_TO_NAME = "Joaquin Gonzales"
+MAIL_TO_NAME = "Joaquin Gonzalez"
 
 
 def build_mail_recipient(email: str, name: str = "") -> dict:

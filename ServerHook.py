@@ -842,8 +842,11 @@ def salesiq_webhook():
     session = sessions.setdefault(visitor_id, {"state": "inicio", "data": {}})
 
     visitor = payload.get("visitor") or {}
+    visitid = visitor.get("visitid")
     conversation_id = str(visitor.get("active_conversation_id") or "").strip()
-    if conversation_id:
+    if visitid:
+        session["data"]["num_chat"] = f"#{visitid}"
+    elif conversation_id:
         session["data"]["num_chat"] = conversation_id
 
     print("=== SalesIQ payload (safe) ===")

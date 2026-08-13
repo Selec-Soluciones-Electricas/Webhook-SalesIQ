@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Selec - Chat de Prueba</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f2f4f7;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .chat-container {
+            width: 420px;
+            height: 700px;
+            background: white;
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: #1f2937;
+            color: white;
+            padding: 18px;
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .chat-header small {
+            display: block;
+            margin-top: 5px;
+            font-size: 12px;
+            font-weight: normal;
+            opacity: 0.8;
+        }
+
+        .messages {
+            flex: 1;
+            padding: 18px;
+            overflow-y: auto;
+            background: #f8fafc;
+        }
+
+        .message {
+            margin-bottom: 12px;
+            display: flex;
+        }
+
+        .message.bot {
+            justify-content: flex-start;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .bubble {
+            max-width: 80%;
+            padding: 11px 14px;
+            border-radius: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .bot .bubble {
+            background: #e5e7eb;
+            color: #111827;
+            border-bottom-left-radius: 3px;
+        }
+
+        .user .bubble {
+            background: #2563eb;
+            color: white;
+            border-bottom-right-radius: 3px;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 12px;
+            border-top: 1px solid #ddd;
+            background: white;
+            gap: 8px;
+        }
+
+        .input-area textarea {
+            flex: 1;
+            resize: none;
+            height: 45px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .input-area textarea:focus {
+            border-color: #2563eb;
+        }
+
+        .input-area button {
+            width: 80px;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .input-area button:hover {
+            background: #1d4ed8;
+        }
+
+        .status {
+            padding: 5px 12px;
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            background: #fafafa;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="chat-container">
+
+    <div class="chat-header">
+        Selec
+        <small>Chat de prueba</small>
+    </div>
+
+    <div id="messages" class="messages"></div>
+
+    <div id="status" class="status">
+        Conectado al servidor de pruebas
+    </div>
+
+    <div class="input-area">
+        <textarea
+            id="messageInput"
+            placeholder="Escribe tu mensaje..."
+        ></textarea>
+
+        <button onclick="sendMessage()">
+            Enviar
+        </button>
+    </div>
+
+</div>
+
+<script>
+
+const VISITOR_ID = "test-visitor-001";
+
+const messagesContainer = document.getElementById("messages");
+const messageInput = document.getElementById("messageInput");
+const statusElement = document.getElementById("status");
+
+
+function addMessage(text, type) {
+
+    const message = document.createElement("div");
+    message.className = `message ${type}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+
+    bubble.textContent = text;
+
+    message.appendChild(bubble);
+    messagesContainer.appendChild(message);
+
+    messagesContainer.scrollTop =
+        messagesContainer.scrollHeight;
+}
+
+
+function addBotReplies(response) {
+
+    if (!response) {
+        return;
+    }
+
+    if (Array.isArray(response.replies)) {
+
+        response.replies.forEach(reply => {
+
+            addMessage(reply, "bot");
+
+        });
+
+    }
+}
+
+
+async function sendMessage() {
+
+    const text = messageInput.value.trim();
+
+    if (!text) {
+        return;
+    }
+
+    addMessage(text, "user");
+
+    messageInput.value = "";
+
+    statusElement.textContent = "Enviando...";
+
+    const payload = {
+
+        handler: "message",
+
+        visitor: {
+            id: VISITOR_ID
+        },
+
+        message: {
+            text: text
+        }
+
+    };
+
+    try {
+
+        const response = await fetch("/salesiq-webhook", {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify(payload)
+
+        });
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+
+        }
+
+        const data = await response.json();
+
+        addBotReplies(data);
+
+        statusElement.textContent =
+            "Conectado al servidor de pruebas";
+
+    } catch (error) {
+
+        console.error(error);
+
+        addMessage(
+            "Error al comunicarse con el servidor.",
+            "bot"
+        );
+
+        statusElement.textContent =
+            "Error de conexión";
+
+    }
+}
+
+
+messageInput.addEventListener(
+    "keydown",
+    function(event) {
+
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
+
+            event.preventDefault();
+
+            sendMessage();
+
+        }
+
+    }
+);
+
+
+window.addEventListener(
+    "load",
+    function() {
+
+        addMessage(
+            "Chat de prueba iniciado. Escribe un mensaje para comenzar.",
+            "bot"
+        );
+
+    }
+);
+
+</script>
+
+</body>
+</html>

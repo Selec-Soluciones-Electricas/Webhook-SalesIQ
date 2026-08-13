@@ -167,7 +167,11 @@
 
 <script>
 
-const VISITOR_ID = "test-visitor-001";
+const VISITOR_ID =
+    "test-visitor-" +
+    Date.now() +
+    "-" +
+    Math.random().toString(36).substring(2, 8);
 
 const messagesContainer = document.getElementById("messages");
 const messageInput = document.getElementById("messageInput");

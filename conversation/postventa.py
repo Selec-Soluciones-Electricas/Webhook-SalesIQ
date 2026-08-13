@@ -48,18 +48,15 @@ def manejar_flujo_postventa_bloque(
         ),
     }
 
-    # =========================================================
-    # EXTRAER CAMPOS
-    # =========================================================
+    sin_label = []
 
     for linea in lineas:
 
         if ":" not in linea:
 
-            if linea:
-                campos["detalle"] = (
-                    f"{campos['detalle']} {linea}"
-                ).strip()
+            sin_label.append(
+                linea
+            )
 
             continue
 
@@ -70,28 +67,35 @@ def manejar_flujo_postventa_bloque(
 
         etiqueta_norm = normalizar_texto(
             etiqueta
-        )
+        ).strip().lower()
 
         valor_clean = valor.strip()
 
         if not valor_clean:
             continue
 
-        if "nombre" in etiqueta_norm:
-
-            campos["nombre"] = valor_clean
-
-        elif etiqueta_norm in (
-            "rut",
-            "r.u.t",
-            "r u t",
+        if (
+            "nombre" in etiqueta_norm
         ):
 
-            campos["rut"] = valor_clean
+            campos["nombre"] = (
+                valor_clean
+            )
+
+        elif (
+            etiqueta_norm in (
+                "rut",
+                "r.u.t",
+                "r u t",
+            )
+        ):
+
+            campos["rut"] = (
+                valor_clean
+            )
 
         elif (
             "factura" in etiqueta_norm
-            or "n° factura" in etiqueta_norm
         ):
 
             campos["numero_factura"] = (
@@ -100,7 +104,7 @@ def manejar_flujo_postventa_bloque(
 
         elif (
             "descripcion" in etiqueta_norm
-            or "descripción" in etiqueta_norm
+            or "detalle" in etiqueta_norm
             or "problema" in etiqueta_norm
         ):
 
@@ -108,34 +112,71 @@ def manejar_flujo_postventa_bloque(
                 valor_clean
             )
 
-    data.update(campos)
+        else:
 
-    # =========================================================
-    # VALIDAR CAMPOS OBLIGATORIOS
-    # =========================================================
-
-    obligatorios = [
-        "nombre",
-        "rut",
-        "numero_factura",
-    ]
-
-    nombres_legibles = {
-        "nombre": "Nombre",
-        "rut": "RUT",
-        "numero_factura": "Número de factura",
-    }
-
-    faltantes = [
-        nombres_legibles[campo]
-        for campo in obligatorios
-        if not str(
-            data.get(
-                campo,
-                ""
+            sin_label.append(
+                linea
             )
-        ).strip()
-    ]
+
+    if not campos["nombre"] and sin_label:
+
+        campos["nombre"] = (
+            sin_label.pop(0)
+        )
+
+    if not campos["rut"] and sin_label:
+
+        campos["rut"] = (
+            sin_label.pop(0)
+        )
+
+    if (
+        not campos["numero_factura"]
+        and sin_label
+    ):
+
+        campos["numero_factura"] = (
+            sin_label.pop(0)
+        )
+
+    if (
+        not campos["detalle"]
+        and sin_label
+    ):
+
+        campos["detalle"] = (
+            " ".join(sin_label)
+        )
+
+    data.update(
+        campos
+    )
+
+    faltantes = []
+
+    if not str(
+        data.get("nombre", "")
+    ).strip():
+
+        faltantes.append(
+            "Nombre"
+        )
+
+    if not str(
+        data.get("rut", "")
+    ).strip():
+
+        faltantes.append(
+            "RUT"
+        )
+
+    if not str(
+        data.get("numero_factura", "")
+    ).strip():
+
+        faltantes.append(
+            "Número de factura"
+        )
 
     if faltantes:
 
@@ -144,28 +185,17 @@ def manejar_flujo_postventa_bloque(
         )
 
         return build_reply(
-            [
-                (
-                    "No fue posible registrar correctamente "
-                    "su solicitud de postventa, ya que "
-                    "faltan datos obligatorios."
-                ),
-                (
-                    "Campos a corregir:\n- "
-                    + "\n- ".join(faltantes)
-                ),
-                (
-                    "Por favor, envíe únicamente los datos "
-                    "faltantes o corregidos. "
-                    "Por ejemplo:\n"
-                    "Número de factura: 12345"
-                ),
-            ]
+            "No fue posible registrar correctamente su solicitud de postventa, "
+            "ya que faltan datos obligatorios.\n\n"
+            "Campos a corregir:\n- "
+            + "\n- ".join(faltantes)
+            + "\n\n"
+            "Por favor, envíe únicamente los datos faltantes o corregidos.\n"
+            "Ejemplo:\n"
+            "Nombre: Juan Pérez\n"
+            "RUT: 12345678-9\n"
+            "Número de factura: 12345"
         )
-
-    # =========================================================
-    # CONSTRUIR RESUMEN
-    # =========================================================
 
     resumen = (
         "Resumen de su solicitud de postventa:\n"
@@ -177,22 +207,12 @@ def manejar_flujo_postventa_bloque(
         f"{data['detalle'] or '(sin detalle adicional)'}"
     )
 
-    # =========================================================
-    # FINALIZAR
-    # =========================================================
-
-    session["state"] = "menu_principal"
+    session["state"] = (
+        "menu_principal"
+    )
 
     return build_reply(
-        [
-            (
-                "Gracias. Hemos registrado su solicitud "
-                "de postventa con el siguiente detalle:"
-            ),
-            resumen,
-            (
-                "En unos momentos un operador de Selec "
-                "revisará su caso."
-            ),
-        ]
+        "Gracias. Hemos registrado su solicitud de postventa con el siguiente detalle:\n\n"
+        + resumen
+        + "\n\nEn unos momentos un operador de Selec revisará su caso."
     )

@@ -4,6 +4,10 @@ import unicodedata
 from services.zoho_service import normalizar_owner
 
 
+# =========================================================
+# NORMALIZAR TEXTO
+# =========================================================
+
 def normalizar_texto(s: str) -> str:
     """
     Normaliza un texto para facilitar las comparaciones.
@@ -31,6 +35,10 @@ def normalizar_texto(s: str) -> str:
     return s
 
 
+# =========================================================
+# CONSTRUIR RESPUESTAS
+# =========================================================
+
 def build_reply(
     texts,
     input_card=None,
@@ -38,23 +46,86 @@ def build_reply(
 ) -> dict:
     """
     Construye una respuesta estándar para SalesIQ.
+
+    IMPORTANTE:
+    Cuando el código entrega varios textos en una lista,
+    estos representan partes de una misma respuesta lógica.
+
+    En lugar de enviarlos como múltiples mensajes separados
+    a SalesIQ, se unen en un único mensaje utilizando
+    saltos de línea.
+
+    Esto evita conversaciones fragmentadas como:
+
+        Mensaje 1
+        Mensaje 2
+        Mensaje 3
+        Mensaje 4
+
+    y las transforma en:
+
+        Mensaje 1
+
+        Mensaje 2
+
+        Mensaje 3
+
+        Mensaje 4
+
+    De esta manera el usuario recibe una sola respuesta
+    más limpia y natural.
+
+    Si se recibe directamente un string, se mantiene
+    como una única respuesta.
     """
 
     if isinstance(texts, str):
-        replies = [texts]
+
+        mensaje = texts.strip()
+
     else:
-        replies = list(texts)
+
+        partes = []
+
+        for texto in texts or []:
+
+            if texto is None:
+                continue
+
+            texto_clean = str(
+                texto
+            ).strip()
+
+            if not texto_clean:
+                continue
+
+            partes.append(
+                texto_clean
+            )
+
+        mensaje = "\n\n".join(
+            partes
+        )
 
     response = {
         "action": action,
-        "replies": replies,
+        "replies": [
+            mensaje
+        ],
     }
 
     if input_card is not None:
-        response["input"] = input_card
+
+        response["input"] = (
+            input_card
+        )
 
     return response
 
+
+# =========================================================
+# MENÚ PRINCIPAL
+# =========================================================
 
 def reply_menu_principal() -> dict:
     """
@@ -62,17 +133,24 @@ def reply_menu_principal() -> dict:
     """
 
     return build_reply(
-        [
-            "¿Qué necesitas?",
-            "1. Cotizar productos",
-            "2. Soporte postventa",
-        ]
+        (
+            "¿Qué necesitas?\n\n"
+            "1. Cotizar productos\n"
+            "2. Soporte postventa"
+        )
     )
 
 
-def elegir_owner_session(session: dict) -> dict:
+# =========================================================
+# OWNER DE LA SESIÓN
+# =========================================================
+
+def elegir_owner_session(
+    session: dict
+) -> dict:
     """
     Obtiene el owner asignado a la sesión.
+
     Si ya existe, lo normaliza.
     Si no existe, obtiene uno nuevo.
     """
@@ -92,36 +170,84 @@ def elegir_owner_session(session: dict) -> dict:
             owner
         )
 
-        data["owner_asignado"] = owner
+        data[
+            "owner_asignado"
+        ] = owner
 
         return owner
 
     owner = normalizar_owner()
 
-    data["owner_asignado"] = owner
+    data[
+        "owner_asignado"
+    ] = owner
 
     return owner
 
 
-def manejar_menu_principal(
-    session: dict,
+# =========================================================
+# DETECTAR SALUDO
+# =========================================================
+
+def es_saludo_inicio(
     message_text: str
-) -> dict:
+) -> bool:
     """
-    Procesa la opción seleccionada desde
-    el menú principal.
+    Determina si el mensaje corresponde
+    a un saludo simple utilizado para
+    iniciar o reiniciar la conversación.
     """
 
     texto_norm = normalizar_texto(
         message_text
     )
 
-    if es_opcion_cotizacion(texto_norm):
+    saludos = {
+        "hola",
+        "holaa",
+        "holaaa",
+        "buenas",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "hello",
+        "hi",
+    }
+
+    return (
+        texto_norm in saludos
+    )
+
+
+# =========================================================
+# MENÚ PRINCIPAL
+# =========================================================
+
+def manejar_menu_principal(
+    session: dict,
+    message_text: str
+) -> dict:
+    """
+    Procesa la opción seleccionada
+    desde el menú principal.
+    """
+
+    texto_norm = normalizar_texto(
+        message_text
+    )
+
+    if es_opcion_cotizacion(
+        texto_norm
+    ):
+
         return iniciar_cotizacion(
             session
         )
 
-    if es_opcion_postventa(texto_norm):
+    if es_opcion_postventa(
+        texto_norm
+    ):
+
         return iniciar_postventa(
             session
         )
@@ -130,6 +256,10 @@ def manejar_menu_principal(
         session
     )
 
+
+# =========================================================
+# OPCIÓN COTIZACIÓN
+# =========================================================
 
 def es_opcion_cotizacion(
     texto_norm: str
@@ -147,6 +277,10 @@ def es_opcion_cotizacion(
     )
 
 
+# =========================================================
+# OPCIÓN POSTVENTA
+# =========================================================
+
 def es_opcion_postventa(
     texto_norm: str
 ) -> bool:
@@ -163,6 +297,10 @@ def es_opcion_postventa(
     )
 
 
+# =========================================================
+# INICIAR COTIZACIÓN
+# =========================================================
+
 def iniciar_cotizacion(
     session: dict
 ) -> dict:
@@ -177,21 +315,25 @@ def iniciar_cotizacion(
     session["data"] = {}
 
     return build_reply(
-        [
-            "Perfecto, trabajaremos en su solicitud de cotización.",
-            (
-                "Por favor, complete los siguientes datos de la "
-                "empresa y del contacto en un solo mensaje "
-                "(puede copiar y pegar este formato):\n\n"
-                "Nombre de la empresa:\n"
-                "RUT:\n"
-                "Nombre de contacto:\n"
-                "Correo:\n"
-                "Teléfono:"
-            ),
-        ]
+        (
+            "Perfecto, trabajaremos en su "
+            "solicitud de cotización.\n\n"
+            "Por favor, complete los siguientes "
+            "datos de la empresa y del contacto "
+            "en un solo mensaje. Puede copiar "
+            "y completar este formato:\n\n"
+            "Nombre de la empresa:\n"
+            "RUT:\n"
+            "Nombre de contacto:\n"
+            "Correo:\n"
+            "Teléfono:"
+        )
     )
 
+
+# =========================================================
+# INICIAR POSTVENTA
+# =========================================================
 
 def iniciar_postventa(
     session: dict
@@ -206,38 +348,44 @@ def iniciar_postventa(
 
     session["data"] = {}
 
-    formulario = (
-        "Perfecto, trabajaremos en su solicitud de postventa.\n"
-        "Por favor, responda copiando y completando este formulario "
-        "en un solo mensaje:\n\n"
-        "Nombre:\n"
-        "RUT:\n"
-        "Número de factura:\n"
-        "Descripción del problema:"
-    )
-
     return build_reply(
-        formulario
+        (
+            "Perfecto, trabajaremos en su "
+            "solicitud de postventa.\n\n"
+            "Por favor, complete este formulario "
+            "en un solo mensaje:\n\n"
+            "Nombre:\n"
+            "RUT:\n"
+            "Número de factura:\n"
+            "Descripción del problema:"
+        )
     )
 
+
+# =========================================================
+# OPCIÓN INVÁLIDA
+# =========================================================
 
 def derivar_a_operador(
     session: dict
 ) -> dict:
     """
-    Deriva al visitante a un ejecutivo
-    cuando la opción no es reconocida.
+    Maneja una opción inválida del menú principal.
+
+    No deriva al operador ni cambia a otro flujo:
+    mantiene al visitante en el menú para que
+    pueda ingresar 1 o 2.
     """
 
     session["state"] = (
-        "derivado_operador"
+        "menu_principal"
     )
 
-    return {
-        "action": "forward",
-        "replies": [
-            "En este momento no puedo gestionar esta solicitud automáticamente.",
-            "Le derivaré con un ejecutivo para que pueda asistirle.",
-        ],
-    }
-
+    return build_reply(
+        (
+            "La opción ingresada no es válida.\n\n"
+            "Por favor, seleccione una opción:\n"
+            "1. Cotizar productos\n"
+            "2. Soporte postventa"
+        )
+    )

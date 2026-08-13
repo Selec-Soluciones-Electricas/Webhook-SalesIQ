@@ -2,6 +2,7 @@ import os
 import time
 import random
 import requests
+import unicodedata
 
 from datetime import date, datetime, timedelta
 
@@ -114,6 +115,7 @@ def get_access_token() -> str:
     }
 
     try:
+
         resp = requests.post(
             url,
             params=params,
@@ -123,10 +125,15 @@ def get_access_token() -> str:
         print(
             "=== Respuesta refresh token Zoho ==="
         )
-        print(resp.status_code)
+
+        print(
+            resp.status_code
+        )
 
         try:
-            print(resp.text)
+            print(
+                resp.text
+            )
         except Exception:
             pass
 
@@ -147,12 +154,15 @@ def get_access_token() -> str:
         )
 
         if not token:
+
             print(
                 "ERROR: respuesta sin access_token."
             )
+
             return None
 
         access_token_cache["token"] = token
+
         access_token_cache["expires_at"] = (
             time.time() + expires_in
         )
@@ -160,10 +170,12 @@ def get_access_token() -> str:
         return token
 
     except Exception as e:
+
         print(
             "ERROR llamando a Zoho Accounts:",
             e,
         )
+
         return None
 
 
@@ -171,13 +183,16 @@ def get_access_token() -> str:
 # NORMALIZAR OWNER
 # =========================================================
 
-def normalizar_owner(owner: dict = None) -> dict:
+def normalizar_owner(
+    owner: dict = None
+) -> dict:
     """
     Normaliza la información del owner para asegurar
     una estructura consistente.
     """
 
     if owner is None:
+
         owner = random.choice(
             OWNERS_POSIBLES
         )
@@ -232,10 +247,12 @@ def calcular_closing_date(
     if dia >= 15:
 
         if mes == 12:
+
             target_mes = 1
             target_anio = anio + 1
 
         else:
+
             target_mes = mes + 1
 
     if target_mes in (
@@ -244,6 +261,7 @@ def calcular_closing_date(
         9,
         11,
     ):
+
         ultimo_dia = 30
 
     elif target_mes == 2:
@@ -263,6 +281,7 @@ def calcular_closing_date(
         )
 
     else:
+
         ultimo_dia = 31
 
     fecha_cierre = date(
@@ -273,6 +292,44 @@ def calcular_closing_date(
 
     return fecha_cierre.strftime(
         "%Y-%m-%d"
+    )
+
+
+# =========================================================
+# NORMALIZAR NOMBRE DE EMPRESA PARA COMPARACION
+# =========================================================
+
+def normalizar_nombre_empresa(
+    nombre: str
+) -> str:
+    """
+    Normaliza el nombre de empresa solo para comparar
+    registros.
+
+    No modifica el nombre que se guarda en Zoho.
+
+    Ignora:
+    - mayúsculas/minúsculas
+    - tildes
+    - espacios repetidos
+    """
+
+    texto = str(
+        nombre or ""
+    ).strip().lower()
+
+    texto = unicodedata.normalize(
+        "NFKD",
+        texto,
+    ).encode(
+        "ascii",
+        "ignore",
+    ).decode(
+        "ascii"
+    )
+
+    return " ".join(
+        texto.split()
     )
 
 
@@ -288,14 +345,18 @@ def obtener_o_crear_account(
     access_token = get_access_token()
 
     if not access_token:
+
         print(
             "[obtener_o_crear_account] "
             "No se pudo obtener access token; "
             "se omite Accounts."
         )
+
         return None
 
-    owner = normalizar_owner(owner)
+    owner = normalizar_owner(
+        owner
+    )
 
     headers = {
         "Authorization": (
@@ -317,6 +378,10 @@ def obtener_o_crear_account(
         campos.get("telefono") or ""
     ).strip()
 
+    # -----------------------------------------------------
+    # NORMALIZAR RUT
+    # -----------------------------------------------------
+
     rut_norm = (
         rut_raw
         .replace(".", "")
@@ -324,20 +389,29 @@ def obtener_o_crear_account(
         .upper()
     )
 
+    empresa_norm = (
+        normalizar_nombre_empresa(
+            empresa
+        )
+    )
+
     print(
         f"[obtener_o_crear_account] "
         f"rut_raw={mask_rut(rut_raw)!r} "
         f"rut_norm={mask_rut(rut_norm)!r} "
         f"empresa={mask_value(empresa, 2, 0)!r} "
+        f"empresa_norm={mask_value(empresa_norm, 2, 0)!r} "
         f"telefono={mask_phone(telefono)!r}"
     )
 
     if not rut_norm and not empresa:
+
         print(
             "[obtener_o_crear_account] "
             "Sin RUT ni empresa, "
             "no se crea/busca Account."
         )
+
         return None
 
     print(
@@ -346,13 +420,40 @@ def obtener_o_crear_account(
         f"{safe_owner_for_log(owner)}"
     )
 
-    # -----------------------------------------------------
-    # BUSCAR POR RUT
-    # -----------------------------------------------------
+    # =====================================================
+    # BUSCAR ACCOUNT POR RUT
+    # =====================================================
+    #
+    # IMPORTANTE:
+    #
+    # EL RUT ES EL IDENTIFICADOR PRINCIPAL.
+    #
+    # Si encontramos una Account con el mismo RUT,
+    # debemos reutilizarla aunque el nombre de empresa
+    # recibido desde el chat sea diferente.
+    #
+    # Esto evita:
+    #
+    # Empresa A
+    # RUT 12345678-9
+    #
+    # y posteriormente:
+    #
+    # Empresa B
+    # RUT 12345678-9
+    #
+    # creando dos Accounts distintas.
+    #
+    # En este sistema:
+    #
+    # RUT existente = Account existente.
+    #
+    # =====================================================
 
     if rut_norm:
 
         try:
+
             criteria = (
                 f"(Billing_Code:equals:{rut_norm})"
             )
@@ -376,10 +477,17 @@ def obtener_o_crear_account(
                 "[obtener_o_crear_account] "
                 "=== Búsqueda Account por Billing_Code ==="
             )
-            print(resp.status_code)
+
+            print(
+                resp.status_code
+            )
 
             try:
-                print(resp.text)
+
+                print(
+                    resp.text
+                )
+
             except Exception:
                 pass
 
@@ -391,39 +499,112 @@ def obtener_o_crear_account(
                     body.get("data") or []
                 )
 
-                if (
-                    registros
-                    and registros[0].get("id")
-                ):
-
-                    account_id = (
-                        registros[0]["id"]
-                    )
+                if registros:
 
                     print(
                         "[obtener_o_crear_account] "
-                        f"Account encontrado "
-                        f"ID={mask_value(account_id, 2, 2)}"
+                        f"Se encontraron {len(registros)} "
+                        "Account(s) con el mismo RUT."
                     )
 
-                    return account_id
+                    # -------------------------------------------------
+                    # RUT ENCONTRADO
+                    # -------------------------------------------------
+                    #
+                    # AQUÍ ESTÁ LA CORRECCIÓN PRINCIPAL.
+                    #
+                    # Antes se comparaba:
+                    #
+                    # RUT + nombre empresa
+                    #
+                    # Ahora:
+                    #
+                    # RUT = Account
+                    #
+                    # El nombre enviado por el usuario NO hace que
+                    # descartemos la Account.
+                    # -------------------------------------------------
+
+                    for registro in registros:
+
+                        account_id = str(
+                            registro.get("id") or ""
+                        ).strip()
+
+                        if not account_id:
+                            continue
+
+                        account_name_actual = str(
+                            registro.get(
+                                "Account_Name"
+                            ) or ""
+                        ).strip()
+
+                        account_rut = str(
+                            registro.get(
+                                "Billing_Code"
+                            ) or ""
+                        ).strip()
+
+                        print(
+                            "[obtener_o_crear_account] "
+                            "Account encontrada por RUT: "
+                            f"ID={mask_value(account_id, 2, 2)} "
+                            f"empresa={mask_value(account_name_actual, 2, 0)!r} "
+                            f"rut={mask_rut(account_rut)!r}"
+                        )
+
+                        print(
+                            "[obtener_o_crear_account] "
+                            "RUT existente detectado. "
+                            "Se reutilizará esta Account "
+                            "sin importar si el nombre recibido "
+                            "desde el chat es diferente."
+                        )
+
+                        return str(
+                            account_id
+                        )
+
+            elif resp.status_code == 204:
+
+                print(
+                    "[obtener_o_crear_account] "
+                    "Zoho no encontró Account "
+                    "para el RUT indicado."
+                )
+
+            else:
+
+                print(
+                    "[obtener_o_crear_account] "
+                    "La búsqueda por RUT devolvió "
+                    f"HTTP {resp.status_code}."
+                )
 
         except Exception as e:
 
             print(
                 "[obtener_o_crear_account] "
-                "ERROR buscando Account:",
+                "ERROR buscando Account por RUT:",
                 e,
             )
 
-    # -----------------------------------------------------
-    # CREAR ACCOUNT
-    # -----------------------------------------------------
+    # =====================================================
+    # SI NO EXISTE RUT EN ZOHO:
+    # CREAR ACCOUNT NUEVO
+    # =====================================================
 
     account_name = (
         empresa
         or rut_norm
         or "Sin nombre"
+    )
+
+    print(
+        "[obtener_o_crear_account] "
+        "No existe Account con el RUT indicado. "
+        "Se creará una nueva Account."
     )
 
     account_data_full = {
@@ -438,6 +619,7 @@ def obtener_o_crear_account(
     }
 
     if owner.get("id"):
+
         account_data_full["Owner"] = {
             "id": owner["id"]
         }
@@ -445,6 +627,7 @@ def obtener_o_crear_account(
     def post_account(
         account_data: dict,
     ):
+
         create_url = (
             f"{CRM_BASE}/Accounts"
         )
@@ -478,10 +661,17 @@ def obtener_o_crear_account(
             "[obtener_o_crear_account] "
             "=== Creación Account ==="
         )
-        print(resp.status_code)
+
+        print(
+            resp.status_code
+        )
 
         try:
-            print(resp.text)
+
+            print(
+                resp.text
+            )
+
         except Exception:
             pass
 
@@ -499,25 +689,33 @@ def obtener_o_crear_account(
             if registros:
 
                 details = (
-                    registros[0].get("details")
+                    registros[0].get(
+                        "details"
+                    )
                     or registros[0]
                 )
 
                 account_id = (
-                    details.get("id")
+                    details.get(
+                        "id"
+                    )
                 )
 
-                print(
-                    "[obtener_o_crear_account] "
-                    f"Account creado "
-                    f"ID={mask_value(account_id, 2, 2)}"
-                )
+                if account_id:
 
-                return account_id
+                    print(
+                        "[obtener_o_crear_account] "
+                        f"Account creada "
+                        f"ID={mask_value(account_id, 2, 2)}"
+                    )
 
-        # -------------------------------------------------
+                    return str(
+                        account_id
+                    )
+
+        # =================================================
         # FALLBACK
-        # -------------------------------------------------
+        # =================================================
 
         if resp.status_code == 400:
 
@@ -533,11 +731,13 @@ def obtener_o_crear_account(
             }
 
             if rut_norm:
+
                 account_data_min[
                     "Billing_Code"
                 ] = rut_norm
 
             if owner.get("id"):
+
                 account_data_min[
                     "Owner"
                 ] = {
@@ -552,10 +752,17 @@ def obtener_o_crear_account(
                 "[obtener_o_crear_account] "
                 "=== Creación Account fallback ==="
             )
-            print(resp2.status_code)
+
+            print(
+                resp2.status_code
+            )
 
             try:
-                print(resp2.text)
+
+                print(
+                    resp2.text
+                )
+
             except Exception:
                 pass
 
@@ -580,17 +787,23 @@ def obtener_o_crear_account(
                     )
 
                     account_id2 = (
-                        details2.get("id")
+                        details2.get(
+                            "id"
+                        )
                     )
 
-                    print(
-                        "[obtener_o_crear_account] "
-                        f"Account creado "
-                        f"(fallback) "
-                        f"ID={mask_value(account_id2, 2, 2)}"
-                    )
+                    if account_id2:
 
-                    return account_id2
+                        print(
+                            "[obtener_o_crear_account] "
+                            f"Account creada "
+                            f"(fallback) "
+                            f"ID={mask_value(account_id2, 2, 2)}"
+                        )
+
+                        return str(
+                            account_id2
+                        )
 
     except Exception as e:
 
@@ -616,14 +829,18 @@ def obtener_o_crear_contact(
     access_token = get_access_token()
 
     if not access_token:
+
         print(
             "[obtener_o_crear_contact] "
             "No se pudo obtener access token; "
             "se omite Contacts."
         )
+
         return None
 
-    owner = normalizar_owner(owner)
+    owner = normalizar_owner(
+        owner
+    )
 
     headers = {
         "Authorization": (
@@ -663,9 +880,9 @@ def obtener_o_crear_contact(
 
         return None
 
-    # -----------------------------------------------------
+    # =====================================================
     # SEPARAR NOMBRE
-    # -----------------------------------------------------
+    # =====================================================
 
     nombre_partes = [
         p
@@ -698,9 +915,9 @@ def obtener_o_crear_contact(
         first_name = "Cliente Web"
         last_name = "Cliente Web"
 
-    # -----------------------------------------------------
+    # =====================================================
     # BUSCAR CONTACT POR EMAIL
-    # -----------------------------------------------------
+    # =====================================================
 
     try:
 
@@ -723,10 +940,17 @@ def obtener_o_crear_contact(
             "[obtener_o_crear_contact] "
             "=== Búsqueda Contact por email ==="
         )
-        print(resp.status_code)
+
+        print(
+            resp.status_code
+        )
 
         try:
-            print(resp.text)
+
+            print(
+                resp.text
+            )
+
         except Exception:
             pass
 
@@ -753,9 +977,9 @@ def obtener_o_crear_contact(
                     f"ID={mask_value(contact_id, 2, 2)}"
                 )
 
-                # -----------------------------------------
+                # =========================================
                 # ACTUALIZAR CONTACT EXISTENTE
-                # -----------------------------------------
+                # =========================================
 
                 try:
 
@@ -800,6 +1024,12 @@ def obtener_o_crear_contact(
                         }
 
                         needs_update = True
+
+                        print(
+                            "[obtener_o_crear_contact] "
+                            "Actualizando Account_Name "
+                            "del Contact existente."
+                        )
 
                     if not str(
                         actual.get("Cargo")
@@ -860,14 +1090,17 @@ def obtener_o_crear_contact(
                             "[obtener_o_crear_contact] "
                             "=== Update Contact existente ==="
                         )
+
                         print(
                             upd_resp.status_code
                         )
 
                         try:
+
                             print(
                                 upd_resp.text
                             )
+
                         except Exception:
                             pass
 
@@ -890,9 +1123,9 @@ def obtener_o_crear_contact(
             e,
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # CREAR CONTACT
-    # -----------------------------------------------------
+    # =====================================================
 
     contact_data = {
         "First_Name": first_name,
@@ -903,11 +1136,13 @@ def obtener_o_crear_contact(
     }
 
     if telefono:
+
         contact_data[
             "Phone"
         ] = telefono
 
     if account_id:
+
         contact_data[
             "Account_Name"
         ] = {
@@ -915,6 +1150,7 @@ def obtener_o_crear_contact(
         }
 
     if owner.get("id"):
+
         contact_data[
             "Owner"
         ] = {
@@ -951,10 +1187,16 @@ def obtener_o_crear_contact(
             timeout=10,
         )
 
-        print(resp.status_code)
+        print(
+            resp.status_code
+        )
 
         try:
-            print(resp.text)
+
+            print(
+                resp.text
+            )
+
         except Exception:
             pass
 
@@ -979,7 +1221,9 @@ def obtener_o_crear_contact(
                 )
 
                 contact_id = (
-                    details.get("id")
+                    details.get(
+                        "id"
+                    )
                 )
 
                 if contact_id:
@@ -993,11 +1237,13 @@ def obtener_o_crear_contact(
                     return contact_id
 
         try:
+
             print(
                 "[obtener_o_crear_contact] "
                 "Error JSON:",
                 resp.json(),
             )
+
         except Exception:
             pass
 
@@ -1035,12 +1281,15 @@ def crear_deal_en_zoho(
 
         return None, None
 
-    owner = normalizar_owner(owner)
+    owner = normalizar_owner(
+        owner
+    )
 
     ahora = datetime.now().astimezone()
 
-    manana = ahora + timedelta(
-        days=1
+    manana = (
+        ahora
+        + timedelta(days=1)
     )
 
     fecha_hora_1_str = (
@@ -1077,6 +1326,10 @@ def crear_deal_en_zoho(
         f"{safe_owner_for_log(owner)}"
     )
 
+    # =====================================================
+    # NOMBRE DEL DEAL
+    # =====================================================
+
     deal_name = (
         f"Cotización - "
         f"{campos.get('empresa') or 'Sin empresa'}"
@@ -1107,6 +1360,10 @@ def crear_deal_en_zoho(
         "Closing_Date": closing_date_str,
     }
 
+    # =====================================================
+    # OWNER
+    # =====================================================
+
     if owner.get("id"):
 
         deal_data["Owner"] = {
@@ -1117,21 +1374,61 @@ def crear_deal_en_zoho(
             "id": owner["id"]
         }
 
+    # =====================================================
+    # ACCOUNT
+    # =====================================================
+    #
+    # IMPORTANTE:
+    #
+    # account_id viene de obtener_o_crear_account().
+    #
+    # Como esa función ahora utiliza el RUT como
+    # identificador principal, este account_id representa
+    # la Account correcta para el RUT recibido.
+    #
+    # Por lo tanto el Deal queda asociado a esa Account.
+    #
+    # =====================================================
+
     if account_id:
 
-        deal_data["Account_Name"] = {
-            "id": account_id
+        deal_data[
+            "Account_Name"
+        ] = {
+            "id": str(account_id)
         }
+
+        print(
+            "[crear_deal_en_zoho] "
+            "Account_Name asignado al Deal: "
+            f"{mask_value(str(account_id), 2, 2)}"
+        )
+
+    else:
+
+        print(
+            "[crear_deal_en_zoho] "
+            "ADVERTENCIA: no se recibió account_id. "
+            "El Deal se creará sin Account_Name."
+        )
+
+    # =====================================================
+    # CONTACT
+    # =====================================================
 
     if contact_id:
 
-        deal_data["Contact_Name"] = {
-            "id": contact_id
+        deal_data[
+            "Contact_Name"
+        ] = {
+            "id": str(contact_id)
         }
 
     else:
 
-        deal_data["Contact_Name"] = {
+        deal_data[
+            "Contact_Name"
+        ] = {
             "id": CONTACT_NAME_ID,
             "name": CONTACT_NAME_DEFAULT,
         }
@@ -1166,7 +1463,11 @@ def crear_deal_en_zoho(
         )
 
         try:
-            print(resp.text)
+
+            print(
+                resp.text
+            )
+
         except Exception:
             pass
 
@@ -1193,7 +1494,9 @@ def crear_deal_en_zoho(
                     )
 
                     deal_id = (
-                        details.get("id")
+                        details.get(
+                            "id"
+                        )
                     )
 
                     print(
@@ -1203,7 +1506,11 @@ def crear_deal_en_zoho(
                     )
 
                     if deal_id:
-                        return resp, deal_id
+
+                        return (
+                            resp,
+                            deal_id
+                        )
 
             except Exception as e:
 
@@ -1213,7 +1520,10 @@ def crear_deal_en_zoho(
                     e,
                 )
 
-        return resp, None
+        return (
+            resp,
+            None
+        )
 
     except Exception as e:
 
@@ -1223,5 +1533,7 @@ def crear_deal_en_zoho(
             e,
         )
 
-        return None, None
-
+        return (
+            None,
+            None
+        )

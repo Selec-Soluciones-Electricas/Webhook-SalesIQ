@@ -26,7 +26,7 @@ SENDER_USER_NAME = os.environ.get(
 MAIL_TO_FIXED = "Joaquin@selec.cl"
 MAIL_TO_NAME = "Joaquin Gonzalez"
 
-CC_GERENCIA_EMAIL = "gerencia@selec.cl"
+CC_GERENCIA_EMAIL = ""
 CC_ELIAN_EMAIL = "elian@selec.cl"
 
 CRM_ORG_UI = "org706345205"
@@ -101,7 +101,7 @@ def construir_cc() -> list:
         ),
         build_mail_recipient(
             CC_GERENCIA_EMAIL,
-            "Gerencia Selec"
+            ""
         ),
     ]
 
@@ -311,6 +311,187 @@ Bot WhatsApp Selec
 
 
 # =========================================================
+# CORREO DE SOLICITUD DE COTIZACION INCOMPLETA
+# =========================================================
+
+def enviar_correo_solicitud_incompleta(
+    data: dict,
+    faltantes: list,
+    ultimo_mensaje: str = "",
+):
+    """
+    Envía una alerta a los ejecutivos cuando una solicitud
+    de cotización no puede completarse correctamente por
+    campos faltantes o inválidos.
+    """
+
+    access_token = get_access_token()
+
+    if not access_token:
+        print(
+            "[enviar_correo_solicitud_incompleta] "
+            "No se pudo obtener access token; "
+            "no se envía correo."
+        )
+        return None
+
+    url = (
+        f"{CRM_BASE}/Deals/actions/send_mail"
+    )
+
+    headers = {
+        "Authorization": (
+            f"Zoho-oauthtoken {access_token}"
+        ),
+        "Content-Type": "application/json",
+    }
+
+    empresa = str(
+        data.get("empresa") or ""
+    ).strip()
+
+    identificador = (
+        empresa
+        or str(data.get("contacto") or "").strip()
+        or str(data.get("correo") or "").strip()
+        or "Cliente sin identificar"
+    )
+
+    subject = (
+        "⚠️ Solicitud de cotización no completada: "
+        f"{identificador}"
+    )
+
+    def valor(campo: str, defecto: str) -> str:
+        value = str(data.get(campo) or "").strip()
+        return value or defecto
+
+    faltantes_html = ""
+
+    if faltantes:
+        faltantes_html = (
+            "<ul>"
+            + "".join(
+                f"<li>{item}</li>"
+                for item in faltantes
+            )
+            + "</ul>"
+        )
+    else:
+        faltantes_html = "<p>(No especificado)</p>"
+
+    mensaje_html = (
+        str(ultimo_mensaje or "").strip()
+        or "(sin mensaje disponible)"
+    )
+
+    content = f"""
+<p>Estimados,</p>
+
+<p>
+Se informa que una <b>solicitud de cotización no pudo ser
+completada correctamente</b> mediante el chatbot de WhatsApp.
+</p>
+
+<p>
+Por favor, revisar la conversación y contactar al cliente si es necesario.
+</p>
+
+<hr>
+
+<h3>Datos recibidos</h3>
+
+<p><b>Empresa:</b> {valor("empresa", "(sin empresa)")}</p>
+<p><b>RUT:</b> {valor("rut", "(sin RUT)")}</p>
+<p><b>Contacto:</b> {valor("contacto", "(sin contacto)")}</p>
+<p><b>Correo:</b> {valor("correo", "(sin correo)")}</p>
+<p><b>Teléfono:</b> {valor("telefono", "(sin teléfono)")}</p>
+<p><b>Número de parte / descripción:</b> {valor("num_parte", "(sin descripción)")}</p>
+<p><b>Marca:</b> {valor("marca", "(sin marca)")}</p>
+<p><b>Cantidad:</b> {valor("cantidad", "(sin cantidad)")}</p>
+<p><b>Dirección de entrega:</b> {valor("direccion_entrega", "(sin dirección)")}</p>
+
+<hr>
+
+<h3>Campos faltantes o inválidos</h3>
+{faltantes_html}
+
+<h3>Último mensaje recibido</h3>
+<p>
+<pre style="white-space: pre-wrap; font-family: Arial, sans-serif;">{mensaje_html}</pre>
+</p>
+
+<hr>
+
+<p>
+Saludos,<br>
+Sistema de atención Selec
+</p>
+"""
+
+    payload_mail = {
+        "data": [
+            {
+                "from": construir_remitente(),
+
+                "to": [
+                    build_mail_recipient(
+                        MAIL_TO_FIXED,
+                        MAIL_TO_NAME,
+                    )
+                ],
+
+                "cc": construir_cc(),
+
+                "subject": subject,
+
+                "content": content,
+
+                "mail_format": "html",
+            }
+        ]
+    }
+
+    try:
+        print(
+            "[enviar_correo_solicitud_incompleta] "
+            "Enviando alerta..."
+        )
+
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload_mail,
+            timeout=10,
+        )
+
+        print(
+            "=== Respuesta correo solicitud incompleta ==="
+        )
+
+        print(
+            "Status:",
+            response.status_code,
+        )
+
+        print(
+            "Respuesta:",
+            response.text,
+        )
+
+        return response
+
+    except Exception as error:
+        print(
+            "[enviar_correo_solicitud_incompleta] "
+            "ERROR:",
+            error,
+        )
+
+        return None
+
+
+# =========================================================
 # CORREO DE PRIMER CONTACTO
 # =========================================================
 
@@ -509,4 +690,3 @@ Sistema de atención Selec
         )
 
         return None
-

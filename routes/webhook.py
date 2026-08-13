@@ -7,6 +7,7 @@ from conversation.state_machine import (
     elegir_owner_session,
     manejar_menu_principal,
     reply_menu_principal,
+    es_saludo_inicio,
 )
 
 from conversation.quotation import (
@@ -201,6 +202,34 @@ def procesar_mensaje(session, payload):
         )
     )
 
+    # =========================================================
+    # REINICIO POR SALUDO
+    # =========================================================
+    #
+    # El frontend de pruebas utiliza un visitor_id fijo. Si una
+    # sesión anterior quedó a mitad de una cotización, un nuevo
+    # "hola" no debe interpretarse como datos de empresa.
+    #
+    # El saludo tiene prioridad sobre cualquier estado anterior.
+    # =========================================================
+
+    if es_saludo_inicio(message_text):
+
+        print(
+            "[procesar_mensaje] Saludo detectado. "
+            "Reiniciando sesión."
+        )
+
+        session.clear()
+        session["state"] = "menu_principal"
+        session["data"] = {}
+
+        elegir_owner_session(session)
+
+        return jsonify(
+            reply_menu_principal()
+        )
+
     state = session.get(
         "state",
         "inicio"
@@ -294,4 +323,3 @@ def procesar_mensaje(session, payload):
     return jsonify(
         reply_menu_principal()
     )
-

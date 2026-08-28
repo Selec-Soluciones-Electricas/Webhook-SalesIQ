@@ -130,14 +130,24 @@ def build_reply(
 def reply_menu_principal() -> dict:
     """
     Respuesta inicial del menú principal.
+
+    En WhatsApp, SalesIQ mostrará estas dos opciones
+    como botones mediante un input de tipo "select".
     """
 
     return build_reply(
         (
-            "¿Qué necesitas?\n\n"
-            "1. Cotizar productos\n"
-            "2. Soporte postventa"
-        )
+            "Gracias por contactarse con SELEC. "
+            "Por favor seleccione una de las siguientes "
+            "opciones para atender su solicitud:"
+        ),
+        input_card={
+            "type": "select",
+            "options": [
+                "Solicitud cotización",
+                "Servicio postventa",
+            ],
+        },
     )
 
 
@@ -286,14 +296,15 @@ def es_opcion_postventa(
 ) -> bool:
     """
     Determina si el mensaje corresponde
-    a una solicitud de postventa.
+    a una solicitud de posventa/postventa.
     """
 
     return (
         texto_norm == "2"
+        or "posventa" in texto_norm
+        or "pos venta" in texto_norm
         or "postventa" in texto_norm
         or "post venta" in texto_norm
-        or "servicio postventa" in texto_norm
     )
 
 
@@ -356,8 +367,8 @@ def iniciar_postventa(
             "en un solo mensaje:\n\n"
             "Nombre:\n"
             "RUT:\n"
-            "Número de factura:\n"
-            "Descripción del problema:"
+            "Número de factura y/o Orden de compra:\n"
+            "Descripción de la situación:"
         )
     )
 
@@ -370,22 +381,22 @@ def derivar_a_operador(
     session: dict
 ) -> dict:
     """
-    Maneja una opción inválida del menú principal.
-
-    No deriva al operador ni cambia a otro flujo:
-    mantiene al visitante en el menú para que
-    pueda ingresar 1 o 2.
+    Maneja una opción inválida del menú principal
+    y vuelve a mostrar los botones.
     """
 
-    session["state"] = (
-        "menu_principal"
-    )
+    session["state"] = "menu_principal"
 
     return build_reply(
         (
-            "La opción ingresada no es válida.\n\n"
-            "Por favor, seleccione una opción:\n"
-            "1. Cotizar productos\n"
-            "2. Soporte postventa"
-        )
+            "La opción ingresada no es válida. "
+            "Por favor seleccione una de las siguientes opciones:"
+        ),
+        input_card={
+            "type": "select",
+            "options": [
+                "Solicitud cotización",
+                "Servicio postventa",
+            ],
+        },
     )

@@ -1,9 +1,15 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Selec - Chat de Prueba</title>
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>SELEC - Chat de Prueba</title>
 
     <style>
         * {
@@ -14,49 +20,83 @@
             margin: 0;
             font-family: Arial, sans-serif;
             background: #f2f4f7;
+
             display: flex;
             justify-content: center;
             align-items: center;
+
             min-height: 100vh;
         }
+
+
+        /* =========================================
+           CONTENEDOR
+        ========================================= */
 
         .chat-container {
             width: 420px;
             height: 700px;
+
             background: white;
+
             border-radius: 14px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+
+            box-shadow:
+                0 4px 20px
+                rgba(0, 0, 0, 0.15);
+
             display: flex;
             flex-direction: column;
+
             overflow: hidden;
         }
+
+
+        /* =========================================
+           HEADER
+        ========================================= */
 
         .chat-header {
             background: #1f2937;
             color: white;
+
             padding: 18px;
+
             text-align: center;
+
             font-size: 18px;
             font-weight: bold;
         }
 
         .chat-header small {
             display: block;
+
             margin-top: 5px;
+
             font-size: 12px;
             font-weight: normal;
+
             opacity: 0.8;
         }
 
+
+        /* =========================================
+           MENSAJES
+        ========================================= */
+
         .messages {
             flex: 1;
+
             padding: 18px;
+
             overflow-y: auto;
+
             background: #f8fafc;
         }
 
         .message {
             margin-bottom: 12px;
+
             display: flex;
         }
 
@@ -70,9 +110,13 @@
 
         .bubble {
             max-width: 80%;
+
             padding: 11px 14px;
+
             border-radius: 12px;
+
             line-height: 1.4;
+
             white-space: pre-wrap;
             word-wrap: break-word;
         }
@@ -80,32 +124,99 @@
         .bot .bubble {
             background: #e5e7eb;
             color: #111827;
+
             border-bottom-left-radius: 3px;
         }
 
         .user .bubble {
             background: #2563eb;
             color: white;
+
             border-bottom-right-radius: 3px;
         }
 
+
+        /* =========================================
+           BOTONES / SELECT DE SALESIQ
+        ========================================= */
+
+        .bot-options {
+            width: 80%;
+
+            margin-top: -3px;
+            margin-bottom: 16px;
+
+            display: flex;
+            flex-direction: column;
+
+            gap: 8px;
+        }
+
+        .option-button {
+            width: 100%;
+
+            padding: 12px 14px;
+
+            background: white;
+
+            border: 1px solid #2563eb;
+            border-radius: 10px;
+
+            color: #2563eb;
+
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            font-weight: bold;
+
+            cursor: pointer;
+
+            transition:
+                background 0.15s ease,
+                color 0.15s ease,
+                transform 0.1s ease;
+        }
+
+        .option-button:hover {
+            background: #2563eb;
+            color: white;
+        }
+
+        .option-button:active {
+            transform: scale(0.98);
+        }
+
+
+        /* =========================================
+           INPUT
+        ========================================= */
+
         .input-area {
             display: flex;
+
             padding: 12px;
+
             border-top: 1px solid #ddd;
+
             background: white;
+
             gap: 8px;
         }
 
         .input-area textarea {
             flex: 1;
+
             resize: none;
+
             height: 45px;
+
             border: 1px solid #ccc;
             border-radius: 8px;
+
             padding: 12px;
+
             font-family: Arial, sans-serif;
             font-size: 14px;
+
             outline: none;
         }
 
@@ -113,88 +224,328 @@
             border-color: #2563eb;
         }
 
-        .input-area button {
+        .input-area > button {
             width: 80px;
+
             border: none;
             border-radius: 8px;
+
             background: #2563eb;
             color: white;
+
             font-weight: bold;
+
             cursor: pointer;
         }
 
-        .input-area button:hover {
+        .input-area > button:hover {
             background: #1d4ed8;
         }
 
+
+        /* =========================================
+           ESTADO
+        ========================================= */
+
         .status {
             padding: 5px 12px;
+
             font-size: 11px;
             color: #666;
+
             text-align: center;
+
             background: #fafafa;
+        }
+
+
+        /* =========================================
+           RESPONSIVE
+        ========================================= */
+
+        @media (max-width: 500px) {
+
+            body {
+                align-items: stretch;
+            }
+
+            .chat-container {
+                width: 100%;
+                height: 100vh;
+
+                border-radius: 0;
+            }
         }
     </style>
 </head>
 
+
 <body>
 
-<div class="chat-container">
+    <div class="chat-container">
 
-    <div class="chat-header">
-        Selec
-        <small>Chat de prueba</small>
+        <div class="chat-header">
+
+            SELEC
+
+            <small>
+                Simulador WhatsApp / SalesIQ
+            </small>
+
+        </div>
+
+
+        <div
+            id="messages"
+            class="messages"
+        ></div>
+
+
+        <div
+            id="status"
+            class="status"
+        >
+            Conectado al servidor de pruebas
+        </div>
+
+
+        <div class="input-area">
+
+            <textarea
+                id="messageInput"
+                placeholder="Escribe tu mensaje..."
+            ></textarea>
+
+            <button
+                type="button"
+                onclick="sendMessage()"
+            >
+                Enviar
+            </button>
+
+        </div>
+
     </div>
 
-    <div id="messages" class="messages"></div>
-
-    <div id="status" class="status">
-        Conectado al servidor de pruebas
-    </div>
-
-    <div class="input-area">
-        <textarea
-            id="messageInput"
-            placeholder="Escribe tu mensaje..."
-        ></textarea>
-
-        <button onclick="sendMessage()">
-            Enviar
-        </button>
-    </div>
-
-</div>
 
 <script>
+
+/* =========================================================
+   VISITOR ID ÚNICO PARA ESTA PRUEBA
+========================================================= */
 
 const VISITOR_ID =
     "test-visitor-" +
     Date.now() +
     "-" +
-    Math.random().toString(36).substring(2, 8);
+    Math.random()
+        .toString(36)
+        .substring(2, 8);
 
-const messagesContainer = document.getElementById("messages");
-const messageInput = document.getElementById("messageInput");
-const statusElement = document.getElementById("status");
 
+/* =========================================================
+   ELEMENTOS
+========================================================= */
+
+const messagesContainer =
+    document.getElementById("messages");
+
+const messageInput =
+    document.getElementById("messageInput");
+
+const statusElement =
+    document.getElementById("status");
+
+
+/* =========================================================
+   AGREGAR MENSAJE
+========================================================= */
 
 function addMessage(text, type) {
 
-    const message = document.createElement("div");
-    message.className = `message ${type}`;
+    const message =
+        document.createElement("div");
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
+    message.className =
+        `message ${type}`;
 
-    bubble.textContent = text;
 
-    message.appendChild(bubble);
-    messagesContainer.appendChild(message);
+    const bubble =
+        document.createElement("div");
+
+    bubble.className =
+        "bubble";
+
+    bubble.textContent =
+        text;
+
+
+    message.appendChild(
+        bubble
+    );
+
+    messagesContainer.appendChild(
+        message
+    );
+
+
+    scrollToBottom();
+}
+
+
+/* =========================================================
+   SCROLL
+========================================================= */
+
+function scrollToBottom() {
 
     messagesContainer.scrollTop =
         messagesContainer.scrollHeight;
 }
 
+
+/* =========================================================
+   ELIMINAR BOTONES ANTERIORES
+========================================================= */
+
+function clearInteractiveOptions() {
+
+    const options =
+        document.querySelectorAll(
+            ".bot-options"
+        );
+
+    options.forEach(element => {
+        element.remove();
+    });
+}
+
+
+/* =========================================================
+   MOSTRAR BOTONES SELECT
+========================================================= */
+
+function addSelectOptions(options) {
+
+    if (
+        !Array.isArray(options) ||
+        options.length === 0
+    ) {
+        return;
+    }
+
+
+    const container =
+        document.createElement("div");
+
+    container.className =
+        "bot-options";
+
+
+    options.forEach(option => {
+
+        /*
+         * SalesIQ normalmente entrega strings:
+         *
+         * "Solicitud cotización"
+         *
+         * Pero dejamos compatibilidad por si
+         * más adelante llegan objetos:
+         *
+         * {
+         *     label: "...",
+         *     value: "..."
+         * }
+         */
+
+        let label = "";
+        let value = "";
+
+
+        if (
+            typeof option === "string"
+        ) {
+
+            label = option;
+            value = option;
+
+        } else if (
+            option &&
+            typeof option === "object"
+        ) {
+
+            label =
+                option.label ||
+                option.value ||
+                "";
+
+            value =
+                option.value ||
+                option.label ||
+                "";
+
+        }
+
+
+        if (!label) {
+            return;
+        }
+
+
+        const button =
+            document.createElement(
+                "button"
+            );
+
+        button.type =
+            "button";
+
+        button.className =
+            "option-button";
+
+        button.textContent =
+            label;
+
+
+        button.addEventListener(
+            "click",
+            function() {
+
+                /*
+                 * Al seleccionar la opción,
+                 * hacemos exactamente lo mismo
+                 * que haría el usuario en WhatsApp:
+                 *
+                 * enviamos el texto seleccionado
+                 * al webhook.
+                 */
+
+                sendToBot(
+                    value,
+                    true
+                );
+            }
+        );
+
+
+        container.appendChild(
+            button
+        );
+    });
+
+
+    messagesContainer.appendChild(
+        container
+    );
+
+
+    scrollToBottom();
+}
+
+
+/* =========================================================
+   PROCESAR RESPUESTA DEL BOT
+========================================================= */
 
 function addBotReplies(response) {
 
@@ -202,31 +553,101 @@ function addBotReplies(response) {
         return;
     }
 
-    if (Array.isArray(response.replies)) {
 
-        response.replies.forEach(reply => {
+    /*
+     * MENSAJES NORMALES
+     */
 
-            addMessage(reply, "bot");
+    if (
+        Array.isArray(
+            response.replies
+        )
+    ) {
 
-        });
+        response.replies.forEach(
+            reply => {
 
+                if (
+                    typeof reply === "string"
+                ) {
+
+                    addMessage(
+                        reply,
+                        "bot"
+                    );
+
+                }
+
+            }
+        );
+    }
+
+
+    /*
+     * INPUT SELECT DE SALESIQ
+     *
+     * {
+     *     "input": {
+     *         "type": "select",
+     *         "options": [...]
+     *     }
+     * }
+     */
+
+    if (
+        response.input &&
+        response.input.type === "select" &&
+        Array.isArray(
+            response.input.options
+        )
+    ) {
+
+        addSelectOptions(
+            response.input.options
+        );
     }
 }
 
 
-async function sendMessage() {
+/* =========================================================
+   ENVIAR MENSAJE AL WEBHOOK
+========================================================= */
 
-    const text = messageInput.value.trim();
+async function sendToBot(
+    text,
+    showUserMessage = true
+) {
 
-    if (!text) {
+    const cleanText =
+        String(text || "")
+            .trim();
+
+
+    if (!cleanText) {
         return;
     }
 
-    addMessage(text, "user");
 
-    messageInput.value = "";
+    /*
+     * Cuando el usuario selecciona algo,
+     * quitamos los botones anteriores.
+     */
 
-    statusElement.textContent = "Enviando...";
+    clearInteractiveOptions();
+
+
+    if (showUserMessage) {
+
+        addMessage(
+            cleanText,
+            "user"
+        );
+    }
+
+
+    statusElement.textContent =
+        "Enviando...";
+
 
     const payload = {
 
@@ -237,55 +658,106 @@ async function sendMessage() {
         },
 
         message: {
-            text: text
+            text: cleanText
         }
 
     };
 
+
     try {
 
-        const response = await fetch("/salesiq-webhook", {
+        const response =
+            await fetch(
+                "/salesiq-webhook",
+                {
 
-            method: "POST",
+                    method: "POST",
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-            body: JSON.stringify(payload)
+                    body:
+                        JSON.stringify(
+                            payload
+                        )
 
-        });
+                }
+            );
+
 
         if (!response.ok) {
 
             throw new Error(
                 `HTTP ${response.status}`
             );
-
         }
 
-        const data = await response.json();
 
-        addBotReplies(data);
+        const data =
+            await response.json();
+
+
+        addBotReplies(
+            data
+        );
+
 
         statusElement.textContent =
             "Conectado al servidor de pruebas";
 
+
     } catch (error) {
 
-        console.error(error);
+        console.error(
+            error
+        );
+
 
         addMessage(
             "Error al comunicarse con el servidor.",
             "bot"
         );
 
+
         statusElement.textContent =
             "Error de conexión";
-
     }
 }
 
+
+/* =========================================================
+   BOTÓN ENVIAR
+========================================================= */
+
+function sendMessage() {
+
+    const text =
+        messageInput.value.trim();
+
+
+    if (!text) {
+        return;
+    }
+
+
+    messageInput.value = "";
+
+
+    sendToBot(
+        text,
+        true
+    );
+
+
+    messageInput.focus();
+}
+
+
+/* =========================================================
+   ENTER PARA ENVIAR
+========================================================= */
 
 messageInput.addEventListener(
     "keydown",
@@ -299,26 +771,46 @@ messageInput.addEventListener(
             event.preventDefault();
 
             sendMessage();
-
         }
-
     }
 );
 
 
+/* =========================================================
+   INICIO AUTOMÁTICO DEL CHAT
+========================================================= */
+
 window.addEventListener(
     "load",
-    function() {
+    async function() {
 
-        addMessage(
-            "Chat de prueba iniciado. Escribe un mensaje para comenzar.",
-            "bot"
+        statusElement.textContent =
+            "Iniciando conversación...";
+
+
+        /*
+         * Mandamos "hola" internamente.
+         *
+         * NO se muestra como mensaje del usuario.
+         *
+         * Tu backend ya reconoce "hola"
+         * como inicio/reinicio de conversación,
+         * así que responderá inmediatamente
+         * con reply_menu_principal().
+         */
+
+        await sendToBot(
+            "hola",
+            false
         );
 
+
+        messageInput.focus();
     }
 );
 
 </script>
 
 </body>
+
 </html>

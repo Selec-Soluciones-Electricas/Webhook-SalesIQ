@@ -656,6 +656,7 @@ PALABRAS_CLAVE_POSTVENTA = (
           # Estados generales
           "malo",
           "mala",
+          "mal",
   
           "raro",
           "rara",

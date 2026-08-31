@@ -878,6 +878,38 @@ def extraer_campos_cotizacion_producto(
 
                 continue
 
+        # -------------------------------------------------
+        # DIRECCIÓN DE ENTREGA
+        # -------------------------------------------------
+        #
+        # IMPORTANTE:
+        # Antes de interpretar una línea como marca,
+        # descripción o número de parte, comprobamos
+        # si tiene formato de dirección.
+        # -------------------------------------------------
+
+        if (
+            not str(
+                campos.get(
+                    "direccion_entrega",
+                    "",
+                )
+            ).strip()
+            and parece_direccion(
+                linea_clean
+            )
+        ):
+
+            campos["direccion_entrega"] = (
+                linea_clean
+            )
+
+            continue
+
+        # -------------------------------------------------
+        # OTROS CAMPOS
+        # -------------------------------------------------
+
         pendientes.append(
             linea_clean
         )
@@ -918,9 +950,15 @@ def extraer_campos_cotizacion_producto(
         and pendientes
     ):
 
-        campos["marca"] = (
-            pendientes.pop(0)
-        )
+        # Si la línea parece una dirección,
+        # NO debe interpretarse como marca.
+        if not parece_direccion(
+            pendientes[0]
+        ):
+
+            campos["marca"] = (
+                pendientes.pop(0)
+            )
 
     # -----------------------------------------------------
     # DESCRIPCIÓN

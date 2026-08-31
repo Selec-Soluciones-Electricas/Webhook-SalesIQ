@@ -1101,9 +1101,24 @@ def validar_cotizacion_producto(
         "correo",
         "telefono",
         "num_parte",
+        "marca",
+        "descripcion",
         "cantidad",
         "direccion_entrega",
     ]
+
+    nombres_legibles = {
+        "empresa": "Nombre de la empresa",
+        "rut": "RUT",
+        "contacto": "Nombre de contacto",
+        "correo": "Correo",
+        "telefono": "Teléfono",
+        "num_parte": "Número de parte",
+        "marca": "Marca",
+        "descripcion": "Descripción",
+        "cantidad": "Cantidad",
+        "direccion_entrega": "Dirección de entrega",
+    }
 
     nombres_legibles = {
     "empresa": "Nombre de la empresa",

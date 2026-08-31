@@ -559,7 +559,9 @@ CC_GERENCIA_EMAIL = "gerencia@selec.cl"
 CC_ELIAN_EMAIL = "elian@selec.cl"
 CRM_ORG_UI = "org706345205"
 MAIL_TO_FIXED = "Joaquin@selec.cl"
+MAIL_TO_FIXED = "Ivanna@selec.cl"
 MAIL_TO_NAME = "Joaquin Gonzalez"
+MAIL_TO_NAME = "Ivanna Vera"
 
 # Función auxiliar para construir la estructura de destinatarios de correo, aplicando formato adecuado para Zoho CRM y asegurando que el email esté presente y el nombre se incluya solo si es válido. Es importante que el formato de destinatarios cumpla con los requisitos de Zoho CRM para que el correo se envíe correctamente.
 def build_mail_recipient(email: str, name: str = "") -> dict:

@@ -1,325 +1,402 @@
-import os
+import re
+import unicodedata
 
-from flask import jsonify, request, send_from_directory
-
-from conversation.state_machine import (
-    build_reply,
-    elegir_owner_session,
-    manejar_menu_principal,
-    reply_menu_principal,
-    es_saludo_inicio,
-)
-
-from conversation.quotation import (
-    manejar_flujo_cotizacion_empresa_bloque,
-    manejar_flujo_cotizacion_bloque,
-)
-
-from conversation.postventa import manejar_flujo_postventa_bloque
-
-from services.email_service import enviar_correo_primer_contacto
-
-from services.salesiq_service import (
-    extraer_mensaje,
-    get_visitor_id,
-)
-
-from utils.security import (
-    mask_value,
-    scrub_payload,
-)
-
-
-def register_routes(app, sessions, access_token):
-
-    # =========================================================
-    # RUTA PRINCIPAL
-    # =========================================================
-
-    @app.route("/", methods=["GET"])
-    def index():
-        return "Webhook server running"
-
-    # =========================================================
-    # FRONTEND DE PRUEBAS
-    # =========================================================
-
-    @app.route("/test", methods=["GET"])
-    def test_frontend():
-
-        base_dir = os.path.dirname(
-            os.path.dirname(
-                os.path.abspath(__file__)
-            )
-        )
-
-        frontend_dir = os.path.join(
-            base_dir,
-            "frontend"
-        )
-
-        print("=== FRONTEND DEBUG ===")
-        print("base_dir:", base_dir)
-        print("frontend_dir:", frontend_dir)
-        print(
-            "index existe:",
-            os.path.isfile(
-                os.path.join(
-                    frontend_dir,
-                    "index.html"
-                )
-            )
-        )
-        print("======================")
-
-        return send_from_directory(
-            frontend_dir,
-            "index.html"
-        )
-
-    # =========================================================
-    # SALESIQ WEBHOOK
-    # =========================================================
-
-    @app.route("/salesiq-webhook", methods=["GET", "POST"])
-    def salesiq_webhook():
-
-        if request.method == "GET":
-            return jsonify({
-                "status": "ok",
-                "message": "Use POST desde Zoho SalesIQ"
-            })
-
-        payload = request.get_json(
-            force=True,
-            silent=True
-        ) or {}
-
-        handler = payload.get("handler")
-        visitor_id = get_visitor_id(payload)
-
-        session = sessions.setdefault(
-            visitor_id,
-            {
-                "state": "inicio",
-                "data": {}
-            }
-        )
-
-        actualizar_num_chat(
-            session,
-            payload
-        )
-
-        print("=== SalesIQ payload (safe) ===")
-        print(scrub_payload(payload))
-
-        if handler == "trigger":
-            return procesar_trigger(
-                session,
-                payload,
-                access_token
-            )
-
-        if handler == "message":
-            return procesar_mensaje(
-                session,
-                payload
-            )
-
-        return jsonify(
-            build_reply(
-                "He recibido su mensaje."
-            )
-        )
+from services.zoho_service import normalizar_owner
 
 
 # =========================================================
-# FUNCIONES AUXILIARES
+# NORMALIZAR TEXTO
 # =========================================================
 
-def actualizar_num_chat(session, payload):
+def normalizar_texto(s: str) -> str:
     """
-    Guarda el identificador de la conversación
-    o visita actual dentro de la sesión.
+    Normaliza un texto para facilitar las comparaciones.
     """
 
-    visitor = payload.get("visitor") or {}
+    s = (s or "").strip().lower()
 
-    visitid = visitor.get("visitid")
+    s = unicodedata.normalize(
+        "NFD",
+        s
+    )
 
-    conversation_id = str(
-        visitor.get("active_conversation_id") or ""
-    ).strip()
+    s = "".join(
+        ch
+        for ch in s
+        if unicodedata.category(ch) != "Mn"
+    )
 
-    if visitid:
-        session["data"]["num_chat"] = f"#{visitid}"
+    s = re.sub(
+        r"\s+",
+        " ",
+        s
+    )
 
-    elif conversation_id:
-        session["data"]["num_chat"] = conversation_id
+    return s
 
 
-def procesar_trigger(session, payload, access_token):
+# =========================================================
+# CONSTRUIR RESPUESTAS
+# =========================================================
+
+def build_reply(
+    texts,
+    input_card=None,
+    action="reply"
+) -> dict:
     """
-    Procesa el evento trigger enviado por SalesIQ.
+    Construye una respuesta estándar para SalesIQ.
+
+    IMPORTANTE:
+    Cuando el código entrega varios textos en una lista,
+    estos representan partes de una misma respuesta lógica.
+
+    En lugar de enviarlos como múltiples mensajes separados
+    a SalesIQ, se unen en un único mensaje utilizando
+    saltos de línea.
+
+    Esto evita conversaciones fragmentadas como:
+
+        Mensaje 1
+        Mensaje 2
+        Mensaje 3
+        Mensaje 4
+
+    y las transforma en:
+
+        Mensaje 1
+
+        Mensaje 2
+
+        Mensaje 3
+
+        Mensaje 4
+
+    De esta manera el usuario recibe una sola respuesta
+    más limpia y natural.
+
+    Si se recibe directamente un string, se mantiene
+    como una única respuesta.
+    """
+
+    if isinstance(texts, str):
+
+        mensaje = texts.strip()
+
+    else:
+
+        partes = []
+
+        for texto in texts or []:
+
+            if texto is None:
+                continue
+
+            texto_clean = str(
+                texto
+            ).strip()
+
+            if not texto_clean:
+                continue
+
+            partes.append(
+                texto_clean
+            )
+
+        mensaje = "\n\n".join(
+            partes
+        )
+
+    response = {
+        "action": action,
+        "replies": [
+            mensaje
+        ],
+    }
+
+    if input_card is not None:
+
+        response["input"] = (
+            input_card
+        )
+
+    return response
+
+
+# =========================================================
+# MENÚ PRINCIPAL
+# =========================================================
+
+def reply_menu_principal() -> dict:
+    """
+    Respuesta inicial del menú principal.
+
+    En WhatsApp, SalesIQ mostrará estas dos opciones
+    como botones mediante un input de tipo "select".
+    """
+
+    return build_reply(
+        (
+            "Gracias por contactarse con SELEC. "
+            "Por favor seleccione una de las siguientes "
+            "opciones para atender su solicitud:"
+        ),
+        input_card={
+            "type": "select",
+            "options": [
+                "Solicitud cotización",
+                "Servicio postventa",
+            ],
+        },
+    )
+
+
+# =========================================================
+# OWNER DE LA SESIÓN
+# =========================================================
+
+def elegir_owner_session(
+    session: dict
+) -> dict:
+    """
+    Obtiene el owner asignado a la sesión.
+
+    Si ya existe, lo normaliza.
+    Si no existe, obtiene uno nuevo.
+    """
+
+    data = session.setdefault(
+        "data",
+        {}
+    )
+
+    owner = data.get(
+        "owner_asignado"
+    )
+
+    if owner:
+
+        owner = normalizar_owner(
+            owner
+        )
+
+        data[
+            "owner_asignado"
+        ] = owner
+
+        return owner
+
+    owner = normalizar_owner()
+
+    data[
+        "owner_asignado"
+    ] = owner
+
+    return owner
+
+
+# =========================================================
+# DETECTAR SALUDO
+# =========================================================
+
+def es_saludo_inicio(
+    message_text: str
+) -> bool:
+    """
+    Determina si el mensaje corresponde
+    a un saludo simple utilizado para
+    iniciar o reiniciar la conversación.
+    """
+
+    texto_norm = normalizar_texto(
+        message_text
+    )
+
+    saludos = {
+        "hola",
+        "holaa",
+        "holaaa",
+        "buenas",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "hello",
+        "hi",
+    }
+
+    return (
+        texto_norm in saludos
+    )
+
+
+# =========================================================
+# MENÚ PRINCIPAL
+# =========================================================
+
+def manejar_menu_principal(
+    session: dict,
+    message_text: str
+) -> dict:
+    """
+    Procesa la opción seleccionada
+    desde el menú principal.
+    """
+
+    texto_norm = normalizar_texto(
+        message_text
+    )
+
+    if es_opcion_cotizacion(
+        texto_norm
+    ):
+
+        return iniciar_cotizacion(
+            session
+        )
+
+    if es_opcion_postventa(
+        texto_norm
+    ):
+
+        return iniciar_postventa(
+            session
+        )
+
+    return derivar_a_operador(
+        session
+    )
+
+
+# =========================================================
+# OPCIÓN COTIZACIÓN
+# =========================================================
+
+def es_opcion_cotizacion(
+    texto_norm: str
+) -> bool:
+    """
+    Determina si el mensaje corresponde
+    a una solicitud de cotización.
+    """
+
+    return (
+        texto_norm == "1"
+        or "cotiz" in texto_norm
+        or texto_norm == "solicitud cotizacion"
+        or texto_norm == "cotizacion"
+    )
+
+
+# =========================================================
+# OPCIÓN POSTVENTA
+# =========================================================
+
+def es_opcion_postventa(
+    texto_norm: str
+) -> bool:
+    """
+    Determina si el mensaje corresponde
+    a una solicitud de posventa/postventa.
+    """
+
+    return (
+        texto_norm == "2"
+        or "posventa" in texto_norm
+        or "pos venta" in texto_norm
+        or "postventa" in texto_norm
+        or "post venta" in texto_norm
+    )
+
+
+# =========================================================
+# INICIAR COTIZACIÓN
+# =========================================================
+
+def iniciar_cotizacion(
+    session: dict
+) -> dict:
+    """
+    Inicia el flujo de cotización.
+    """
+
+    session["state"] = (
+        "cotizacion_empresa_bloque"
+    )
+
+    session["data"] = {}
+
+    return build_reply(
+        (
+            "Perfecto, trabajaremos en su "
+            "solicitud de cotización.\n\n"
+            "Por favor, complete los siguientes "
+            "datos. "
+            "Puede copiar "
+            "y completar este formato:\n\n"
+            "Nombre de la empresa:\n"
+            "RUT:\n"
+            "Nombre de contacto:\n"
+            "Correo:\n"
+            "Teléfono:"
+        )
+    )
+
+
+# =========================================================
+# INICIAR POSTVENTA
+# =========================================================
+
+def iniciar_postventa(
+    session: dict
+) -> dict:
+    """
+    Inicia el flujo de postventa.
+    """
+
+    session["state"] = (
+        "postventa_bloque"
+    )
+
+    session["data"] = {}
+
+    return build_reply(
+        (
+            "Perfecto, trabajaremos en su "
+            "solicitud de postventa.\n\n"
+            "Por favor, complete este formulario "
+            "en un solo mensaje:\n\n"
+            "Nombre:\n"
+            "RUT:\n"
+            "Número de factura y/o Orden de compra:\n"
+            "Descripción de la situación:"
+        )
+    )
+
+
+# =========================================================
+# OPCIÓN INVÁLIDA
+# =========================================================
+
+def derivar_a_operador(
+    session: dict
+) -> dict:
+    """
+    Maneja una opción inválida del menú principal
+    y vuelve a mostrar los botones.
     """
 
     session["state"] = "menu_principal"
 
-    owner = elegir_owner_session(session)
-
-    if not session.get("primer_correo_enviado"):
-
-        enviar_correo_primer_contacto(
-            owner,
-            payload,
-            access_token,
-        )
-
-        session["primer_correo_enviado"] = True
-
-    return jsonify(
-        reply_menu_principal()
-    )
-
-
-def procesar_mensaje(session, payload):
-    """
-    Procesa un mensaje recibido desde SalesIQ
-    según el estado actual de la conversación.
-    """
-
-    message_text = extraer_mensaje(payload)
-
-    print(
-        "=== mensaje extraído ===",
-        repr(
-            mask_value(
-                message_text,
-                0,
-                0
-            )[:120]
-        )
-    )
-
-    # =========================================================
-    # REINICIO POR SALUDO
-    # =========================================================
-    #
-    # El frontend de pruebas utiliza un visitor_id fijo. Si una
-    # sesión anterior quedó a mitad de una cotización, un nuevo
-    # "hola" no debe interpretarse como datos de empresa.
-    #
-    # El saludo tiene prioridad sobre cualquier estado anterior.
-    # =========================================================
-
-    if es_saludo_inicio(message_text):
-
-        print(
-            "[procesar_mensaje] Saludo detectado. "
-            "Reiniciando sesión."
-        )
-
-        session.clear()
-        session["state"] = "menu_principal"
-        session["data"] = {}
-
-        elegir_owner_session(session)
-
-        return jsonify(
-            reply_menu_principal()
-        )
-
-    state = session.get(
-        "state",
-        "inicio"
-    )
-
-    # =========================================================
-    # INICIO
-    # =========================================================
-
-    if state == "inicio":
-
-        session["state"] = "menu_principal"
-
-        return jsonify(
-            reply_menu_principal()
-        )
-
-    # =========================================================
-    # MENU PRINCIPAL
-    # =========================================================
-
-    if state == "menu_principal":
-
-        return jsonify(
-            manejar_menu_principal(
-                session,
-                message_text
-            )
-        )
-
-    # =========================================================
-    # DATOS DE EMPRESA - COTIZACION
-    # =========================================================
-
-    if state == "cotizacion_empresa_bloque":
-
-        return jsonify(
-            manejar_flujo_cotizacion_empresa_bloque(
-                session,
-                message_text
-            )
-        )
-
-    # =========================================================
-    # PRODUCTO - COTIZACION
-    # =========================================================
-
-    if state == "cotizacion_producto_bloque":
-
-        session["state"] = "cotizacion_bloque"
-
-        return jsonify(
-            manejar_flujo_cotizacion_bloque(
-                session,
-                message_text
-            )
-        )
-
-    # =========================================================
-    # COTIZACION
-    # =========================================================
-
-    if state == "cotizacion_bloque":
-
-        return jsonify(
-            manejar_flujo_cotizacion_bloque(
-                session,
-                message_text
-            )
-        )
-
-    # =========================================================
-    # POSTVENTA
-    # =========================================================
-
-    if state == "postventa_bloque":
-
-        return jsonify(
-            manejar_flujo_postventa_bloque(
-                session,
-                message_text
-            )
-        )
-
-    # =========================================================
-    # ESTADO DESCONOCIDO
-    # =========================================================
-
-    session["state"] = "menu_principal"
-
-    return jsonify(
-        reply_menu_principal()
+    return build_reply(
+        (
+            "La opción ingresada no es válida. "
+            "Por favor seleccione una de las siguientes opciones:"
+        ),
+        input_card={
+            "type": "select",
+            "options": [
+                "Solicitud cotización",
+                "Servicio postventa",
+            ],
+        },
     )

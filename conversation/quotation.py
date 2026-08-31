@@ -1,4 +1,6 @@
+import os
 import re
+import random
 
 from conversation.state_machine import (
     build_reply,
@@ -30,6 +32,22 @@ from services.email_service import (
     enviar_correo_solicitud_incompleta,
 )
 
+# =========================================================
+# OWNERS PARA NEGOCIOS DE COTIZACIÓN
+# =========================================================
+
+COTIZACION_OWNERS = [
+    {
+        "id": "4358923000090246001",
+        "nombre": "Ivanna Vera",
+        "email": "ivanna@selec.cl",
+    },
+    {
+        "id": "4358923000011940001",
+        "nombre": "Joaquin Gonzalez",
+        "email": "Joaquin@selec.cl",
+    },
+]
 
 # =========================================================
 # UTILIDADES
@@ -1231,38 +1249,98 @@ def registrar_cotizacion_en_zoho(
     data: dict,
 ):
 
-    owner = normalizar_owner(
+    # =====================================================
+    # OWNER GENERAL
+    # =====================================================
+    #
+    # Se mantiene para Account y Contact.
+    # No modificamos el comportamiento existente.
+    # =====================================================
+
+    owner_general = normalizar_owner(
         data.get(
             "owner_asignado"
         )
     )
 
+     # =====================================================
+    # OWNER ALEATORIO PARA LA COTIZACIÓN
+    # =====================================================
+
+    owner_seleccionado = random.choice(
+        COTIZACION_OWNERS
+    )
+
+    owner_cotizacion = normalizar_owner(
+        owner_seleccionado
+    )
+
+    print(
+        "[registrar_cotizacion_en_zoho] "
+        "Owner aleatorio seleccionado:",
+        owner_cotizacion.get("nombre")
+    )
+
+    # =====================================================
+    # SEGURIDAD
+    # =====================================================
+    #
+    # Si por algún motivo el owner seleccionado
+    # no contiene un ID válido, utilizamos el owner
+    # general para evitar bloquear la creación del Deal.
+
+    if not owner_cotizacion.get("id"):
+
+        print(
+            "[registrar_cotizacion_en_zoho] "
+            "ADVERTENCIA: COTIZACION_OWNER_ID "
+            "no está configurado. "
+            "Se utilizará el owner general."
+        )
+
+        owner_cotizacion = owner_general
+
+    # =====================================================
+    # ACCOUNT
+    # =====================================================
+
     account_id = (
         obtener_o_crear_account(
             data,
-            owner=owner,
+            owner=owner_general,
         )
     )
+
+    # =====================================================
+    # CONTACT
+    # =====================================================
 
     contact_id = (
         obtener_o_crear_contact(
             data,
             account_id=account_id,
-            owner=owner,
+            owner=owner_general,
         )
     )
+
+    # =====================================================
+    # DEAL
+    # =====================================================
+    #
+    # SOLO EL NEGOCIO queda asignado a Ivanna.
+    # =====================================================
 
     deal_resp, deal_id = (
         crear_deal_en_zoho(
             data,
             account_id=account_id,
             contact_id=contact_id,
-            owner=owner,
+            owner=owner_cotizacion,
         )
     )
 
     return (
-        owner,
+        owner_cotizacion,
         deal_resp,
         deal_id,
     )

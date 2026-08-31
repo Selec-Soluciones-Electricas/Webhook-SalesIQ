@@ -23,6 +23,8 @@ SENDER_USER_NAME = os.environ.get(
     "Bot Selec"
 )
 
+# Destinatario fijo para correos generales
+# como primer contacto y solicitudes incompletas.
 MAIL_TO_FIXED = "Joaquin@selec.cl"
 MAIL_TO_NAME = "Joaquin Gonzalez"
 
@@ -92,18 +94,36 @@ def construir_link_chat(payload: dict) -> str:
 def construir_cc() -> list:
     """
     Construye la lista de destinatarios en copia.
+
+    Solo agrega correos que realmente estén configurados,
+    evitando enviar destinatarios con email vacío a Zoho.
     """
 
-    return [
-        build_mail_recipient(
-            CC_ELIAN_EMAIL,
-            "Elian Barra"
-        ),
-        build_mail_recipient(
-            CC_GERENCIA_EMAIL,
-            ""
-        ),
-    ]
+    destinatarios = []
+
+    if str(
+        CC_ELIAN_EMAIL or ""
+    ).strip():
+
+        destinatarios.append(
+            build_mail_recipient(
+                CC_ELIAN_EMAIL,
+                "Elian Barra"
+            )
+        )
+
+    if str(
+        CC_GERENCIA_EMAIL or ""
+    ).strip():
+
+        destinatarios.append(
+            build_mail_recipient(
+                CC_GERENCIA_EMAIL,
+                ""
+            )
+        )
+
+    return destinatarios
 
 
 def construir_remitente() -> dict:
@@ -133,6 +153,37 @@ def enviar_correo_owner(
     Envía un correo notificando la creación de un nuevo
     Deal desde el chatbot de WhatsApp.
     """
+
+    # =====================================================
+    # DESTINATARIO = OWNER REAL DEL DEAL
+    # =====================================================
+
+    to_email = str(
+        owner.get("email")
+        or ""
+    ).strip()
+
+    to_name = str(
+        owner.get("nombre")
+        or ""
+    ).strip()
+
+       # =====================================================
+    # VALIDAR OWNER DEL DEAL
+    # =====================================================
+
+    if not to_email:
+
+        print(
+            "[enviar_correo_owner] "
+            "El owner del Deal no tiene correo configurado. "
+            "No se enviará la notificación."
+        )
+
+        return None
+
+    if not to_name:
+        to_name = "Ejecutivo Selec"
 
     access_token = get_access_token()
 
@@ -168,7 +219,7 @@ def enviar_correo_owner(
     )
 
     content = f"""
-<p>Hola {MAIL_TO_NAME},</p>
+<p>Hola {to_name},</p>
 
 <p>
 Se ha creado un nuevo Deal asignado desde
@@ -253,11 +304,11 @@ Bot WhatsApp Selec
                 "from": construir_remitente(),
 
                 "to": [
-                    build_mail_recipient(
-                        MAIL_TO_FIXED,
-                        MAIL_TO_NAME
-                    )
-                ],
+    build_mail_recipient(
+        to_email,
+        to_name
+    )
+],
 
                 "cc": construir_cc(),
 

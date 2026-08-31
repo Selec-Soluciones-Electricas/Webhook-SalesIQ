@@ -5,10 +5,13 @@ from conversation.state_machine import (
     normalizar_texto,
 )
 
+from conversation.postventa_palabras import (
+    FRASES_CLAVE_POSTVENTA,
+    PALABRAS_CLAVE_POSTVENTA,
+)
+
 from utils.security import mask_rut
-
 from utils.email_postventa import enviar_correo_postventa
-
 
 # =========================================================
 # DETECTORES PARA TEXTOS SIN ETIQUETA
@@ -106,50 +109,57 @@ def parece_rut(texto: str) -> bool:
 
 def parece_descripcion(texto: str) -> bool:
     """
-    Intenta detectar si una frase corresponde
-    a la descripción de una situación de postventa.
+    Detecta si un texto probablemente corresponde
+    a una descripción de una situación de postventa.
+
+    Las palabras y frases se mantienen separadas en:
+    conversation/postventa_palabras.py
     """
 
     texto_norm = normalizar_texto(
         texto or ""
     ).lower().strip()
 
-    palabras_clave = (
-        "falla",
-        "fallo",
-        "problema",
-        "situacion",
-        "producto",
-        "equipo",
-        "recibido",
-        "recibi",
-        "funciona",
-        "funcionar",
-        "danado",
-        "dano",
-        "roto",
-        "defectuoso",
-        "error",
-        "inconveniente",
-        "averia",
-        "reclamo",
-        "garantia",
-        "no prende",
-        "no enciende",
-        "no funciona",
-    )
+    # =====================================================
+    # 1. BUSCAR FRASES CLAVE
+    # =====================================================
 
     if any(
-        palabra in texto_norm
-        for palabra in palabras_clave
+        frase in texto_norm
+        for frase in FRASES_CLAVE_POSTVENTA
     ):
         return True
 
-    # Una frase larga también es mucho más probable
-    # que sea una descripción que un nombre.
-    return len(
+    # =====================================================
+    # 2. BUSCAR PALABRAS CLAVE COMPLETAS
+    # =====================================================
+
+    palabras_texto = set(
+        re.findall(
+            r"\b[a-zA-ZñÑ]+\b",
+            texto_norm
+        )
+    )
+
+    if any(
+        palabra in palabras_texto
+        for palabra in PALABRAS_CLAVE_POSTVENTA
+    ):
+        return True
+
+    # =====================================================
+    # 3. TEXTO LARGO
+    # =====================================================
+
+    # Una frase de 6 palabras o más tiene mucha más
+    # probabilidad de ser una descripción que un nombre.
+
+    if len(
         texto_norm.split()
-    ) >= 6
+    ) >= 6:
+        return True
+
+    return False
 
 
 def parece_nombre(texto: str) -> bool:

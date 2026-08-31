@@ -1106,15 +1106,17 @@ def validar_cotizacion_producto(
     ]
 
     nombres_legibles = {
-        "empresa": "Nombre de la empresa",
-        "rut": "RUT",
-        "contacto": "Nombre de contacto",
-        "correo": "Correo",
-        "telefono": "Teléfono",
-        "num_parte": "Número de parte",
-        "cantidad": "Cantidad",
-        "direccion_entrega": "Dirección de entrega",
-    }
+    "empresa": "Nombre de la empresa",
+    "rut": "RUT",
+    "contacto": "Nombre de contacto",
+    "correo": "Correo",
+    "telefono": "Teléfono",
+    "num_parte": "Número de parte",
+    "marca": "Marca",
+    "descripcion": "Descripción",
+    "cantidad": "Cantidad",
+    "direccion_entrega": "Dirección de entrega",
+}
 
     faltantes = [
         nombres_legibles[campo]

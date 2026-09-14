@@ -25,6 +25,11 @@ from services.zoho_service import (
     obtener_o_crear_account,
     obtener_o_crear_contact,
     crear_deal_en_zoho,
+    get_salesiq_access_token,
+)
+
+from services.salesiq_service import (
+    agregar_tag_conversacion,
 )
 
 from services.email_service import (
@@ -1405,6 +1410,10 @@ def registrar_cotizacion_en_zoho(
 # FINALIZAR COTIZACIÓN
 # =========================================================
 
+SALESIQ_TAG_ID_OK = os.environ.get("SALESIQ_TAG_ID_CRM_OK")
+SALESIQ_TAG_ID_ERROR = os.environ.get("SALESIQ_TAG_ID_CRM_ERROR")
+
+
 def finalizar_cotizacion(
     session: dict,
     data: dict,
@@ -1421,6 +1430,44 @@ def finalizar_cotizacion(
             f"Cotización - "
             f"{data.get('empresa') or 'Sin empresa'}",
             data,
+        )
+
+    # =====================================================
+    # ETIQUETAR LA CONVERSACIÓN EN SALESIQ SEGÚN EL
+    # RESULTADO REAL DEL REGISTRO EN CRM
+    # =====================================================
+    #
+    # Se hace ANTES de limpiar session["data"], porque ahí
+    # vive el conversation_id capturado en actualizar_num_chat().
+    # Un fallo acá nunca debe interrumpir la respuesta al
+    # visitante (por eso no hay try/except aquí: la función
+    # agregar_tag_conversacion ya captura sus propios errores
+    # y devuelve False en vez de lanzar excepción).
+    # =====================================================
+
+    conversation_id = data.get("conversation_id")
+
+    tag_id = (
+        SALESIQ_TAG_ID_OK
+        if deal_id
+        else SALESIQ_TAG_ID_ERROR
+    )
+
+    if conversation_id and tag_id:
+
+        agregar_tag_conversacion(
+            conversation_id,
+            tag_id,
+            get_salesiq_access_token(),
+        )
+
+    else:
+
+        print(
+            "[finalizar_cotizacion] "
+            "No se pudo etiquetar: "
+            f"conversation_id={conversation_id!r} "
+            f"tag_id={tag_id!r}"
         )
 
     session["state"] = (

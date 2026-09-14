@@ -180,6 +180,110 @@ def get_access_token() -> str:
 
 
 # =========================================================
+# CACHE DEL ACCESS TOKEN — SALESIQ (independiente del de CRM)
+# =========================================================
+
+salesiq_access_token_cache = {
+    "token": None,
+    "expires_at": 0.0,
+}
+
+
+def get_salesiq_access_token() -> str:
+    """
+    Obtiene el access token de Zoho SalesIQ utilizando su PROPIO
+    refresh token (independiente del que usa Zoho CRM).
+
+    Variables de entorno requeridas:
+        SALESIQ_CLIENT_ID
+        SALESIQ_CLIENT_SECRET
+        SALESIQ_REFRESH_TOKEN
+
+    Este token se usa exclusivamente para acciones sobre SalesIQ
+    (por ejemplo, etiquetar conversaciones vía
+    agregar_tag_conversacion). No tiene relación con el token de
+    CRM ni comparte su cache, por lo que un problema con uno no
+    afecta al otro.
+    """
+
+    now = time.time()
+
+    if (
+        salesiq_access_token_cache["token"]
+        and salesiq_access_token_cache["expires_at"] - 60 > now
+    ):
+        return salesiq_access_token_cache["token"]
+
+    client_id = os.environ.get("SALESIQ_CLIENT_ID")
+    client_secret = os.environ.get("SALESIQ_CLIENT_SECRET")
+    refresh_token = os.environ.get("SALESIQ_REFRESH_TOKEN")
+
+    if not client_id or not client_secret or not refresh_token:
+        print(
+            "[get_salesiq_access_token] ERROR: faltan "
+            "SALESIQ_CLIENT_ID / SALESIQ_CLIENT_SECRET / "
+            "SALESIQ_REFRESH_TOKEN. Se omite el etiquetado."
+        )
+        return None
+
+    url = f"{ACCOUNTS_BASE}/oauth/v2/token"
+
+    params = {
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "refresh_token",
+    }
+
+    try:
+
+        resp = requests.post(
+            url,
+            params=params,
+            timeout=10,
+        )
+
+        print("=== Respuesta refresh token SalesIQ ===")
+        print(resp.status_code)
+
+        try:
+            print(resp.text)
+        except Exception:
+            pass
+
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+
+        token = data.get("access_token")
+        expires_in = int(data.get("expires_in", 3600))
+
+        if not token:
+            print(
+                "[get_salesiq_access_token] "
+                "ERROR: respuesta sin access_token."
+            )
+            return None
+
+        salesiq_access_token_cache["token"] = token
+        salesiq_access_token_cache["expires_at"] = (
+            time.time() + expires_in
+        )
+
+        return token
+
+    except Exception as e:
+
+        print(
+            "[get_salesiq_access_token] "
+            f"ERROR llamando a Zoho Accounts: {e}"
+        )
+
+        return None
+
+
+# =========================================================
 # NORMALIZAR OWNER
 # =========================================================
 

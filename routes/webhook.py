@@ -22,6 +22,7 @@ from services.email_service import enviar_correo_primer_contacto
 from services.salesiq_service import (
     extraer_mensaje,
     get_visitor_id,
+    get_conversation_id,
 )
 
 from utils.security import (
@@ -157,6 +158,15 @@ def actualizar_num_chat(session, payload):
 
     elif conversation_id:
         session["data"]["num_chat"] = conversation_id
+
+    # -----------------------------------------------------
+    # ID real de la conversación (independiente del num_chat
+    # visible). Se necesita para llamar a la API de tags de
+    # SalesIQ desde finalizar_cotizacion().
+    # -----------------------------------------------------
+
+    if conversation_id:
+        session["data"]["conversation_id"] = conversation_id
 
 
 def procesar_trigger(session, payload, access_token):

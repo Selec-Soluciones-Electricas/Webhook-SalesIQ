@@ -100,7 +100,10 @@ def get_analytics_access_token() -> str:
         return None
 
 
-def agregar_fila_analytics(columnas: dict) -> bool:
+def agregar_fila_analytics(
+    columnas: dict,
+    date_format: str = None,
+) -> bool:
     """
     Inserta una fila en la tabla de Zoho Analytics configurada
     por ANALYTICS_WORKSPACE_ID / ANALYTICS_VIEW_ID.
@@ -108,6 +111,12 @@ def agregar_fila_analytics(columnas: dict) -> bool:
     columnas: dict con {"NombreColumna": "valor", ...} — los
     nombres deben coincidir EXACTO con los nombres de columna
     de la tabla en Analytics (mayúsculas/espacios incluidos).
+
+    date_format: si la fila incluye una columna de tipo Fecha,
+    pasa aquí el patrón exacto usado al formatear ese valor
+    (ej. "dd-MMM-yyyy HH:mm:ss"), para que Analytics no intente
+    adivinarlo — el auto-detect puede fallar según la config
+    regional de la cuenta.
 
     Nunca lanza excepción hacia quien la llama: si algo falla,
     imprime el detalle y devuelve False, para no interrumpir la
@@ -142,6 +151,9 @@ def agregar_fila_analytics(columnas: dict) -> bool:
     }
 
     config = {"columns": columnas}
+
+    if date_format:
+        config["dateFormat"] = date_format
 
     try:
 

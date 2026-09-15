@@ -1497,7 +1497,8 @@ def finalizar_cotizacion(
             "Fecha": datetime.now(timezone.utc).strftime(
                 "%d-%b-%Y %H:%M:%S"
             ),
-        }
+        },
+        date_format="dd-MMM-yyyy HH:mm:ss",
     )
 
     session["state"] = (

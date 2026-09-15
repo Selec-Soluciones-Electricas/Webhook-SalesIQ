@@ -2,6 +2,8 @@ import os
 import re
 import random
 
+from datetime import datetime, timezone
+
 from conversation.state_machine import (
     build_reply,
     normalizar_texto,
@@ -30,6 +32,10 @@ from services.zoho_service import (
 
 from services.salesiq_service import (
     agregar_tag_conversacion,
+)
+
+from services.analytics_service import (
+    agregar_fila_analytics,
 )
 
 from services.email_service import (
@@ -1469,6 +1475,30 @@ def finalizar_cotizacion(
             f"conversation_id={conversation_id!r} "
             f"tag_id={tag_id!r}"
         )
+
+    # =====================================================
+    # REGISTRAR EL MISMO RESULTADO EN ZOHO ANALYTICS
+    # =====================================================
+    #
+    # Misma lógica, mismo momento, mismo dato de origen
+    # (deal_id) que decide el tag de SalesIQ. Esto le da a
+    # Analytics una fuente propia para cruzar con "Negocios",
+    # ya que las etiquetas de SalesIQ no viajan en su sync.
+    # Igual que el tag, un fallo acá nunca debe interrumpir
+    # la respuesta al visitante.
+    # =====================================================
+
+    agregar_fila_analytics(
+        {
+            "Conversation ID": conversation_id or "",
+            "Visit ID": data.get("num_chat") or "",
+            "Resultado": "OK" if deal_id else "Error",
+            "Deal ID": deal_id or "",
+            "Fecha": datetime.now(timezone.utc).strftime(
+                "%d-%b-%Y %H:%M:%S"
+            ),
+        }
+    )
 
     session["state"] = (
         "menu_principal"

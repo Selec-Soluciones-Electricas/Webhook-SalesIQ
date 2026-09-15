@@ -162,3 +162,165 @@ def agregar_tag_conversacion(
         )
 
         return False
+
+
+def listar_conversaciones_cerradas(
+    screenname: str,
+    access_token: str,
+    desde_ms: int,
+    hasta_ms: int,
+) -> list:
+    """
+    Lista conversaciones con status='closed' cuyo inicio
+    (start_time) cae entre desde_ms y hasta_ms (epoch en
+    milisegundos), trayendo el campo 'visitor' para poder
+    filtrar por canal (WhatsApp) del lado del cliente.
+
+    Pagina automáticamente hasta agotar los resultados.
+    """
+
+    headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+
+    conversaciones = []
+    page = 1
+
+    while True:
+
+        resp = requests.get(
+            f"{SALESIQ_API_BASE}/{screenname}/conversations",
+            headers=headers,
+            params={
+                "status": "closed",
+                "from_time": desde_ms,
+                "to_time": hasta_ms,
+                "limit": 99,
+                "page": page,
+                "fields": "visitor,status",
+            },
+            timeout=15,
+        )
+
+        if resp.status_code != 200:
+            print(
+                "[listar_conversaciones_cerradas] "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+            break
+
+        datos = resp.json().get("data") or []
+
+        if not datos:
+            break
+
+        conversaciones.extend(datos)
+
+        if len(datos) < 99:
+            break
+
+        page += 1
+
+    return conversaciones
+
+
+def obtener_tags_actuales(
+    conversation_id: str,
+    screenname: str,
+    access_token: str,
+) -> list:
+    """
+    Devuelve la lista de IDs de tags ya asociados a una
+    conversación (vacía si no tiene ninguno o si falla la
+    consulta — en ese caso se prefiere seguir de largo y
+    procesar el chat antes que saltarlo por error).
+    """
+
+    headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+
+    try:
+
+        resp = requests.get(
+            f"{SALESIQ_API_BASE}/{screenname}"
+            f"/conversations/{conversation_id}",
+            headers=headers,
+            timeout=15,
+        )
+
+        if resp.status_code != 200:
+            return []
+
+        data = resp.json().get("data") or {}
+
+        tags = data.get("tags") or []
+
+        return [str(t.get("id")) for t in tags if t.get("id")]
+
+    except Exception as e:
+        print(f"[obtener_tags_actuales] ERROR: {e}")
+        return []
+
+
+def obtener_transcripcion_completa(
+    conversation_id: str,
+    screenname: str,
+    access_token: str,
+) -> str:
+    """
+    Descarga la transcripción COMPLETA de una conversación,
+    paginando con from_time hasta que la API indique que ya no
+    hay más mensajes (more_data_available = false).
+
+    Necesario porque la API limita cuántos mensajes devuelve
+    por llamada; un chat largo puede tener el mensaje de
+    confirmación final en una página que nunca se pedía si solo
+    se hacía una llamada.
+    """
+
+    headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+
+    partes = []
+    from_time = None
+
+    for _ in range(20):
+
+        params = {"limit": 100}
+
+        if from_time:
+            params["from_time"] = from_time
+
+        resp = requests.get(
+            f"{SALESIQ_API_BASE}/{screenname}"
+            f"/conversations/{conversation_id}/messages",
+            headers=headers,
+            params=params,
+            timeout=15,
+        )
+
+        if resp.status_code != 200:
+            print(
+                "[obtener_transcripcion_completa] "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+            break
+
+        data = resp.json()
+        mensajes = data.get("data") or []
+
+        for m in mensajes:
+            contenido = m.get("message") or {}
+            texto = contenido.get("text") or ""
+            partes.append(str(texto))
+
+        if not data.get("more_data_available"):
+            break
+
+        if not mensajes:
+            break
+
+        siguiente_from_time = mensajes[-1].get("time")
+
+        if not siguiente_from_time or siguiente_from_time == from_time:
+            break
+
+        from_time = siguiente_from_time
+
+    return "\n".join(partes)

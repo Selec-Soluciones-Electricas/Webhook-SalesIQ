@@ -6,6 +6,7 @@ load_dotenv()
 from flask import Flask
 
 from routes.webhook import register_routes
+from routes.cron import register_cron_routes
 from services.zoho_service import get_access_token
 
 try:
@@ -56,6 +57,8 @@ register_routes(
     sessions,
     access_token,
 )
+
+register_cron_routes(app)
 
 
 # =========================================================

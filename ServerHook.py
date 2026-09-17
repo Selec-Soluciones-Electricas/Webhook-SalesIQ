@@ -32,6 +32,10 @@ if load_dotenv:
 
 app = Flask(__name__)
 
+from routes.flow_mvp import (
+    flow_mvp_bp,
+)
+
 
 # =========================================================
 # SESIONES
@@ -55,6 +59,10 @@ register_routes(
     app,
     sessions,
     access_token,
+)
+
+app.register_blueprint(
+    flow_mvp_bp
 )
 
 

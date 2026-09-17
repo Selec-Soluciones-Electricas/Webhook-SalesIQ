@@ -2058,6 +2058,219 @@ def validar_datos_empresa(
 
     return faltantes
 
+# =========================================================
+# MVP UX - DATOS DE EMPRESA PASO A PASO
+# =========================================================
+
+def manejar_flujo_cotizacion_empresa_paso_a_paso(
+    session: dict,
+    message_text: str,
+) -> dict:
+    """
+    MVP conversacional para recopilar los datos de empresa
+    una pregunta a la vez.
+
+    Mantiene intacto el flujo actual de producto, Zoho,
+    correos y asignación de ejecutivos.
+    """
+
+    data = session.setdefault(
+        "data",
+        {},
+    )
+
+    texto = str(
+        message_text or ""
+    ).strip()
+
+    state = session.get(
+        "state",
+        "cotizacion_empresa_nombre",
+    )
+
+    # =====================================================
+    # PASO 1 DE 5 - EMPRESA
+    # =====================================================
+
+    if state == "cotizacion_empresa_nombre":
+
+        if len(texto) < 2:
+
+            return build_reply(
+                (
+                    "Por favor, ingrese el nombre de la empresa.\n\n"
+                    "Ejemplo: Empresa Ejemplo"
+                )
+            )
+
+        data["empresa"] = texto
+
+        session["state"] = (
+            "cotizacion_empresa_rut"
+        )
+
+        return build_reply(
+            (
+                "Paso 2 de 5\n"
+                "¿Cuál es el RUT de la empresa?\n\n"
+                "Ejemplo: 76123456-7"
+            )
+        )
+
+    # =====================================================
+    # PASO 2 DE 5 - RUT
+    # =====================================================
+
+    if state == "cotizacion_empresa_rut":
+
+        if not es_rut_plausible(
+            texto
+        ):
+
+            return build_reply(
+                (
+                    "El RUT ingresado no parece válido.\n\n"
+                    "Por favor, ingréselo nuevamente.\n"
+                    "Ejemplo: 76123456-7"
+                )
+            )
+
+        data["rut"] = texto
+
+        session["state"] = (
+            "cotizacion_empresa_contacto"
+        )
+
+        return build_reply(
+            (
+                "Paso 3 de 5\n"
+                "¿Cuál es el nombre de la persona de contacto?"
+            )
+        )
+
+    # =====================================================
+    # PASO 3 DE 5 - CONTACTO
+    # =====================================================
+
+    if state == "cotizacion_empresa_contacto":
+
+        if len(texto) < 2:
+
+            return build_reply(
+                (
+                    "Por favor, ingrese el nombre de contacto.\n\n"
+                    "Ejemplo: Juan Pérez"
+                )
+            )
+
+        data["contacto"] = texto
+
+        session["state"] = (
+            "cotizacion_empresa_correo"
+        )
+
+        return build_reply(
+            (
+                "Paso 4 de 5\n"
+                "¿Cuál es el correo de contacto?\n\n"
+                "Ejemplo: nombre@empresa.cl"
+            )
+        )
+
+    # =====================================================
+    # PASO 4 DE 5 - CORREO
+    # =====================================================
+
+    if state == "cotizacion_empresa_correo":
+
+        correo = extraer_email(
+            texto
+        )
+
+        if not correo:
+
+            return build_reply(
+                (
+                    "Ese correo no parece tener un formato válido.\n\n"
+                    "Por favor, ingréselo nuevamente.\n"
+                    "Ejemplo: nombre@empresa.cl"
+                )
+            )
+
+        data["correo"] = correo
+
+        session["state"] = (
+            "cotizacion_empresa_telefono"
+        )
+
+        return build_reply(
+            (
+                "Paso 5 de 5\n"
+                "¿Cuál es el número de teléfono de contacto?\n\n"
+                "Ejemplo: 56912345678"
+            )
+        )
+
+    # =====================================================
+    # PASO 5 DE 5 - TELÉFONO
+    # =====================================================
+
+    if state == "cotizacion_empresa_telefono":
+
+        if not es_telefono_plausible(
+            texto
+        ):
+
+            return build_reply(
+                (
+                    "El número de teléfono no parece válido.\n\n"
+                    "Por favor, ingréselo nuevamente.\n"
+                    "Ejemplo: 56912345678"
+                )
+            )
+
+        data["telefono"] = (
+            limpiar_digitos(
+                texto
+            )
+        )
+
+        session["state"] = (
+            "cotizacion_producto_bloque"
+        )
+
+        return build_reply(
+            (
+                "Gracias. Ya tenemos los datos de la empresa.\n\n"
+                "Ahora necesitamos la información del producto.\n\n"
+                "En un SOLO mensaje, indique:\n"
+                "Número de parte, marca, descripción detallada, "
+                "cantidad y dirección de entrega.\n\n"
+                "Ejemplo:\n"
+                "Número de parte: ABC123\n"
+                "Marca: Siemens\n"
+                "Descripción: Tornillo de acero inoxidable\n"
+                "Cantidad: 5\n"
+                "Dirección de entrega: Av. Ejemplo 1234, Santiago"
+            )
+        )
+
+    # =====================================================
+    # SEGURIDAD - ESTADO INESPERADO
+    # =====================================================
+
+    session["state"] = (
+        "cotizacion_empresa_nombre"
+    )
+
+    return build_reply(
+        (
+            "Comencemos nuevamente con los datos "
+            "de la empresa.\n\n"
+            "Paso 1 de 5\n"
+            "¿Cuál es el nombre de la empresa?"
+        )
+    )
 
 # =========================================================
 # FLUJO DE COTIZACIÓN - EMPRESA

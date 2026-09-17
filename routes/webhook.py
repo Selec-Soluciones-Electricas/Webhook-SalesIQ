@@ -12,6 +12,7 @@ from conversation.state_machine import (
 
 from conversation.quotation import (
     manejar_flujo_cotizacion_empresa_bloque,
+    manejar_flujo_cotizacion_empresa_paso_a_paso,
     manejar_flujo_cotizacion_bloque,
 )
 
@@ -255,6 +256,25 @@ def procesar_mensaje(session, payload):
 
         return jsonify(
             manejar_menu_principal(
+                session,
+                message_text
+            )
+        )
+
+    # =========================================================
+    # MVP UX - DATOS DE EMPRESA PASO A PASO
+    # =========================================================
+
+    if state in (
+        "cotizacion_empresa_nombre",
+        "cotizacion_empresa_rut",
+        "cotizacion_empresa_contacto",
+        "cotizacion_empresa_correo",
+        "cotizacion_empresa_telefono",
+    ):
+
+        return jsonify(
+            manejar_flujo_cotizacion_empresa_paso_a_paso(
                 session,
                 message_text
             )

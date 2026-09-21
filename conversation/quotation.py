@@ -1560,19 +1560,19 @@ def finalizar_cotizacion(
     # la respuesta al visitante.
     # =====================================================
 
-        agregar_fila_analytics(
-    {
-        "Conversation ID": conversation_id or "",
-        "Visit ID": data.get("num_chat") or "",
-        "Resultado": "OK" if deal_id else "Error",
-        "Deal ID": deal_id or "",
-        "Fecha": datetime.now(timezone.utc).strftime(
-            "%d-%b-%Y %H:%M:%S"
-        ),
-        "Attempt ID": attempt_id,
-    },
-    date_format="dd-MMM-yyyy HH:mm:ss",
-)
+    agregar_fila_analytics(
+        {
+            "Conversation ID": conversation_id or "",
+            "Visit ID": data.get("num_chat") or "",
+            "Resultado": "OK" if deal_id else "Error",
+            "Deal ID": deal_id or "",
+            "Fecha": datetime.now(timezone.utc).strftime(
+                "%d-%b-%Y %H:%M:%S"
+            ),
+            "Attempt ID": attempt_id,
+        },
+        date_format="dd-MMM-yyyy HH:mm:ss",
+    )
 
     session["state"] = (
         "menu_principal"

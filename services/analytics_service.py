@@ -28,7 +28,8 @@ def get_analytics_access_token() -> str:
     Variables de entorno requeridas:
         ANALYTICS_CLIENT_ID
         ANALYTICS_CLIENT_SECRET
-        ANALYTICS_REFRESH_TOKEN   (scope: ZohoAnalytics.data.create)
+        ANALYTICS_REFRESH_TOKEN
+        (scope: ZohoAnalytics.data.create, ZohoAnalytics.data.read)
     """
 
     now = time.time()
@@ -179,3 +180,93 @@ def agregar_fila_analytics(
         )
 
         return False
+
+def existe_attempt_id_analytics(attempt_id: str):
+    """
+    Comprueba si un Attempt ID ya existe en Zoho Analytics.
+
+    Devuelve:
+        True  -> ya existe.
+        False -> la consulta funcionó y no existe.
+        None  -> no fue posible comprobarlo.
+    """
+
+    if not attempt_id:
+        return None
+
+    org_id = os.environ.get("ANALYTICS_ORG_ID")
+    workspace_id = os.environ.get("ANALYTICS_WORKSPACE_ID")
+    view_id = os.environ.get("ANALYTICS_VIEW_ID")
+
+    if not org_id or not workspace_id or not view_id:
+        print(
+            "[existe_attempt_id_analytics] ERROR: faltan "
+            "ANALYTICS_ORG_ID / ANALYTICS_WORKSPACE_ID / "
+            "ANALYTICS_VIEW_ID."
+        )
+        return None
+
+    access_token = get_analytics_access_token()
+
+    if not access_token:
+        return None
+
+    url = (
+        f"{ANALYTICS_API_BASE}/workspaces/{workspace_id}"
+        f"/views/{view_id}/data"
+    )
+
+    headers = {
+        "ZANALYTICS-ORGID": org_id,
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+    }
+
+    attempt_id_seguro = str(attempt_id).replace(
+        "'",
+        "''",
+    )
+
+    config = {
+        "responseFormat": "json",
+        "criteria": (
+            f"\"Attempt ID\"='{attempt_id_seguro}'"
+        ),
+        "selectedColumns": [
+            "Attempt ID"
+        ],
+        "keyValueFormat": True,
+    }
+
+    try:
+
+        resp = requests.get(
+            url,
+            headers=headers,
+            params={
+                "CONFIG": json.dumps(config)
+            },
+            timeout=10,
+        )
+
+        if resp.status_code != 200:
+            print(
+                "[existe_attempt_id_analytics] "
+                f"ERROR {resp.status_code}: "
+                f"{resp.text[:300]}"
+            )
+            return None
+
+        data = resp.json()
+
+        filas = data.get("data") or []
+
+        return len(filas) > 0
+
+    except Exception as e:
+
+        print(
+            "[existe_attempt_id_analytics] "
+            f"ERROR llamando a Analytics: {e}"
+        )
+
+        return None

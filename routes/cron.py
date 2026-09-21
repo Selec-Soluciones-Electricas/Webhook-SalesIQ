@@ -7,7 +7,7 @@ from flask import jsonify, request
 from services.salesiq_service import (
     listar_conversaciones_cerradas,
     obtener_tags_actuales,
-    obtener_transcripcion_completa,
+    obtener_mensajes_conversacion,
     agregar_tag_conversacion,
 )
 from services.zoho_service import get_salesiq_access_token
@@ -16,25 +16,32 @@ from services.crm_lookup_service import (
     extraer_candidatos_telefono,
     buscar_deal_id_por_telefono,
 )
-from services.analytics_service import agregar_fila_analytics
+from services.analytics_service import (
+    agregar_fila_analytics,
+    existe_attempt_id_analytics,
+)
 
 
-# Margen de horas hacia atrás en cada corrida. El timeout real
-# configurado en SalesIQ es de 24h; se usa el doble para no
-# perder ningún chat por pequeños desfaces de reloj o husos
-# horarios. Reprocesar un chat ya tageado es inofensivo (se
-# detecta y se salta antes de tocar nada).
+# Margen de horas hacia atrás en cada corrida.
 VENTANA_HORAS = 48
 
 PAUSA_ENTRE_LLAMADAS = 0.4
 
+# =========================================================
+# FRASES PARA DETECTAR INTENTOS DE COTIZACIÓN
+# =========================================================
 
-def _tag_ids_conocidos():
-    return {
-        os.environ.get("SALESIQ_TAG_ID_CRM_OK"),
-        os.environ.get("SALESIQ_TAG_ID_CRM_ERROR"),
-        os.environ.get("SALESIQ_TAG_ID_INCOMPLETO"),
-    } - {None}
+FRASE_INICIO_COTIZACION = (
+    "Perfecto, trabajaremos en su solicitud de cotización"
+)
+
+FRASE_EXITO_COTIZACION = (
+    "Un ejecutivo de Selec se pondrá"
+)
+
+FRASE_ERROR_COTIZACION = (
+    "ocurrió un inconveniente al registrarla"
+)
 
 
 def _registrar_en_analytics(
@@ -43,9 +50,14 @@ def _registrar_en_analytics(
     resultado: str,
     deal_id: str,
     fecha,
+    attempt_id: str = None,
 ) -> bool:
 
-    fecha_str = fecha.strftime("%d-%b-%Y %H:%M:%S") if fecha else ""
+    fecha_str = (
+        fecha.strftime("%d-%b-%Y %H:%M:%S")
+        if fecha
+        else ""
+    )
 
     return agregar_fila_analytics(
         {
@@ -54,9 +66,117 @@ def _registrar_en_analytics(
             "Resultado": resultado,
             "Deal ID": deal_id or "",
             "Fecha": fecha_str,
+            "Attempt ID": attempt_id or "",
         },
         date_format="dd-MMM-yyyy HH:mm:ss",
     )
+
+
+def _detectar_intentos_cotizacion(mensajes: list) -> list:
+    """
+    Recorre los mensajes de una conversación en orden
+    cronológico y detecta cada intento de cotización.
+
+    Un intento comienza cuando aparece la frase de inicio
+    del flujo de cotización.
+
+    Puede terminar como:
+    - OK
+    - Error
+    - Incompleto
+    """
+
+    intentos = []
+    intento_actual = None
+    numero_intento = 0
+
+    for mensaje in mensajes:
+
+        texto = str(
+            mensaje.get("text") or ""
+        )
+
+        time_ms = mensaje.get("time_ms")
+
+        # =================================================
+        # INICIO DE UNA NUEVA COTIZACIÓN
+        # =================================================
+
+        if FRASE_INICIO_COTIZACION in texto:
+
+            # Si ya había un intento abierto y aparece
+            # otro inicio, el anterior quedó incompleto.
+            if (
+                intento_actual
+                and intento_actual["resultado"] == "En proceso"
+            ):
+                intento_actual["resultado"] = "Incompleto"
+                intento_actual["fin_ms"] = time_ms
+
+            numero_intento += 1
+
+            intento_actual = {
+                "numero": numero_intento,
+                "resultado": "En proceso",
+                "inicio_ms": time_ms,
+                "fin_ms": None,
+                "mensajes": [texto],
+            }
+
+            intentos.append(intento_actual)
+            continue
+
+        if intento_actual is None:
+            continue
+
+        intento_actual["mensajes"].append(texto)
+
+        # =================================================
+        # COTIZACIÓN EXITOSA
+        # =================================================
+
+        if FRASE_EXITO_COTIZACION in texto:
+            intento_actual["resultado"] = "OK"
+            intento_actual["fin_ms"] = time_ms
+            intento_actual = None
+            continue
+
+        # =================================================
+        # ERROR AL REGISTRAR
+        # =================================================
+
+        if FRASE_ERROR_COTIZACION in texto:
+            intento_actual["resultado"] = "Error"
+            intento_actual["fin_ms"] = time_ms
+            intento_actual = None
+            continue
+
+    # =====================================================
+    # INTENTO QUE QUEDÓ ABIERTO
+    # =====================================================
+
+    # Este cron procesa conversaciones cerradas. Si al final
+    # todavía hay un intento abierto, se considera incompleto.
+    if (
+        intento_actual
+        and intento_actual["resultado"] == "En proceso"
+    ):
+        intento_actual["resultado"] = "Incompleto"
+
+    return intentos
+
+
+def _fecha_desde_ms(valor_ms):
+    if not valor_ms:
+        return None
+
+    try:
+        return datetime.fromtimestamp(
+            int(valor_ms) / 1000,
+            tz=timezone.utc,
+        )
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 def ejecutar_reconciliacion():
@@ -66,18 +186,39 @@ def ejecutar_reconciliacion():
     tag_id_error = os.environ.get("SALESIQ_TAG_ID_CRM_ERROR")
     tag_id_incompleto = os.environ.get("SALESIQ_TAG_ID_INCOMPLETO")
 
+    attempt_tracking_start_raw = os.environ.get(
+        "ATTEMPT_TRACKING_START_MS"
+    )
+
+    try:
+        attempt_tracking_start_ms = int(
+            attempt_tracking_start_raw
+        )
+    except (TypeError, ValueError):
+        return {
+            "error": (
+                "Falta o es inválida la variable "
+                "ATTEMPT_TRACKING_START_MS"
+            )
+        }
+
     resumen = {
         "revisados": 0,
-        "ya_tageados": 0,
         "ok": 0,
         "error": 0,
         "incompleto": 0,
         "postventa_excluidos": 0,
         "fallos_tag": 0,
         "registrados_analytics": 0,
+        "ya_registrados_analytics": 0,
     }
 
-    if not screenname or not tag_id_ok or not tag_id_error or not tag_id_incompleto:
+    if (
+        not screenname
+        or not tag_id_ok
+        or not tag_id_error
+        or not tag_id_incompleto
+    ):
         return {
             "error": (
                 "Faltan variables de entorno: SALESIQ_SCREENNAME / "
@@ -89,7 +230,9 @@ def ejecutar_reconciliacion():
     salesiq_token = get_salesiq_access_token()
 
     if not salesiq_token:
-        return {"error": "No se pudo obtener el access token de SalesIQ."}
+        return {
+            "error": "No se pudo obtener el access token de SalesIQ."
+        }
 
     ahora = datetime.now(timezone.utc)
     desde = ahora - timedelta(hours=VENTANA_HORAS)
@@ -98,10 +241,11 @@ def ejecutar_reconciliacion():
     hasta_ms = int(ahora.timestamp() * 1000)
 
     conversaciones = listar_conversaciones_cerradas(
-        screenname, salesiq_token, desde_ms, hasta_ms
+        screenname,
+        salesiq_token,
+        desde_ms,
+        hasta_ms,
     )
-
-    tags_conocidos = _tag_ids_conocidos()
 
     for conv in conversaciones:
 
@@ -111,7 +255,9 @@ def ejecutar_reconciliacion():
             continue
 
         conversation_id = str(
-            conv.get("id") or visitor.get("active_conversation_id") or ""
+            conv.get("id")
+            or visitor.get("active_conversation_id")
+            or ""
         )
 
         if not conversation_id:
@@ -119,82 +265,166 @@ def ejecutar_reconciliacion():
 
         resumen["revisados"] += 1
 
-        tags_actuales = obtener_tags_actuales(
-            conversation_id, screenname, salesiq_token
+        tags_actuales = set(
+            obtener_tags_actuales(
+                conversation_id,
+                screenname,
+                salesiq_token,
+            )
         )
 
-        if any(t in tags_conocidos for t in tags_actuales):
-            resumen["ya_tageados"] += 1
-            time.sleep(PAUSA_ENTRE_LLAMADAS)
-            continue
+        # =================================================
+        # SIEMPRE ANALIZAR LOS INTENTOS DEL CHAT
+        # =================================================
+        # Los tags son solo informativos. Ya no deciden si una
+        # conversación completa se procesa o se omite.
 
-        texto = obtener_transcripcion_completa(
-            conversation_id, screenname, salesiq_token
+        mensajes = obtener_mensajes_conversacion(
+            conversation_id,
+            screenname,
+            salesiq_token,
         )
 
-        decision = decidir_resultado(texto)
+        intentos = _detectar_intentos_cotizacion(
+            mensajes
+        )
 
-        if decision == "POSTVENTA":
-            resumen["postventa_excluidos"] += 1
+        # Si no hubo ningún intento formal de cotización,
+        # conservamos solamente la exclusión informativa de
+        # Postventa. No registramos un "Incompleto" genérico.
+        if not intentos:
+            texto_completo = "\n".join(
+                str(m.get("text") or "")
+                for m in mensajes
+            )
+
+            if decidir_resultado(texto_completo) == "POSTVENTA":
+                resumen["postventa_excluidos"] += 1
+
             time.sleep(PAUSA_ENTRE_LLAMADAS)
             continue
-
-        hora_creacion = None
-        start_time = conv.get("start_time") or visitor.get("in_time")
-
-        if start_time:
-            try:
-                hora_creacion = datetime.fromtimestamp(
-                    int(start_time) / 1000, tz=timezone.utc
-                )
-            except Exception:
-                hora_creacion = None
 
         visitid = visitor.get("visitid") or ""
 
-        if decision == "SIN_DATOS":
+        for intento in intentos:
 
-            resumen["incompleto"] += 1
+            resultado = intento.get("resultado")
 
-            if not agregar_tag_conversacion(
-                conversation_id, tag_id_incompleto, salesiq_token
+            if resultado not in (
+                "OK",
+                "Error",
+                "Incompleto",
             ):
-                resumen["fallos_tag"] += 1
+                continue
+
+            inicio_ms = intento.get("inicio_ms")
+
+            try:
+                inicio_ms = int(inicio_ms)
+            except (TypeError, ValueError):
+                continue
+
+            # ---------------------------------------------
+            # NO TOCAR DATOS HISTÓRICOS
+            # ---------------------------------------------
+            if inicio_ms < attempt_tracking_start_ms:
+                continue
+
+            attempt_id = (
+                f"{conversation_id}-{inicio_ms}"
+            )
+
+            # ---------------------------------------------
+            # COMPROBAR SI ESTE INTENTO YA EXISTE
+            # ---------------------------------------------
+            existe = existe_attempt_id_analytics(
+                attempt_id
+            )
+
+            if existe is None:
+                print(
+                    "[cron] No se pudo verificar "
+                    f"Attempt ID: {attempt_id}"
+                )
+                continue
+
+            # ---------------------------------------------
+            # ASEGURAR EL TAG CORRESPONDIENTE
+            # ---------------------------------------------
+            if resultado == "OK":
+                tag_id_resultado = tag_id_ok
+            elif resultado == "Error":
+                tag_id_resultado = tag_id_error
+            else:
+                tag_id_resultado = tag_id_incompleto
+
+            if (
+                tag_id_resultado
+                and tag_id_resultado not in tags_actuales
+            ):
+                if agregar_tag_conversacion(
+                    conversation_id,
+                    tag_id_resultado,
+                    salesiq_token,
+                ):
+                    tags_actuales.add(tag_id_resultado)
+                else:
+                    resumen["fallos_tag"] += 1
+
+            # Si ya existe en Analytics, no volver a insertar.
+            if existe:
+                resumen["ya_registrados_analytics"] += 1
+                continue
+
+            fecha_inicio = _fecha_desde_ms(
+                inicio_ms
+            )
+
+            deal_id = None
+
+            # ---------------------------------------------
+            # RECUPERAR DEAL ID PARA UN OK DE RESPALDO
+            # ---------------------------------------------
+            # Normalmente quotation.py ya registró el OK en
+            # tiempo real. Este bloque actúa como respaldo si
+            # esa escritura falló.
+            if resultado == "OK":
+
+                texto_intento = "\n".join(
+                    str(t or "")
+                    for t in intento.get("mensajes", [])
+                )
+
+                candidatos = extraer_candidatos_telefono(
+                    texto_intento
+                )
+
+                fecha_fin = _fecha_desde_ms(
+                    intento.get("fin_ms")
+                )
+
+                deal_id = buscar_deal_id_por_telefono(
+                    candidatos,
+                    fecha_inicio,
+                    fecha_fin,
+                )
 
             if _registrar_en_analytics(
-                conversation_id, visitid, "Incompleto", None, hora_creacion
+                conversation_id,
+                visitid,
+                resultado,
+                deal_id,
+                fecha_inicio,
+                attempt_id,
             ):
                 resumen["registrados_analytics"] += 1
 
-            time.sleep(PAUSA_ENTRE_LLAMADAS)
-            continue
-
-        # decision es "OK" o "ERROR"
-
-        tag_id = tag_id_ok if decision == "OK" else tag_id_error
-        resumen["ok" if decision == "OK" else "error"] += 1
-
-        deal_id = None
-
-        if decision == "OK":
-            candidatos = extraer_candidatos_telefono(texto)
-            deal_id = buscar_deal_id_por_telefono(
-                candidatos, hora_creacion, hora_creacion
-            )
-
-        if not agregar_tag_conversacion(
-            conversation_id, tag_id, salesiq_token
-        ):
-            resumen["fallos_tag"] += 1
-
-        if _registrar_en_analytics(
-            conversation_id,
-            visitid,
-            "OK" if decision == "OK" else "Error",
-            deal_id,
-            hora_creacion,
-        ):
-            resumen["registrados_analytics"] += 1
+                if resultado == "OK":
+                    resumen["ok"] += 1
+                elif resultado == "Error":
+                    resumen["error"] += 1
+                else:
+                    resumen["incompleto"] += 1
 
         time.sleep(PAUSA_ENTRE_LLAMADAS)
 
@@ -213,7 +443,10 @@ def register_cron_routes(app):
             or request.args.get("secret")
         )
 
-        if not secreto_esperado or secreto_recibido != secreto_esperado:
+        if (
+            not secreto_esperado
+            or secreto_recibido != secreto_esperado
+        ):
             return jsonify({"error": "No autorizado"}), 401
 
         resultado = ejecutar_reconciliacion()

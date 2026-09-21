@@ -171,10 +171,16 @@ def listar_conversaciones_cerradas(
     hasta_ms: int,
 ) -> list:
     """
-    Lista conversaciones con status='closed' cuyo inicio
-    (start_time) cae entre desde_ms y hasta_ms (epoch en
-    milisegundos), trayendo el campo 'visitor' para poder
-    filtrar por canal (WhatsApp) del lado del cliente.
+    Lista conversaciones con status='closed' que hayan sido
+    actualizadas entre desde_ms y hasta_ms (epoch en
+    milisegundos).
+
+    Se usa la hora de actualización y no la hora de inicio,
+    porque una conversación de WhatsApp puede haber comenzado
+    hace mucho tiempo y cerrarse recién ahora.
+
+    Trae el campo 'visitor' para poder filtrar por canal
+    (WhatsApp) del lado del cliente.
 
     Pagina automáticamente hasta agotar los resultados.
     """
@@ -191,8 +197,9 @@ def listar_conversaciones_cerradas(
             headers=headers,
             params={
                 "status": "closed",
-                "from_time": desde_ms,
-                "to_time": hasta_ms,
+                "updated_from_time": desde_ms,
+                "updated_till_time": hasta_ms,
+                "sort_by": "updated_time",
                 "limit": 99,
                 "page": page,
                 "fields": "visitor,status",

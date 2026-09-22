@@ -3,6 +3,7 @@ import re
 import random
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from conversation.state_machine import (
     build_reply,
@@ -44,6 +45,7 @@ from services.email_service import (
     enviar_correo_solicitud_incompleta,
 )
 
+CHILE_TZ = ZoneInfo("America/Santiago")
 # =========================================================
 # OWNERS PARA NEGOCIOS DE COTIZACIÓN
 # =========================================================
@@ -1566,7 +1568,7 @@ def finalizar_cotizacion(
             "Visit ID": data.get("num_chat") or "",
             "Resultado": "OK" if deal_id else "Error",
             "Deal ID": deal_id or "",
-            "Fecha": datetime.now(timezone.utc).strftime(
+            "Fecha": datetime.now(CHILE_TZ).strftime(
                 "%d-%b-%Y %H:%M:%S"
             ),
             "Attempt ID": attempt_id,

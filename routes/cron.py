@@ -1,12 +1,13 @@
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from flask import jsonify, request
 
 from services.salesiq_service import (
     listar_conversaciones_cerradas,
-    obtener_tags_actuales,
+    obtener_detalle_conversacion,
     obtener_mensajes_conversacion,
     agregar_tag_conversacion,
 )
@@ -26,6 +27,8 @@ from services.analytics_service import (
 VENTANA_HORAS = 48
 
 PAUSA_ENTRE_LLAMADAS = 0.4
+
+CHILE_TZ = ZoneInfo("America/Santiago")
 
 # =========================================================
 # FRASES PARA DETECTAR INTENTOS DE COTIZACIÓN
@@ -70,6 +73,26 @@ def _registrar_en_analytics(
         },
         date_format="dd-MMM-yyyy HH:mm:ss",
     )
+
+
+def _obtener_canal_visitante(visitor: dict) -> str:
+    """
+    Obtiene el canal real de SalesIQ.
+
+    En las respuestas actuales de SalesIQ el canal suele venir
+    como visitor.channel_details.channel o visitor.channel_name,
+    no como visitor.channel.
+    """
+
+    visitor = visitor or {}
+    channel_details = visitor.get("channel_details") or {}
+
+    return str(
+        visitor.get("channel")
+        or channel_details.get("channel")
+        or visitor.get("channel_name")
+        or ""
+    ).strip().lower()
 
 
 def _detectar_intentos_cotizacion(mensajes: list) -> list:
@@ -174,7 +197,7 @@ def _fecha_desde_ms(valor_ms):
         return datetime.fromtimestamp(
             int(valor_ms) / 1000,
             tz=timezone.utc,
-        )
+        ).astimezone(CHILE_TZ)
     except (TypeError, ValueError, OSError):
         return None
 
@@ -203,7 +226,9 @@ def ejecutar_reconciliacion():
         }
 
     resumen = {
+        "cerradas_recibidas": 0,
         "revisados": 0,
+        "omitidos_no_whatsapp": 0,
         "ok": 0,
         "error": 0,
         "incompleto": 0,
@@ -247,12 +272,11 @@ def ejecutar_reconciliacion():
         hasta_ms,
     )
 
+    resumen["cerradas_recibidas"] = len(conversaciones)
+
     for conv in conversaciones:
 
         visitor = conv.get("visitor") or {}
-
-        if visitor.get("channel") != "whatsapp":
-            continue
 
         conversation_id = str(
             conv.get("id")
@@ -263,15 +287,33 @@ def ejecutar_reconciliacion():
         if not conversation_id:
             continue
 
+        # El listado de conversaciones no siempre entrega el
+        # canal en visitor["channel"]. Consultamos el detalle
+        # para leer channel_details.channel / channel_name.
+        detalle = obtener_detalle_conversacion(
+            conversation_id,
+            screenname,
+            salesiq_token,
+        )
+
+        visitor_detalle = detalle.get("visitor") or {}
+
+        canal = (
+            _obtener_canal_visitante(visitor_detalle)
+            or _obtener_canal_visitante(visitor)
+        )
+
+        if "whatsapp" not in canal:
+            resumen["omitidos_no_whatsapp"] += 1
+            continue
+
         resumen["revisados"] += 1
 
-        tags_actuales = set(
-            obtener_tags_actuales(
-                conversation_id,
-                screenname,
-                salesiq_token,
-            )
-        )
+        tags_actuales = {
+            str(t.get("id"))
+            for t in (detalle.get("tags") or [])
+            if t.get("id")
+        }
 
         # =================================================
         # SIEMPRE ANALIZAR LOS INTENTOS DEL CHAT
@@ -304,7 +346,13 @@ def ejecutar_reconciliacion():
             time.sleep(PAUSA_ENTRE_LLAMADAS)
             continue
 
-        visitid = visitor.get("visitid") or ""
+        visitid = (
+            visitor_detalle.get("visitid")
+            or visitor.get("visitid")
+            or detalle.get("reference_id")
+            or conv.get("reference_id")
+            or ""
+        )
 
         for intento in intentos:
 

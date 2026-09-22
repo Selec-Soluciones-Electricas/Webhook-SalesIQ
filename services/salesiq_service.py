@@ -202,7 +202,7 @@ def listar_conversaciones_cerradas(
                 "sort_by": "updated_time",
                 "limit": 99,
                 "page": page,
-                "fields": "visitor,status",
+                "fields": "visitor,status,end_time,start_time",
             },
             timeout=15,
         )
@@ -229,17 +229,21 @@ def listar_conversaciones_cerradas(
     return conversaciones
 
 
-def obtener_tags_actuales(
+def obtener_detalle_conversacion(
     conversation_id: str,
     screenname: str,
     access_token: str,
-) -> list:
+) -> dict:
     """
-    Devuelve la lista de IDs de tags ya asociados a una
-    conversación (vacía si no tiene ninguno o si falla la
-    consulta — en ese caso se prefiere seguir de largo y
-    procesar el chat antes que saltarlo por error).
+    Devuelve el detalle completo de una conversación.
+
+    Se usa, entre otras cosas, para leer correctamente
+    visitor.channel_details.channel / visitor.channel_name,
+    ya que SalesIQ no expone el canal en visitor["channel"].
     """
+
+    if not conversation_id:
+        return {}
 
     headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
 
@@ -253,17 +257,45 @@ def obtener_tags_actuales(
         )
 
         if resp.status_code != 200:
-            return []
+            print(
+                "[obtener_detalle_conversacion] "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+            return {}
 
-        data = resp.json().get("data") or {}
-
-        tags = data.get("tags") or []
-
-        return [str(t.get("id")) for t in tags if t.get("id")]
+        return resp.json().get("data") or {}
 
     except Exception as e:
-        print(f"[obtener_tags_actuales] ERROR: {e}")
-        return []
+
+        print(
+            "[obtener_detalle_conversacion] "
+            f"ERROR llamando a SalesIQ: {e}"
+        )
+
+        return {}
+
+
+def obtener_tags_actuales(
+    conversation_id: str,
+    screenname: str,
+    access_token: str,
+) -> list:
+    """
+    Devuelve la lista de IDs de tags ya asociados a una
+    conversación (vacía si no tiene ninguno o si falla la
+    consulta — en ese caso se prefiere seguir de largo y
+    procesar el chat antes que saltarlo por error).
+    """
+
+    data = obtener_detalle_conversacion(
+        conversation_id,
+        screenname,
+        access_token,
+    )
+
+    tags = data.get("tags") or []
+
+    return [str(t.get("id")) for t in tags if t.get("id")]
 
 
 def obtener_mensajes_conversacion(

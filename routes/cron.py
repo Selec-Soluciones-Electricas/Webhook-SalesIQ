@@ -36,7 +36,7 @@ def _tag_ids_conocidos():
         os.environ.get("SALESIQ_TAG_ID_INCOMPLETO"),
     } - {None}
 
-
+# Funcion desarrollada con el fin de registrar una fila en el sistema de analytics.
 def _registrar_en_analytics(
     conversation_id: str,
     visitid: str,
@@ -58,7 +58,7 @@ def _registrar_en_analytics(
         date_format="dd-MMM-yyyy HH:mm:ss",
     )
 
-
+# Funcion desarrollada con el fin de obtener un access token de Zoho CRM con permisos de solo lectura, para poder realizar consultas sin modificar datos en el CRM.
 def ejecutar_reconciliacion():
 
     screenname = os.environ.get("SALESIQ_SCREENNAME")

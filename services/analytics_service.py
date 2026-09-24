@@ -19,7 +19,7 @@ analytics_access_token_cache = {
     "expires_at": 0.0,
 }
 
-
+# Funcion desarrollada con el fin de obtener un access token de Zoho Analytics usando su propio refresh token, para poder registrar filas en la tabla de Analytics sin interrumpir la respuesta al visitante.
 def get_analytics_access_token() -> str:
     """
     Obtiene el access token de Zoho Analytics usando su propio
@@ -99,7 +99,7 @@ def get_analytics_access_token() -> str:
 
         return None
 
-
+# Funcion desarrollada con el fin de registrar una fila en el sistema de analytics, para poder realizar un seguimiento de las conversaciones y su estado en el flujo de reconciliacion.
 def agregar_fila_analytics(
     columnas: dict,
     date_format: str = None,

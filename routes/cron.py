@@ -297,6 +297,11 @@ def ejecutar_reconciliacion():
         "ya_registrados_analytics": 0,
         "ok_sin_deal_id": 0,
         "errores_conversacion": 0,
+        "sin_intentos": 0,
+        "intentos_detectados": 0,
+        "omitidos_historicos": 0,
+        "omitidos_sin_tiempo": 0,
+        "verificacion_fallida": 0,
     }
 
     if (
@@ -399,10 +404,28 @@ def ejecutar_reconciliacion():
                 mensajes
             )
 
+            resumen["intentos_detectados"] += len(intentos)
+
             # Si no hubo ningún intento formal de cotización,
             # conservamos solamente la exclusión informativa de
             # Postventa. No registramos un "Incompleto" genérico.
             if not intentos:
+
+                resumen["sin_intentos"] += 1
+
+                # Muestra de los primeros mensajes para verificar
+                # en el log que el texto se está leyendo bien.
+                muestra = [
+                    _texto_mensaje(m)[:40]
+                    for m in mensajes[:3]
+                ]
+
+                print(
+                    "[cron] Sin intentos: "
+                    f"conv={conversation_id} "
+                    f"mensajes={len(mensajes)} "
+                    f"muestra={muestra}"
+                )
 
                 texto_completo = "\n".join(
                     _texto_mensaje(m) for m in mensajes
@@ -438,12 +461,25 @@ def ejecutar_reconciliacion():
                 try:
                     inicio_ms = int(inicio_ms)
                 except (TypeError, ValueError):
+                    resumen["omitidos_sin_tiempo"] += 1
+                    print(
+                        "[cron] Intento sin hora de inicio: "
+                        f"conv={conversation_id} "
+                        f"resultado={resultado}"
+                    )
                     continue
 
                 # -----------------------------------------
                 # NO TOCAR DATOS HISTÓRICOS
                 # -----------------------------------------
                 if inicio_ms < attempt_tracking_start_ms:
+                    resumen["omitidos_historicos"] += 1
+                    print(
+                        "[cron] Intento histórico omitido: "
+                        f"conv={conversation_id} "
+                        f"inicio_ms={inicio_ms} "
+                        f"tracking_start_ms={attempt_tracking_start_ms}"
+                    )
                     continue
 
                 attempt_id = (
@@ -458,6 +494,7 @@ def ejecutar_reconciliacion():
                 )
 
                 if existe is None:
+                    resumen["verificacion_fallida"] += 1
                     print(
                         "[cron] No se pudo verificar "
                         f"Attempt ID: {attempt_id}"

@@ -13,6 +13,7 @@ from services.crm_lookup_service import buscar_deal_id_por_chat_detallado
 from services.analytics_repair_service import (
     listar_filas_analytics,
     actualizar_filas_analytics,
+    ultimo_error_analytics,
 )
 from routes.cron import _texto_mensaje, _a_epoch_ms
 
@@ -374,7 +375,11 @@ def reparar_deal_ids(
             resumen["reparadas"] += 1
         else:
             resumen["fallos_actualizacion"].append(
-                {**referencia, "deal_id": deal_id}
+                {
+                    **referencia,
+                    "deal_id": deal_id,
+                    "detalle_error": ultimo_error_analytics["detalle"],
+                }
             )
 
         time.sleep(PAUSA_ENTRE_LLAMADAS)

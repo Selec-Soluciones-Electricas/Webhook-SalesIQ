@@ -171,43 +171,42 @@ def _coincide(tel_deal: str, candidatos: set) -> bool:
     )
 
 
+# Funcion desarrollada con el fin de extraer los correos que aparecen en el chat, normalizados a minúsculas.
+def extraer_candidatos_email(texto_completo: str) -> set:
+    """
+    Los correos enmascarados del resumen del bot (J****s@lsc.cl)
+    generan fragmentos parciales, pero como la comparación es por
+    igualdad exacta, nunca producen falsos positivos.
+    """
+
+    return {
+        e.lower().strip(".")
+        for e in re.findall(
+            r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",
+            texto_completo or "",
+        )
+    }
+
+
+# Funcion desarrollada con el fin de obtener el correo registrado en la Description del Deal.
+def _email_de_descripcion(desc: str) -> str:
+
+    m = re.search(r"Correo:\s*([^\s]+)", desc or "")
+
+    return m.group(1).lower().strip(".") if m else ""
+
+
 # =========================================================
 # BÚSQUEDA DEL DEAL
 # =========================================================
 
-# Funcion desarrollada con el proposito de buscar un Deal en Zoho CRM por telefono, creada para ser utilizada en el flujo de busqueda de Deals por telefono en la ventana de conversacion.
-def buscar_deal_id_por_telefono(
-    candidatos_telefono: set,
-    hora_creacion,
-    hora_finalizacion=None,
-) -> str:
-    """
-    Busca en Zoho CRM (vía COQL) un Deal con Lead_Source=
-    'Chat Whatsapp' creado en la ventana real de la conversación
-    (±1 día), cuyo teléfono en la Description coincida con
-    alguno de los candidatos_telefono.
-
-    Devuelve el Deal ID si encuentra una coincidencia única o la
-    más cercana en tiempo; None si no encuentra nada.
-    """
-
-    if not candidatos_telefono or not hora_creacion:
-        return None
+# Funcion desarrollada con el fin de consultar en CRM los Deals de WhatsApp creados dentro de una ventana de tiempo.
+def _consultar_deals_whatsapp(inicio: datetime, fin: datetime) -> list:
 
     access_token = get_crm_readonly_access_token()
 
     if not access_token:
         return None
-
-    hora_creacion = _a_utc(hora_creacion)
-
-    extremos = [hora_creacion]
-
-    if hora_finalizacion:
-        extremos.append(_a_utc(hora_finalizacion))
-
-    inicio = min(extremos) - timedelta(days=1)
-    fin = max(extremos) + timedelta(days=1)
 
     # Se envía en UTC explícito; así no depende de si Chile
     # está en -03:00 o -04:00.
@@ -236,39 +235,92 @@ def buscar_deal_id_por_telefono(
         )
 
     except Exception as e:
-        print(f"[buscar_deal_id_por_telefono] ERROR: {e}")
+        print(f"[_consultar_deals_whatsapp] ERROR: {e}")
         return None
 
     if resp.status_code == 204:
-        return None
+        return []
 
     if resp.status_code not in (200, 201):
         print(
-            "[buscar_deal_id_por_telefono] "
+            "[_consultar_deals_whatsapp] "
             f"status={resp.status_code} body={resp.text[:200]}"
         )
         return None
 
-    registros = resp.json().get("data") or []
+    return resp.json().get("data") or []
+
+
+# Funcion desarrollada con el fin de buscar el Deal de un chat usando todo el texto de la conversación: primero por teléfono y, si no hay coincidencia, por correo.
+def buscar_deal_id_por_chat(
+    texto_chat: str,
+    hora_creacion,
+    hora_finalizacion=None,
+    margen_dias: int = 1,
+) -> str:
+    """
+    Busca en Zoho CRM un Deal con Lead_Source='Chat Whatsapp'
+    creado en la ventana de la conversación (± margen_dias) y
+    lo cruza con el chat:
+
+        1. Teléfono de la Description vs teléfonos del chat.
+        2. Si no hay match, correo de la Description vs correos
+           del chat (más confiable cuando el teléfono es corto
+           o se escribió con formato raro).
+
+    Si hay varias coincidencias, elige la creada más cerca del
+    inicio del chat. Devuelve None si no encuentra nada.
+    """
+
+    if not texto_chat or not hora_creacion:
+        return None
+
+    hora_creacion = _a_utc(hora_creacion)
+
+    extremos = [hora_creacion]
+
+    if hora_finalizacion:
+        extremos.append(_a_utc(hora_finalizacion))
+
+    inicio = min(extremos) - timedelta(days=margen_dias)
+    fin = max(extremos) + timedelta(days=margen_dias)
+
+    registros = _consultar_deals_whatsapp(inicio, fin)
+
+    if not registros:
+        return None
+
+    telefonos = extraer_candidatos_telefono(texto_chat)
+    emails = extraer_candidatos_email(texto_chat)
 
     coincidencias = [
         r
         for r in registros
         if _coincide(
             _telefono_de_descripcion(r.get("Description")),
-            candidatos_telefono,
+            telefonos,
         )
     ]
 
+    criterio = "telefono"
+
+    if not coincidencias and emails:
+
+        coincidencias = [
+            r
+            for r in registros
+            if _email_de_descripcion(r.get("Description")) in emails
+        ]
+
+        criterio = "email"
+
     if not coincidencias:
         print(
-            "[buscar_deal_id_por_telefono] Sin coincidencias "
-            f"({len(registros)} deals revisados en la ventana)."
+            "[buscar_deal_id_por_chat] Sin coincidencias "
+            f"({len(registros)} deals en la ventana, "
+            f"{len(telefonos)} teléfonos, {len(emails)} correos)."
         )
         return None
-
-    if len(coincidencias) == 1:
-        return coincidencias[0].get("id")
 
     def _distancia(r):
         try:
@@ -281,8 +333,26 @@ def buscar_deal_id_por_telefono(
     coincidencias.sort(key=_distancia)
 
     print(
-        "[buscar_deal_id_por_telefono] "
-        f"{len(coincidencias)} coincidencias; se elige la más cercana."
+        "[buscar_deal_id_por_chat] "
+        f"{len(coincidencias)} coincidencia(s) por {criterio}; "
+        f"deal={coincidencias[0].get('id')}"
     )
 
     return coincidencias[0].get("id")
+
+
+# Funcion mantenida por compatibilidad: busca solo por teléfono a partir de candidatos ya extraídos.
+def buscar_deal_id_por_telefono(
+    candidatos_telefono: set,
+    hora_creacion,
+    hora_finalizacion=None,
+) -> str:
+
+    if not candidatos_telefono:
+        return None
+
+    return buscar_deal_id_por_chat(
+        "\n".join(candidatos_telefono),
+        hora_creacion,
+        hora_finalizacion,
+    )

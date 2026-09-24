@@ -7,6 +7,7 @@ from flask import Flask
 
 from routes.webhook import register_routes
 from routes.cron import register_cron_routes
+from routes.reparacion import register_reparacion_routes
 from services.zoho_service import get_access_token
 
 try:
@@ -59,6 +60,8 @@ register_routes(
 )
 
 register_cron_routes(app)
+
+register_reparacion_routes(app)
 
 
 # =========================================================

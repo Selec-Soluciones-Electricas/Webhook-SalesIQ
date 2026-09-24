@@ -14,10 +14,7 @@ from services.salesiq_service import (
 )
 from services.zoho_service import get_salesiq_access_token
 from services.clasificacion_cotizacion import decidir_resultado
-from services.crm_lookup_service import (
-    extraer_candidatos_telefono,
-    buscar_deal_id_por_telefono,
-)
+from services.crm_lookup_service import buscar_deal_id_por_chat
 from services.analytics_service import (
     agregar_fila_analytics,
     existe_attempt_id_analytics,
@@ -124,20 +121,92 @@ def _texto_mensaje(mensaje: dict) -> str:
     return str(mensaje.get("msg") or "")
 
 
-# Funcion desarrollada con el fin de obtener el momento (epoch ms) de un mensaje de SalesIQ.
+# Campos donde SalesIQ puede entregar la hora de un mensaje,
+# según el endpoint y la versión de la API.
+CAMPOS_TIEMPO_MENSAJE = (
+    "time",
+    "sent_time",
+    "created_time",
+    "timestamp",
+    "msg_time",
+    "time_in_ms",
+    "message_time",
+    "sent_time_in_ms",
+)
+
+_log_estructura_mensaje_emitido = False
+
+
+# Funcion desarrollada con el fin de convertir un valor de tiempo (epoch en s/ms, texto numérico o ISO 8601) a epoch en milisegundos.
+def _a_epoch_ms(valor):
+
+    if valor is None or valor == "":
+        return None
+
+    # Numérico o texto numérico: "1790248157628", "1790248157628.0",
+    # 1790248157 (segundos)
+    try:
+        numero = float(valor)
+
+        if numero <= 0:
+            return None
+
+        # Si viene en segundos (10 dígitos), pasar a ms.
+        if numero < 1e11:
+            numero *= 1000
+
+        return int(numero)
+
+    except (TypeError, ValueError):
+        pass
+
+    # Texto ISO 8601: "2026-09-24T09:01:34.000Z", "2026-09-24T09:01:34-03:00"
+    try:
+        texto = str(valor).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(texto)
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return int(dt.timestamp() * 1000)
+
+    except (TypeError, ValueError):
+        return None
+
+
+# Funcion desarrollada con el fin de obtener el momento (epoch ms) de un mensaje de SalesIQ, revisando el nivel superior y el objeto "message" anidado.
 def _tiempo_mensaje(mensaje: dict):
+
+    global _log_estructura_mensaje_emitido
 
     if not isinstance(mensaje, dict):
         return None
 
-    for campo in ("time", "sent_time", "created_time", "timestamp"):
+    fuentes = [mensaje]
 
-        valor = mensaje.get(campo)
+    if isinstance(mensaje.get("message"), dict):
+        fuentes.append(mensaje["message"])
 
-        try:
-            return int(valor)
-        except (TypeError, ValueError):
-            continue
+    for fuente in fuentes:
+        for campo in CAMPOS_TIEMPO_MENSAJE:
+            ms = _a_epoch_ms(fuente.get(campo))
+            if ms:
+                return ms
+
+    # Log único por corrida con la estructura real del mensaje,
+    # para poder ajustar CAMPOS_TIEMPO_MENSAJE si hace falta.
+    if not _log_estructura_mensaje_emitido:
+
+        _log_estructura_mensaje_emitido = True
+
+        anidado = mensaje.get("message")
+
+        print(
+            "[cron] Mensaje sin hora reconocible. "
+            f"claves={sorted(mensaje.keys())} "
+            f"claves_message={sorted(anidado.keys()) if isinstance(anidado, dict) else None} "
+            f"ejemplo={str(mensaje)[:300]}"
+        )
 
     return None
 
@@ -262,6 +331,9 @@ def _registrar_en_analytics(
 # =========================================================
 
 def ejecutar_reconciliacion():
+
+    global _log_estructura_mensaje_emitido
+    _log_estructura_mensaje_emitido = False
 
     screenname = os.environ.get("SALESIQ_SCREENNAME")
     tag_id_ok = os.environ.get("SALESIQ_TAG_ID_CRM_OK")
@@ -548,16 +620,12 @@ def ejecutar_reconciliacion():
                         for t in intento.get("mensajes", [])
                     )
 
-                    candidatos = extraer_candidatos_telefono(
-                        texto_intento
-                    )
-
                     fecha_fin = _fecha_desde_ms(
                         intento.get("fin_ms")
                     )
 
-                    deal_id = buscar_deal_id_por_telefono(
-                        candidatos,
+                    deal_id = buscar_deal_id_por_chat(
+                        texto_intento,
                         fecha_inicio,
                         fecha_fin,
                     )
@@ -566,8 +634,7 @@ def ejecutar_reconciliacion():
                         resumen["ok_sin_deal_id"] += 1
                         print(
                             "[cron] OK sin Deal ID: "
-                            f"attempt_id={attempt_id} "
-                            f"candidatos={len(candidatos)}"
+                            f"attempt_id={attempt_id}"
                         )
 
                 if _registrar_en_analytics(

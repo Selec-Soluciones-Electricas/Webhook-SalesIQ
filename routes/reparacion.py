@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import jsonify, request
 
@@ -9,7 +9,7 @@ from services.salesiq_service import (
     obtener_mensajes_conversacion,
 )
 from services.zoho_service import get_salesiq_access_token
-from services.crm_lookup_service import buscar_deal_id_por_chat
+from services.crm_lookup_service import buscar_deal_id_por_chat_detallado
 from services.analytics_repair_service import (
     listar_filas_analytics,
     actualizar_filas_analytics,
@@ -34,9 +34,41 @@ MARGEN_DIAS_REPARACION = 2
 FORMATOS_FECHA_ANALYTICS = (
     "%d-%b-%Y %H:%M:%S",
     "%d %b, %Y %H:%M:%S",
+    "%d %b %Y %H:%M:%S",
     "%Y-%m-%d %H:%M:%S",
     "%d/%m/%Y %H:%M:%S",
+    "%m/%d/%Y %H:%M:%S",
+    "%d-%m-%Y %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+    "%b %d, %Y %I:%M:%S %p",
+    "%d %b, %Y %I:%M:%S %p",
 )
+
+# Formatos de visualización sin año (ej. "08-27, 09:31:43 AM",
+# como se ve la columna Fecha en la tabla). Se completa el año.
+FORMATOS_FECHA_SIN_ANIO = (
+    "%m-%d, %I:%M:%S %p",
+    "%m-%d, %H:%M:%S",
+    "%d-%b %H:%M:%S",
+)
+
+CAMPOS_INICIO_CHAT = (
+    "start_time",
+    "chat_start_time",
+    "created_time",
+    "start_time_in_ms",
+    "time",
+)
+
+CAMPOS_FIN_CHAT = (
+    "end_time",
+    "chat_end_time",
+    "closed_time",
+    "end_time_in_ms",
+    "last_modified_time",
+)
+
+_log_detalle_emitido = False
 
 
 def _vacio(valor) -> bool:
@@ -47,11 +79,17 @@ def _escapar(valor) -> str:
     return str(valor).replace("'", "''")
 
 
-# Funcion desarrollada con el fin de interpretar la fecha que devuelve Analytics, probando varios formatos.
+# Funcion desarrollada con el fin de interpretar la fecha que devuelve Analytics, probando varios formatos (incluidos los que no traen año).
 def _parsear_fecha_analytics(valor):
 
     if _vacio(valor):
         return None
+
+    # Epoch o ISO
+    ms = _a_epoch_ms(valor)
+
+    if ms:
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
     texto = str(valor).strip()
 
@@ -63,33 +101,81 @@ def _parsear_fecha_analytics(valor):
         except ValueError:
             continue
 
+    ahora = datetime.now(timezone.utc)
+
+    for formato in FORMATOS_FECHA_SIN_ANIO:
+        try:
+            # Se agrega el año al texto para evitar el aviso de
+            # strptime con fechas sin año (29 de febrero).
+            dt = datetime.strptime(
+                f"{ahora.year} {texto}", f"%Y {formato}"
+            ).replace(tzinfo=timezone.utc)
+
+            # Si queda en el futuro, corresponde al año anterior.
+            if dt > ahora + timedelta(days=1):
+                dt = dt.replace(year=dt.year - 1)
+
+            return dt
+
+        except ValueError:
+            continue
+
+    return None
+
+
+def _buscar_ms(fuentes, campos):
+
+    for fuente in fuentes:
+        if not isinstance(fuente, dict):
+            continue
+        for campo in campos:
+            ms = _a_epoch_ms(fuente.get(campo))
+            if ms:
+                return ms
+
     return None
 
 
 # Funcion desarrollada con el fin de obtener la ventana de tiempo real del chat (inicio y fin) desde SalesIQ, con la fecha de Analytics como respaldo.
 def _ventana_chat(detalle: dict, fila: dict):
 
-    inicio = None
-    fin = None
+    global _log_detalle_emitido
 
-    for campo in ("start_time", "chat_start_time", "created_time"):
-        ms = _a_epoch_ms(detalle.get(campo))
-        if ms:
-            inicio = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-            break
+    fuentes = [detalle, detalle.get("data"), detalle.get("visitor")]
 
-    for campo in ("end_time", "chat_end_time", "closed_time"):
-        ms = _a_epoch_ms(detalle.get(campo))
-        if ms:
-            fin = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-            break
+    ms_inicio = _buscar_ms(fuentes, CAMPOS_INICIO_CHAT)
+    ms_fin = _buscar_ms(fuentes, CAMPOS_FIN_CHAT)
+
+    inicio = (
+        datetime.fromtimestamp(ms_inicio / 1000, tz=timezone.utc)
+        if ms_inicio else None
+    )
+
+    fin = (
+        datetime.fromtimestamp(ms_fin / 1000, tz=timezone.utc)
+        if ms_fin else None
+    )
+
+    if not inicio and not fin and not _log_detalle_emitido:
+        _log_detalle_emitido = True
+        print(
+            "[reparar_deal_ids] Detalle sin fechas reconocibles. "
+            f"claves={sorted(detalle.keys())} "
+            f"fecha_fila={fila.get('Fecha')!r}"
+        )
 
     fecha_fila = _parsear_fecha_analytics(fila.get("Fecha"))
 
     inicio = inicio or fecha_fila or fin
     fin = fin or fecha_fila
 
-    return inicio, fin
+    origen = (
+        "salesiq" if ms_inicio or ms_fin
+        else "analytics" if fecha_fila
+        else None
+    )
+
+    return inicio, fin, origen
 
 
 # Funcion desarrollada con el fin de completar el Deal ID de todas las filas OK que lo tengan vacío en Analytics.
@@ -98,6 +184,9 @@ def reparar_deal_ids(
     limite: int = LIMITE_POR_DEFECTO,
     offset: int = 0,
 ) -> dict:
+
+    global _log_detalle_emitido
+    _log_detalle_emitido = False
 
     t_inicio = time.monotonic()
 
@@ -204,14 +293,16 @@ def reparar_deal_ids(
 
             texto_chat = "\n".join(_texto_mensaje(m) for m in mensajes)
 
-            inicio, fin = _ventana_chat(detalle, fila)
+            inicio, fin, origen_fecha = _ventana_chat(detalle, fila)
 
-            deal_id = buscar_deal_id_por_chat(
+            busqueda = buscar_deal_id_por_chat_detallado(
                 texto_chat,
                 inicio,
                 fin,
                 margen_dias=MARGEN_DIAS_REPARACION,
             )
+
+            deal_id = busqueda["deal_id"]
 
         except Exception as e:
 
@@ -224,11 +315,29 @@ def reparar_deal_ids(
             continue
 
         if not deal_id:
-            resumen["no_encontradas"].append(referencia)
+            resumen["no_encontradas"].append(
+                {
+                    **referencia,
+                    "motivo": busqueda["motivo"],
+                    "mensajes": len(mensajes),
+                    "fecha_fila": fila.get("Fecha"),
+                    "origen_fecha": origen_fecha,
+                    "ventana": busqueda["ventana"],
+                    "deals_en_ventana": busqueda["deals_en_ventana"],
+                    "telefonos": busqueda["telefonos"],
+                    "emails": busqueda["emails"],
+                }
+            )
             time.sleep(PAUSA_ENTRE_LLAMADAS)
             continue
 
-        resumen["propuestas"].append({**referencia, "deal_id": deal_id})
+        resumen["propuestas"].append(
+            {
+                **referencia,
+                "deal_id": deal_id,
+                "criterio": busqueda["criterio"],
+            }
+        )
 
         print(
             "[reparar_deal_ids] Propuesta: "

@@ -214,7 +214,11 @@ def _email_de_descripcion(desc: str) -> str:
 # =========================================================
 
 # Funcion desarrollada con el fin de consultar en CRM los Deals de WhatsApp creados dentro de una ventana de tiempo.
-def _consultar_deals_whatsapp(inicio: datetime, fin: datetime) -> list:
+def _consultar_deals_whatsapp(
+    inicio: datetime,
+    fin: datetime,
+    solo_whatsapp: bool = True,
+) -> list:
 
     access_token = get_crm_readonly_access_token()
 
@@ -226,10 +230,16 @@ def _consultar_deals_whatsapp(inicio: datetime, fin: datetime) -> list:
     inicio_str = inicio.strftime("%Y-%m-%dT%H:%M:%S+00:00")
     fin_str = fin.strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
+    filtro_fuente = (
+        "Lead_Source = 'Chat Whatsapp' and "
+        if solo_whatsapp
+        else ""
+    )
+
     query = (
-        "select id, Description, Created_Time from Deals "
-        "where Lead_Source = 'Chat Whatsapp' "
-        f"and Created_Time between '{inicio_str}' and '{fin_str}' "
+        "select id, Description, Created_Time, Lead_Source from Deals "
+        f"where {filtro_fuente}"
+        f"Created_Time between '{inicio_str}' and '{fin_str}' "
         "limit 200"
     )
 
@@ -263,6 +273,37 @@ def _consultar_deals_whatsapp(inicio: datetime, fin: datetime) -> list:
         return None
 
     return resp.json().get("data") or []
+
+
+# Funcion desarrollada con el fin de cruzar una lista de Deals con los teléfonos y correos del chat.
+def _buscar_coincidencias(registros, telefonos, emails, min_digitos=MIN_DIGITOS_TELEFONO):
+
+    telefonos_validos = {t for t in telefonos if len(t) >= min_digitos}
+
+    coincidencias = [
+        r
+        for r in registros
+        if _coincide(
+            _telefono_de_descripcion(r.get("Description")),
+            telefonos_validos,
+        )
+    ]
+
+    if coincidencias:
+        return coincidencias, "telefono"
+
+    if emails:
+
+        coincidencias = [
+            r
+            for r in registros
+            if _email_de_descripcion(r.get("Description")) in emails
+        ]
+
+        if coincidencias:
+            return coincidencias, "email"
+
+    return [], None
 
 
 # Funcion desarrollada con el fin de buscar el Deal de un chat usando todo el texto de la conversación (teléfono y, como respaldo, correo), devolviendo además el motivo cuando no lo encuentra.
@@ -324,6 +365,9 @@ def buscar_deal_id_por_chat_detallado(
 
     ultimo_error_crm["detalle"] = None
 
+    # ---------------------------------------------------------
+    # 1) Deals con Lead_Source = 'Chat Whatsapp'
+    # ---------------------------------------------------------
     registros = _consultar_deals_whatsapp(inicio, fin)
 
     if registros is None:
@@ -333,36 +377,41 @@ def buscar_deal_id_por_chat_detallado(
 
     info["deals_en_ventana"] = len(registros)
 
-    if not registros:
-        info["motivo"] = "sin_deals_en_ventana"
-        return info
+    coincidencias, criterio = _buscar_coincidencias(
+        registros, telefonos, emails, min_digitos=MIN_DIGITOS_TELEFONO
+    )
 
-    coincidencias = [
-        r
-        for r in registros
-        if _coincide(
-            _telefono_de_descripcion(r.get("Description")),
-            telefonos,
-        )
-    ]
+    # ---------------------------------------------------------
+    # 2) Respaldo: cualquier Deal de la ventana, sin importar la
+    #    fuente (un ejecutivo pudo cambiar el Lead_Source, o el
+    #    bot antiguo usaba otro valor). Aquí se exige un match
+    #    más estricto: correo exacto o teléfono de 8+ dígitos.
+    # ---------------------------------------------------------
+    if not coincidencias:
 
-    criterio = "telefono"
+        todos = _consultar_deals_whatsapp(inicio, fin, solo_whatsapp=False)
 
-    if not coincidencias and emails:
+        if todos:
 
-        coincidencias = [
-            r
-            for r in registros
-            if _email_de_descripcion(r.get("Description")) in emails
-        ]
+            info["deals_en_ventana_cualquier_fuente"] = len(todos)
 
-        criterio = "email"
+            coincidencias, criterio = _buscar_coincidencias(
+                todos, telefonos, emails, min_digitos=8
+            )
+
+            if criterio:
+                criterio = f"{criterio}_cualquier_fuente"
 
     if not coincidencias:
-        info["motivo"] = "sin_coincidencia"
+        info["motivo"] = (
+            "sin_coincidencia"
+            if registros or info.get("deals_en_ventana_cualquier_fuente")
+            else "sin_deals_en_ventana"
+        )
         print(
             "[buscar_deal_id_por_chat] Sin coincidencias "
-            f"({len(registros)} deals en la ventana, "
+            f"({len(registros)} deals WhatsApp, "
+            f"{info.get('deals_en_ventana_cualquier_fuente', 0)} en total, "
             f"{len(telefonos)} teléfonos, {len(emails)} correos)."
         )
         return info

@@ -324,6 +324,9 @@ def reparar_deal_ids(
                     "origen_fecha": origen_fecha,
                     "ventana": busqueda["ventana"],
                     "deals_en_ventana": busqueda["deals_en_ventana"],
+                    "deals_cualquier_fuente": busqueda.get(
+                        "deals_en_ventana_cualquier_fuente", 0
+                    ),
                     "telefonos": busqueda["telefonos"],
                     "emails": busqueda["emails"],
                     "detalle_error": busqueda.get("detalle_error"),

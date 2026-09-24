@@ -213,35 +213,28 @@ def _email_de_descripcion(desc: str) -> str:
 # BÚSQUEDA DEL DEAL
 # =========================================================
 
-# Funcion desarrollada con el fin de consultar en CRM los Deals de WhatsApp creados dentro de una ventana de tiempo.
-def _consultar_deals_whatsapp(
-    inicio: datetime,
-    fin: datetime,
-    solo_whatsapp: bool = True,
-) -> list:
+# Campos del Contacto asociado al Deal que se leen vía COQL
+# (lookup). Si la cuenta no permite leer lookups en COQL, se
+# desactivan automáticamente y se usa solo la Description.
+CAMPOS_CONTACTO = (
+    "Contact_Name.Email",
+    "Contact_Name.Phone",
+    "Contact_Name.Mobile",
+)
 
-    access_token = get_crm_readonly_access_token()
+_estado_coql = {"usar_campos_contacto": True}
 
-    if not access_token:
-        return None
+LIMITE_COQL = 200
 
-    # Se envía en UTC explícito; así no depende de si Chile
-    # está en -03:00 o -04:00.
-    inicio_str = inicio.strftime("%Y-%m-%dT%H:%M:%S+00:00")
-    fin_str = fin.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+# Profundidad máxima al dividir una ventana que devuelve el
+# máximo de registros (200). 5 niveles = hasta 32 sub-ventanas.
+PROFUNDIDAD_MAX_DIVISION = 5
 
-    filtro_fuente = (
-        "Lead_Source = 'Chat Whatsapp' and "
-        if solo_whatsapp
-        else ""
-    )
 
-    query = (
-        "select id, Description, Created_Time, Lead_Source from Deals "
-        f"where {filtro_fuente}"
-        f"Created_Time between '{inicio_str}' and '{fin_str}' "
-        "limit 200"
-    )
+def _ejecutar_coql(query: str, access_token: str):
+    """
+    Devuelve (status_code, registros | None, texto_respuesta).
+    """
 
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
@@ -254,25 +247,181 @@ def _consultar_deals_whatsapp(
             f"{CRM_API_BASE_V2}/coql",
             headers=headers,
             json={"select_query": query},
-            timeout=15,
+            timeout=20,
         )
 
     except Exception as e:
-        _registrar_error_crm(f"[_consultar_deals_whatsapp] ERROR: {e}")
-        return None
+        return None, None, f"Excepción: {e}"
 
     if resp.status_code == 204:
-        return []
+        return 204, [], ""
 
     if resp.status_code not in (200, 201):
+        return resp.status_code, None, resp.text[:300]
+
+    return resp.status_code, resp.json().get("data") or [], ""
+
+
+def _consultar_ventana(inicio, fin, solo_whatsapp, access_token):
+    """
+    Una sola consulta COQL para la ventana. Devuelve la lista de
+    registros o None si falla.
+    """
+
+    inicio_str = inicio.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    fin_str = fin.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+    filtro_fuente = (
+        "Lead_Source = 'Chat Whatsapp' and "
+        if solo_whatsapp
+        else ""
+    )
+
+    campos = ["id", "Description", "Created_Time", "Lead_Source"]
+
+    if _estado_coql["usar_campos_contacto"]:
+        campos += list(CAMPOS_CONTACTO)
+
+    query = (
+        f"select {', '.join(campos)} from Deals "
+        f"where {filtro_fuente}"
+        f"Created_Time between '{inicio_str}' and '{fin_str}' "
+        f"limit {LIMITE_COQL}"
+    )
+
+    status, registros, texto = _ejecutar_coql(query, access_token)
+
+    # Si la cuenta no acepta campos de lookup en COQL, se
+    # desactivan y se reintenta una vez sin ellos.
+    if (
+        registros is None
+        and status == 400
+        and _estado_coql["usar_campos_contacto"]
+    ):
+        print(
+            "[_consultar_ventana] COQL rechazó los campos del "
+            f"Contacto; se reintenta sin ellos. body={texto}"
+        )
+        _estado_coql["usar_campos_contacto"] = False
+        return _consultar_ventana(inicio, fin, solo_whatsapp, access_token)
+
+    if registros is None:
         _registrar_error_crm(
             "[_consultar_deals_whatsapp] "
-            f"status={resp.status_code} body={resp.text[:300]} "
-            f"query={query}"
+            f"status={status} body={texto} query={query}"
         )
+
+    return registros
+
+
+# Funcion desarrollada con el fin de consultar en CRM los Deals creados dentro de una ventana de tiempo (por defecto solo los de WhatsApp), dividiendo la ventana si se alcanza el límite de 200 registros de COQL.
+def _consultar_deals_whatsapp(
+    inicio: datetime,
+    fin: datetime,
+    solo_whatsapp: bool = True,
+    _profundidad: int = 0,
+) -> list:
+
+    access_token = get_crm_readonly_access_token()
+
+    if not access_token:
         return None
 
-    return resp.json().get("data") or []
+    registros = _consultar_ventana(inicio, fin, solo_whatsapp, access_token)
+
+    if registros is None:
+        return None
+
+    # Si llegó al límite, puede haber más registros: se divide
+    # la ventana en dos mitades y se consulta cada una.
+    if (
+        len(registros) >= LIMITE_COQL
+        and _profundidad < PROFUNDIDAD_MAX_DIVISION
+    ):
+
+        mitad = inicio + (fin - inicio) / 2
+
+        primera = _consultar_deals_whatsapp(
+            inicio, mitad, solo_whatsapp, _profundidad + 1
+        )
+        segunda = _consultar_deals_whatsapp(
+            mitad, fin, solo_whatsapp, _profundidad + 1
+        )
+
+        if primera is None or segunda is None:
+            return registros
+
+        vistos = set()
+        combinados = []
+
+        for r in primera + segunda:
+            if r.get("id") not in vistos:
+                vistos.add(r.get("id"))
+                combinados.append(r)
+
+        return combinados
+
+    return registros
+
+
+def _valor_contacto(registro: dict, campo: str):
+    """
+    COQL puede devolver el lookup como clave plana
+    ("Contact_Name.Email") o anidada ({"Contact_Name": {...}}).
+    """
+
+    plano = registro.get(f"Contact_Name.{campo}")
+
+    if plano:
+        return plano
+
+    contacto = registro.get("Contact_Name")
+
+    if isinstance(contacto, dict):
+        return contacto.get(campo)
+
+    return None
+
+
+# Palabras que identifican una línea de teléfono en la Description,
+# para no confundir el teléfono con el RUT u otros números.
+PATRON_LINEA_TELEFONO = re.compile(
+    r"(tel[eé]fono|telefono|fono|celular|m[oó]vil|whats?app|contacto)\s*:?\s*([^\n]+)",
+    re.IGNORECASE,
+)
+
+
+# Funcion desarrollada con el fin de obtener todos los teléfonos asociados a un Deal: líneas de teléfono de la Description y teléfonos del Contacto.
+def _telefonos_del_deal(registro: dict) -> set:
+
+    telefonos = set()
+
+    desc = registro.get("Description") or ""
+
+    for _, valor in PATRON_LINEA_TELEFONO.findall(desc):
+        d = _solo_digitos(valor)
+        if MIN_DIGITOS_TELEFONO <= len(d) <= MAX_DIGITOS_TELEFONO:
+            telefonos.add(d)
+
+    for campo in ("Phone", "Mobile"):
+        d = _solo_digitos(str(_valor_contacto(registro, campo) or ""))
+        if MIN_DIGITOS_TELEFONO <= len(d) <= MAX_DIGITOS_TELEFONO:
+            telefonos.add(d)
+
+    return telefonos
+
+
+# Funcion desarrollada con el fin de obtener todos los correos asociados a un Deal: cualquier correo en la Description y el correo del Contacto.
+def _emails_del_deal(registro: dict) -> set:
+
+    emails = extraer_candidatos_email(registro.get("Description") or "")
+
+    email_contacto = _valor_contacto(registro, "Email")
+
+    if email_contacto:
+        emails.add(str(email_contacto).lower().strip("."))
+
+    return emails
 
 
 # Funcion desarrollada con el fin de cruzar una lista de Deals con los teléfonos y correos del chat.
@@ -283,9 +432,10 @@ def _buscar_coincidencias(registros, telefonos, emails, min_digitos=MIN_DIGITOS_
     coincidencias = [
         r
         for r in registros
-        if _coincide(
-            _telefono_de_descripcion(r.get("Description")),
-            telefonos_validos,
+        if any(
+            _coincide(tel_deal, telefonos_validos)
+            for tel_deal in _telefonos_del_deal(r)
+            if len(tel_deal) >= min_digitos
         )
     ]
 
@@ -297,7 +447,7 @@ def _buscar_coincidencias(registros, telefonos, emails, min_digitos=MIN_DIGITOS_
         coincidencias = [
             r
             for r in registros
-            if _email_de_descripcion(r.get("Description")) in emails
+            if _emails_del_deal(r) & emails
         ]
 
         if coincidencias:

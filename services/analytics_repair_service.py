@@ -50,6 +50,11 @@ def _config_base():
     return url, headers
 
 
+# Último error de actualización, para devolverlo en el
+# diagnóstico sin revisar los logs.
+ultimo_error_analytics = {"detalle": None}
+
+
 # Funcion desarrollada con el fin de leer filas de la tabla Registro_CRM_WhatsApp que cumplan un criterio.
 def listar_filas_analytics(criteria: str = None) -> list:
     """
@@ -120,7 +125,12 @@ def actualizar_filas_analytics(columnas: dict, criteria: str) -> bool:
 
     base = _config_base()
 
+    ultimo_error_analytics["detalle"] = None
+
     if not base:
+        ultimo_error_analytics["detalle"] = (
+            "No se pudo obtener token/config de Analytics."
+        )
         return False
 
     url, headers = base
@@ -140,6 +150,7 @@ def actualizar_filas_analytics(columnas: dict, criteria: str) -> bool:
         )
 
     except Exception as e:
+        ultimo_error_analytics["detalle"] = f"Excepción: {e}"
         print(f"[actualizar_filas_analytics] ERROR: {e}")
         return False
 
@@ -148,4 +159,11 @@ def actualizar_filas_analytics(columnas: dict, criteria: str) -> bool:
         f"status={resp.status_code} body={resp.text[:300]}"
     )
 
-    return resp.status_code == 200
+    if resp.status_code != 200:
+        ultimo_error_analytics["detalle"] = (
+            f"status={resp.status_code} body={resp.text[:300]} "
+            f"criteria={criteria}"
+        )
+        return False
+
+    return True

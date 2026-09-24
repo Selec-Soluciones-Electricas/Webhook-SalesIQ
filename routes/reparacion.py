@@ -326,6 +326,7 @@ def reparar_deal_ids(
                     "deals_en_ventana": busqueda["deals_en_ventana"],
                     "telefonos": busqueda["telefonos"],
                     "emails": busqueda["emails"],
+                    "detalle_error": busqueda.get("detalle_error"),
                 }
             )
             time.sleep(PAUSA_ENTRE_LLAMADAS)

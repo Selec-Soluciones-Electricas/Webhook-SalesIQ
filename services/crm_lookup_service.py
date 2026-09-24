@@ -26,6 +26,15 @@ crm_readonly_token_cache = {
     "expires_at": 0.0,
 }
 
+# Último error de CRM (token o COQL), para poder devolverlo en
+# el diagnóstico sin tener que revisar los logs.
+ultimo_error_crm = {"detalle": None}
+
+
+def _registrar_error_crm(detalle: str):
+    ultimo_error_crm["detalle"] = detalle
+    print(detalle)
+
 
 # Funcion desarrollada con el fin de obtener un access token de Zoho CRM con permisos de solo lectura, para poder realizar consultas sin modificar datos en el CRM.
 def get_crm_readonly_access_token() -> str:
@@ -53,7 +62,7 @@ def get_crm_readonly_access_token() -> str:
     refresh_token = os.environ.get("CRM_READONLY_REFRESH_TOKEN")
 
     if not client_id or not client_secret or not refresh_token:
-        print(
+        _registrar_error_crm(
             "[get_crm_readonly_access_token] ERROR: faltan "
             "CRM_READONLY_CLIENT_ID / CRM_READONLY_CLIENT_SECRET / "
             "CRM_READONLY_REFRESH_TOKEN."
@@ -74,7 +83,7 @@ def get_crm_readonly_access_token() -> str:
         )
 
         if resp.status_code != 200:
-            print(
+            _registrar_error_crm(
                 "[get_crm_readonly_access_token] "
                 f"ERROR {resp.status_code}: {resp.text[:200]}"
             )
@@ -85,6 +94,10 @@ def get_crm_readonly_access_token() -> str:
         expires_in = int(data.get("expires_in", 3600))
 
         if not token:
+            _registrar_error_crm(
+                "[get_crm_readonly_access_token] Respuesta sin "
+                f"access_token: {str(data)[:200]}"
+            )
             return None
 
         crm_readonly_token_cache["token"] = token
@@ -93,7 +106,7 @@ def get_crm_readonly_access_token() -> str:
         return token
 
     except Exception as e:
-        print(f"[get_crm_readonly_access_token] ERROR: {e}")
+        _registrar_error_crm(f"[get_crm_readonly_access_token] ERROR: {e}")
         return None
 
 
@@ -235,16 +248,17 @@ def _consultar_deals_whatsapp(inicio: datetime, fin: datetime) -> list:
         )
 
     except Exception as e:
-        print(f"[_consultar_deals_whatsapp] ERROR: {e}")
+        _registrar_error_crm(f"[_consultar_deals_whatsapp] ERROR: {e}")
         return None
 
     if resp.status_code == 204:
         return []
 
     if resp.status_code not in (200, 201):
-        print(
+        _registrar_error_crm(
             "[_consultar_deals_whatsapp] "
-            f"status={resp.status_code} body={resp.text[:200]}"
+            f"status={resp.status_code} body={resp.text[:300]} "
+            f"query={query}"
         )
         return None
 
@@ -308,10 +322,13 @@ def buscar_deal_id_por_chat_detallado(
 
     info["ventana"] = [inicio.isoformat(), fin.isoformat()]
 
+    ultimo_error_crm["detalle"] = None
+
     registros = _consultar_deals_whatsapp(inicio, fin)
 
     if registros is None:
         info["motivo"] = "error_crm"
+        info["detalle_error"] = ultimo_error_crm["detalle"]
         return info
 
     info["deals_en_ventana"] = len(registros)

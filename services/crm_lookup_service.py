@@ -218,6 +218,7 @@ def _email_de_descripcion(desc: str) -> str:
 # desactivan automáticamente y se usa solo la Description.
 CAMPOS_CONTACTO = (
     "Contact_Name.Email",
+    "Contact_Name.Secondary_Email",
     "Contact_Name.Phone",
     "Contact_Name.Mobile",
 )
@@ -416,12 +417,123 @@ def _emails_del_deal(registro: dict) -> set:
 
     emails = extraer_candidatos_email(registro.get("Description") or "")
 
-    email_contacto = _valor_contacto(registro, "Email")
-
-    if email_contacto:
-        emails.add(str(email_contacto).lower().strip("."))
+    for campo in ("Email", "Secondary_Email"):
+        valor = _valor_contacto(registro, campo)
+        if valor:
+            emails.add(str(valor).lower().strip("."))
 
     return emails
+
+
+# =========================================================
+# BÚSQUEDA GLOBAL (SIN VENTANA DE FECHAS)
+# =========================================================
+# Para chats antiguos, la fecha registrada puede no ser la de
+# creación del Deal (ej. el chat se reabrió o se re-etiquetó
+# meses después). En ese caso se busca el Deal directamente por
+# el correo o teléfono del cliente, sin depender de la fecha.
+
+_estado_busqueda_global = {
+    "coql_contacto": True,
+}
+
+
+def _coql_deals_por_email_contacto(email: str, access_token: str) -> list:
+
+    if not _estado_busqueda_global["coql_contacto"]:
+        return []
+
+    email_seguro = email.replace("'", "")
+
+    query = (
+        "select id, Description, Created_Time, Lead_Source from Deals "
+        f"where Contact_Name.Email = '{email_seguro}' "
+        "limit 50"
+    )
+
+    status, registros, texto = _ejecutar_coql(query, access_token)
+
+    if registros:
+        # Estos Deals se encontraron justamente por el correo del
+        # Contacto: se deja registrado para que la verificación
+        # posterior los reconozca aunque la Description no lo diga.
+        for r in registros:
+            r["Contact_Name.Email"] = email
+
+    if registros is None:
+
+        if status == 400:
+            # La cuenta no permite filtrar por lookup en COQL.
+            print(
+                "[_coql_deals_por_email_contacto] COQL no acepta "
+                f"filtro por Contact_Name.Email; se desactiva. body={texto}"
+            )
+            _estado_busqueda_global["coql_contacto"] = False
+
+        return []
+
+    return registros
+
+
+def _search_deals_por_palabra(palabra: str, access_token: str) -> list:
+    """
+    Usa la API de búsqueda de Deals (word search). No requiere
+    scopes adicionales a ZohoCRM.modules.deals.READ.
+    """
+
+    headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+
+    try:
+
+        resp = requests.get(
+            f"{CRM_API_BASE_V2}/Deals/search",
+            headers=headers,
+            params={"word": palabra, "per_page": 50},
+            timeout=20,
+        )
+
+    except Exception as e:
+        print(f"[_search_deals_por_palabra] ERROR: {e}")
+        return []
+
+    if resp.status_code == 204:
+        return []
+
+    if resp.status_code != 200:
+        print(
+            "[_search_deals_por_palabra] "
+            f"status={resp.status_code} body={resp.text[:200]}"
+        )
+        return []
+
+    return resp.json().get("data") or []
+
+
+# Funcion desarrollada con el fin de buscar Deals por el correo o teléfono del cliente, sin restringir por fecha.
+def _buscar_deals_globales(telefonos: set, emails: set) -> list:
+
+    access_token = get_crm_readonly_access_token()
+
+    if not access_token:
+        return None
+
+    encontrados = {}
+
+    for email in emails:
+
+        for r in _coql_deals_por_email_contacto(email, access_token):
+            encontrados[r.get("id")] = r
+
+        for r in _search_deals_por_palabra(email, access_token):
+            encontrados[r.get("id")] = r
+
+    # Teléfonos: solo los de 8+ dígitos, para evitar ruido.
+    for tel in telefonos:
+        if len(tel) >= 8:
+            for r in _search_deals_por_palabra(tel, access_token):
+                encontrados[r.get("id")] = r
+
+    return list(encontrados.values())
 
 
 # Funcion desarrollada con el fin de cruzar una lista de Deals con los teléfonos y correos del chat.
@@ -454,6 +566,65 @@ def _buscar_coincidencias(registros, telefonos, emails, min_digitos=MIN_DIGITOS_
             return coincidencias, "email"
 
     return [], None
+
+
+# Funcion desarrollada con el fin de resolver el Deal buscando por correo/teléfono en todo el CRM, cuando la búsqueda por ventana de fechas no encontró nada.
+def _busqueda_global(info, telefonos, emails, hora_referencia, motivo_si_falla):
+
+    candidatos = _buscar_deals_globales(telefonos, emails)
+
+    if candidatos is None:
+        info["motivo"] = "error_crm"
+        info["detalle_error"] = ultimo_error_crm["detalle"]
+        return info
+
+    info["deals_busqueda_global"] = len(candidatos)
+
+    # Se verifica que el Deal realmente contenga el dato del
+    # cliente (la búsqueda por palabra puede traer ruido).
+    coincidencias, criterio = _buscar_coincidencias(
+        candidatos, telefonos, emails, min_digitos=8
+    )
+
+    if not coincidencias:
+        info["motivo"] = motivo_si_falla
+        return info
+
+    def _orden(r):
+
+        # 1° los de fuente Chat Whatsapp
+        es_whatsapp = 0 if r.get("Lead_Source") == "Chat Whatsapp" else 1
+
+        # 2° el más cercano a la fecha de referencia (si hay)
+        distancia = 0.0
+
+        if hora_referencia:
+            try:
+                ct = datetime.fromisoformat(r["Created_Time"])
+                distancia = abs(
+                    (_a_utc(ct) - _a_utc(hora_referencia)).total_seconds()
+                )
+            except Exception:
+                distancia = float("inf")
+
+        return (es_whatsapp, distancia)
+
+    coincidencias.sort(key=_orden)
+
+    info["deal_id"] = coincidencias[0].get("id")
+    info["criterio"] = f"{criterio}_busqueda_global"
+    info["motivo"] = None
+
+    if len(coincidencias) > 1:
+        info["candidatos_globales"] = [c.get("id") for c in coincidencias[:5]]
+
+    print(
+        "[buscar_deal_id_por_chat] Búsqueda global: "
+        f"{len(coincidencias)} coincidencia(s) por {criterio}; "
+        f"deal={info['deal_id']}"
+    )
+
+    return info
 
 
 # Funcion desarrollada con el fin de buscar el Deal de un chat usando todo el texto de la conversación (teléfono y, como respaldo, correo), devolviendo además el motivo cuando no lo encuentra.
@@ -498,8 +669,7 @@ def buscar_deal_id_por_chat_detallado(
     info["emails"] = len(emails)
 
     if not hora_creacion:
-        info["motivo"] = "sin_fecha"
-        return info
+        return _busqueda_global(info, telefonos, emails, None, "sin_fecha")
 
     hora_creacion = _a_utc(hora_creacion)
 
@@ -553,18 +723,27 @@ def buscar_deal_id_por_chat_detallado(
                 criterio = f"{criterio}_cualquier_fuente"
 
     if not coincidencias:
-        info["motivo"] = (
+
+        motivo = (
             "sin_coincidencia"
             if registros or info.get("deals_en_ventana_cualquier_fuente")
             else "sin_deals_en_ventana"
         )
+
         print(
-            "[buscar_deal_id_por_chat] Sin coincidencias "
+            "[buscar_deal_id_por_chat] Sin coincidencias en la ventana "
             f"({len(registros)} deals WhatsApp, "
             f"{info.get('deals_en_ventana_cualquier_fuente', 0)} en total, "
-            f"{len(telefonos)} teléfonos, {len(emails)} correos)."
+            f"{len(telefonos)} teléfonos, {len(emails)} correos). "
+            "Se intenta búsqueda global."
         )
-        return info
+
+        # -----------------------------------------------------
+        # 3) Búsqueda global por correo/teléfono, sin fechas.
+        # -----------------------------------------------------
+        return _busqueda_global(
+            info, telefonos, emails, hora_creacion, motivo
+        )
 
     def _distancia(r):
         try:

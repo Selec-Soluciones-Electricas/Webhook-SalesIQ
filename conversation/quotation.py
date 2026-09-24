@@ -3,6 +3,7 @@ import re
 import random
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from conversation.state_machine import (
     build_reply,
@@ -32,6 +33,7 @@ from services.zoho_service import (
 
 from services.salesiq_service import (
     agregar_tag_conversacion,
+    obtener_mensajes_conversacion,
 )
 
 from services.analytics_service import (
@@ -43,6 +45,7 @@ from services.email_service import (
     enviar_correo_solicitud_incompleta,
 )
 
+CHILE_TZ = ZoneInfo("America/Santiago")
 # =========================================================
 # OWNERS PARA NEGOCIOS DE COTIZACIÓN
 # =========================================================
@@ -1419,6 +1422,73 @@ def registrar_cotizacion_en_zoho(
 SALESIQ_TAG_ID_OK = os.environ.get("SALESIQ_TAG_ID_CRM_OK")
 SALESIQ_TAG_ID_ERROR = os.environ.get("SALESIQ_TAG_ID_CRM_ERROR")
 
+def obtener_attempt_id_actual(
+    conversation_id: str,
+) -> str:
+
+    if not conversation_id:
+        return ""
+
+    screenname = os.environ.get(
+        "SALESIQ_SCREENNAME"
+    )
+
+    if not screenname:
+        print(
+            "[obtener_attempt_id_actual] "
+            "Falta SALESIQ_SCREENNAME."
+        )
+        return ""
+
+    try:
+
+        access_token = (
+            get_salesiq_access_token()
+        )
+
+        if not access_token:
+            return ""
+
+        mensajes = obtener_mensajes_conversacion(
+            conversation_id,
+            screenname,
+            access_token,
+        )
+
+        # Recorremos desde el mensaje más reciente
+        # hacia atrás para encontrar el inicio de
+        # la cotización que está terminando ahora.
+        for mensaje in reversed(mensajes):
+
+            texto = str(
+                mensaje.get("text") or ""
+            )
+
+            if (
+                "Perfecto, trabajaremos en su "
+                "solicitud de cotización"
+                in texto
+            ):
+
+                inicio_ms = mensaje.get(
+                    "time_ms"
+                )
+
+                if inicio_ms:
+
+                    return (
+                        f"{conversation_id}-"
+                        f"{int(inicio_ms)}"
+                    )
+
+    except Exception as e:
+
+        print(
+            "[obtener_attempt_id_actual] "
+            f"ERROR: {e}"
+        )
+
+    return ""
 
 def finalizar_cotizacion(
     session: dict,
@@ -1452,6 +1522,10 @@ def finalizar_cotizacion(
     # =====================================================
 
     conversation_id = data.get("conversation_id")
+
+    attempt_id = obtener_attempt_id_actual(
+        conversation_id
+    )
 
     tag_id = (
         SALESIQ_TAG_ID_OK
@@ -1494,9 +1568,10 @@ def finalizar_cotizacion(
             "Visit ID": data.get("num_chat") or "",
             "Resultado": "OK" if deal_id else "Error",
             "Deal ID": deal_id or "",
-            "Fecha": datetime.now(timezone.utc).strftime(
+            "Fecha": datetime.now(CHILE_TZ).strftime(
                 "%d-%b-%Y %H:%M:%S"
             ),
+            "Attempt ID": attempt_id,
         },
         date_format="dd-MMM-yyyy HH:mm:ss",
     )

@@ -246,10 +246,6 @@ def get_salesiq_access_token() -> str:
         print("=== Respuesta refresh token SalesIQ ===")
         print(resp.status_code)
 
-        try:
-            print(resp.text)
-        except Exception:
-            pass
 
         if resp.status_code != 200:
             return None
@@ -585,15 +581,6 @@ def obtener_o_crear_account(
             print(
                 resp.status_code
             )
-
-            try:
-
-                print(
-                    resp.text
-                )
-
-            except Exception:
-                pass
 
             if resp.status_code == 200:
 

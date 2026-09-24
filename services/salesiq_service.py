@@ -171,10 +171,16 @@ def listar_conversaciones_cerradas(
     hasta_ms: int,
 ) -> list:
     """
-    Lista conversaciones con status='closed' cuyo inicio
-    (start_time) cae entre desde_ms y hasta_ms (epoch en
-    milisegundos), trayendo el campo 'visitor' para poder
-    filtrar por canal (WhatsApp) del lado del cliente.
+    Lista conversaciones con status='closed' que hayan sido
+    actualizadas entre desde_ms y hasta_ms (epoch en
+    milisegundos).
+
+    Se usa la hora de actualización y no la hora de inicio,
+    porque una conversación de WhatsApp puede haber comenzado
+    hace mucho tiempo y cerrarse recién ahora.
+
+    Trae el campo 'visitor' para poder filtrar por canal
+    (WhatsApp) del lado del cliente.
 
     Pagina automáticamente hasta agotar los resultados.
     """
@@ -191,11 +197,12 @@ def listar_conversaciones_cerradas(
             headers=headers,
             params={
                 "status": "closed",
-                "from_time": desde_ms,
-                "to_time": hasta_ms,
+                "updated_from_time": desde_ms,
+                "updated_till_time": hasta_ms,
+                "sort_by": "updated_time",
                 "limit": 99,
                 "page": page,
-                "fields": "visitor,status",
+                "fields": "visitor,status,end_time,start_time",
             },
             timeout=15,
         )
@@ -222,17 +229,21 @@ def listar_conversaciones_cerradas(
     return conversaciones
 
 
-def obtener_tags_actuales(
+def obtener_detalle_conversacion(
     conversation_id: str,
     screenname: str,
     access_token: str,
-) -> list:
+) -> dict:
     """
-    Devuelve la lista de IDs de tags ya asociados a una
-    conversación (vacía si no tiene ninguno o si falla la
-    consulta — en ese caso se prefiere seguir de largo y
-    procesar el chat antes que saltarlo por error).
+    Devuelve el detalle completo de una conversación.
+
+    Se usa, entre otras cosas, para leer correctamente
+    visitor.channel_details.channel / visitor.channel_name,
+    ya que SalesIQ no expone el canal en visitor["channel"].
     """
+
+    if not conversation_id:
+        return {}
 
     headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
 
@@ -246,17 +257,181 @@ def obtener_tags_actuales(
         )
 
         if resp.status_code != 200:
-            return []
+            print(
+                "[obtener_detalle_conversacion] "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+            return {}
 
-        data = resp.json().get("data") or {}
-
-        tags = data.get("tags") or []
-
-        return [str(t.get("id")) for t in tags if t.get("id")]
+        return resp.json().get("data") or {}
 
     except Exception as e:
-        print(f"[obtener_tags_actuales] ERROR: {e}")
-        return []
+
+        print(
+            "[obtener_detalle_conversacion] "
+            f"ERROR llamando a SalesIQ: {e}"
+        )
+
+        return {}
+
+
+def obtener_tags_actuales(
+    conversation_id: str,
+    screenname: str,
+    access_token: str,
+) -> list:
+    """
+    Devuelve la lista de IDs de tags ya asociados a una
+    conversación (vacía si no tiene ninguno o si falla la
+    consulta — en ese caso se prefiere seguir de largo y
+    procesar el chat antes que saltarlo por error).
+    """
+
+    data = obtener_detalle_conversacion(
+        conversation_id,
+        screenname,
+        access_token,
+    )
+
+    tags = data.get("tags") or []
+
+    return [str(t.get("id")) for t in tags if t.get("id")]
+
+
+def obtener_mensajes_conversacion(
+    conversation_id: str,
+    screenname: str,
+    access_token: str,
+) -> list:
+    """
+    Descarga los mensajes de una conversación conservando
+    el orden, la hora y el remitente de cada mensaje.
+
+    Esto permitirá analizar varios intentos de cotización
+    dentro de una misma conversación.
+    """
+
+    headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+
+    mensajes_acumulados = []
+    ids_vistos = set()
+    from_time = None
+
+    for _ in range(20):
+
+        params = {"limit": 100}
+
+        if from_time is not None:
+            params["from_time"] = from_time
+
+        try:
+
+            resp = requests.get(
+                f"{SALESIQ_API_BASE}/{screenname}"
+                f"/conversations/{conversation_id}/messages",
+                headers=headers,
+                params=params,
+                timeout=15,
+            )
+
+        except Exception as e:
+
+            print(
+                "[obtener_mensajes_conversacion] "
+                f"ERROR llamando a SalesIQ: {e}"
+            )
+
+            break
+
+        if resp.status_code != 200:
+
+            print(
+                "[obtener_mensajes_conversacion] "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+
+            break
+
+        data = resp.json()
+
+        mensajes = data.get("data") or []
+
+        if not mensajes:
+            break
+
+        tiempos_lote = []
+
+        for m in mensajes:
+
+            message_id = str(m.get("id") or "")
+
+            # Evitamos agregar dos veces el mismo mensaje
+            # cuando existe paginación.
+            if message_id and message_id in ids_vistos:
+                continue
+
+            if message_id:
+                ids_vistos.add(message_id)
+
+            contenido = m.get("message") or {}
+
+            texto = contenido.get("text")
+
+            # Algunos eventos pueden guardar el texto
+            # dentro de "message".
+            if not texto and isinstance(
+                contenido.get("message"), str
+            ):
+                texto = contenido.get("message")
+
+            try:
+
+                time_ms = int(m.get("time"))
+                tiempos_lote.append(time_ms)
+
+            except (TypeError, ValueError):
+
+                time_ms = None
+
+            mensajes_acumulados.append(
+                {
+                    "id": message_id,
+                    "sequence_id": m.get("sequence_id"),
+                    "time_ms": time_ms,
+                    "type": m.get("type"),
+                    "sender": m.get("sender") or {},
+                    "text": str(texto or ""),
+                }
+            )
+
+        if not data.get("more_data_available"):
+            break
+
+        if not tiempos_lote:
+            break
+
+        siguiente_from_time = max(tiempos_lote) + 1
+
+        if (
+            from_time is not None
+            and siguiente_from_time <= from_time
+        ):
+            break
+
+        from_time = siguiente_from_time
+
+    # Nos aseguramos de que todos los mensajes estén
+    # ordenados cronológicamente.
+    mensajes_acumulados.sort(
+        key=lambda m: (
+            m.get("time_ms")
+            if m.get("time_ms") is not None
+            else 0,
+            str(m.get("sequence_id") or ""),
+        )
+    )
+
+    return mensajes_acumulados
 
 
 def obtener_transcripcion_completa(
@@ -265,62 +440,19 @@ def obtener_transcripcion_completa(
     access_token: str,
 ) -> str:
     """
-    Descarga la transcripción COMPLETA de una conversación,
-    paginando con from_time hasta que la API indique que ya no
-    hay más mensajes (more_data_available = false).
-
-    Necesario porque la API limita cuántos mensajes devuelve
-    por llamada; un chat largo puede tener el mensaje de
-    confirmación final en una página que nunca se pedía si solo
-    se hacía una llamada.
+    Mantiene el funcionamiento antiguo para las partes
+    del sistema que todavía necesitan recibir toda la
+    conversación como un solo texto.
     """
 
-    headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+    mensajes = obtener_mensajes_conversacion(
+        conversation_id,
+        screenname,
+        access_token,
+    )
 
-    partes = []
-    from_time = None
-
-    for _ in range(20):
-
-        params = {"limit": 100}
-
-        if from_time:
-            params["from_time"] = from_time
-
-        resp = requests.get(
-            f"{SALESIQ_API_BASE}/{screenname}"
-            f"/conversations/{conversation_id}/messages",
-            headers=headers,
-            params=params,
-            timeout=15,
-        )
-
-        if resp.status_code != 200:
-            print(
-                "[obtener_transcripcion_completa] "
-                f"status={resp.status_code} body={resp.text[:200]}"
-            )
-            break
-
-        data = resp.json()
-        mensajes = data.get("data") or []
-
-        for m in mensajes:
-            contenido = m.get("message") or {}
-            texto = contenido.get("text") or ""
-            partes.append(str(texto))
-
-        if not data.get("more_data_available"):
-            break
-
-        if not mensajes:
-            break
-
-        siguiente_from_time = mensajes[-1].get("time")
-
-        if not siguiente_from_time or siguiente_from_time == from_time:
-            break
-
-        from_time = siguiente_from_time
-
-    return "\n".join(partes)
+    return "\n".join(
+        m.get("text") or ""
+        for m in mensajes
+        if m.get("text")
+    )

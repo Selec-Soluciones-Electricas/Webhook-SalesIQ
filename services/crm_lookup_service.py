@@ -2,6 +2,8 @@ import os
 import re
 import time
 
+import unicodedata
+
 import requests
 
 from datetime import datetime, timedelta, timezone
@@ -131,6 +133,43 @@ def _a_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+# Valores de ejemplo que el bot muestra en sus mensajes cuando
+# faltan datos (ver ejemplos en finalizar/validar de
+# conversation/quotation.py). Aparecen en muchas transcripciones
+# y nunca identifican a un cliente.
+TELEFONOS_EJEMPLO_BOT = (
+    "56912345678",   # "Teléfono: 56912345678"
+    "12345678-9",    # "RUT: 12345678-9"
+)
+
+EMAILS_EJEMPLO_BOT = (
+    "cliente@empresa.com",
+)
+
+# Correos de la propia empresa (ejecutivos, pruebas como
+# bot@selec.cl): nunca identifican al cliente.
+DOMINIOS_EMAIL_INTERNOS_DEFECTO = ("selec.cl",)
+
+
+def _telefonos_excluidos() -> set:
+    """
+    Números que NO deben usarse para buscar Deals: los ejemplos
+    del bot, más los de la variable de entorno
+    TELEFONOS_EXCLUIDOS (separados por coma). Se comparan por
+    los últimos 8 dígitos.
+    """
+
+    crudo = ",".join(TELEFONOS_EJEMPLO_BOT) + "," + os.environ.get(
+        "TELEFONOS_EXCLUIDOS", ""
+    )
+
+    return {
+        _solo_digitos(t)[-8:]
+        for t in crudo.split(",")
+        if len(_solo_digitos(t)) >= 8
+    }
+
+
 # Funcion desarrollada con el fin de extraer del texto de la conversación los posibles teléfonos que escribió el visitante, normalizados a solo dígitos.
 def extraer_candidatos_telefono(texto_completo: str) -> set:
     """
@@ -154,6 +193,14 @@ def extraer_candidatos_telefono(texto_completo: str) -> set:
 
         if MIN_DIGITOS_TELEFONO <= len(d) <= MAX_DIGITOS_TELEFONO:
             candidatos.add(d)
+
+    excluidos = _telefonos_excluidos()
+
+    if excluidos:
+        candidatos = {
+            c for c in candidatos
+            if c[-8:] not in excluidos
+        }
 
     return candidatos
 
@@ -184,7 +231,34 @@ def _coincide(tel_deal: str, candidatos: set) -> bool:
     )
 
 
-# Funcion desarrollada con el fin de extraer los correos que aparecen en el chat, normalizados a minúsculas.
+def _email_excluido(email: str) -> bool:
+
+    dominios = {
+        d.strip().lower().lstrip("@")
+        for d in (
+            ",".join(DOMINIOS_EMAIL_INTERNOS_DEFECTO)
+            + ","
+            + os.environ.get("DOMINIOS_EMAIL_EXCLUIDOS", "")
+        ).split(",")
+        if d.strip()
+    }
+
+    emails = {
+        e.strip().lower()
+        for e in (
+            ",".join(EMAILS_EJEMPLO_BOT)
+            + ","
+            + os.environ.get("EMAILS_EXCLUIDOS", "")
+        ).split(",")
+        if e.strip()
+    }
+
+    email = (email or "").lower()
+
+    return email in emails or email.split("@")[-1] in dominios
+
+
+# Funcion desarrollada con el fin de extraer los correos del cliente que aparecen en el chat, normalizados a minúsculas y sin los correos de ejemplo del bot ni los internos de la empresa.
 def extraer_candidatos_email(texto_completo: str) -> set:
     """
     Los correos enmascarados del resumen del bot (J****s@lsc.cl)
@@ -198,6 +272,7 @@ def extraer_candidatos_email(texto_completo: str) -> set:
             r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",
             texto_completo or "",
         )
+        if not _email_excluido(e.lower().strip("."))
     }
 
 
@@ -278,7 +353,7 @@ def _consultar_ventana(inicio, fin, solo_whatsapp, access_token):
         else ""
     )
 
-    campos = ["id", "Description", "Created_Time", "Lead_Source"]
+    campos = ["id", "Deal_Name", "Description", "Created_Time", "Lead_Source"]
 
     if _estado_coql["usar_campos_contacto"]:
         campos += list(CAMPOS_CONTACTO)
@@ -527,6 +602,11 @@ def _buscar_deals_globales(telefonos: set, emails: set) -> list:
         for r in _search_deals_por_palabra(email, access_token):
             encontrados[r.get("id")] = r
 
+    # Si hubo resultados por correo, no se busca por teléfono:
+    # el correo es más específico y el teléfono agrega ruido.
+    if encontrados:
+        return list(encontrados.values())
+
     # Teléfonos: solo los de 8+ dígitos, para evitar ruido.
     for tel in telefonos:
         if len(tel) >= 8:
@@ -536,40 +616,279 @@ def _buscar_deals_globales(telefonos: set, emails: set) -> list:
     return list(encontrados.values())
 
 
-# Funcion desarrollada con el fin de cruzar una lista de Deals con los teléfonos y correos del chat.
-def _buscar_coincidencias(registros, telefonos, emails, min_digitos=MIN_DIGITOS_TELEFONO):
+# =========================================================
+# COINCIDENCIA POR NOMBRE DE EMPRESA
+# =========================================================
+# El bot crea el Deal como "Cotización - <empresa escrita por el
+# cliente>" y repite ese nombre en su resumen final
+# ("Nombre de la empresa: ..."). Sirve cuando un ejecutivo
+# reescribió la Description del Deal y ya no tiene correo ni
+# teléfono. Solo se usa dentro de la ventana de fechas del chat,
+# nunca en la búsqueda global.
+
+EMPRESAS_EXCLUIDAS = {"empresa ejemplo", "sin empresa", "bot"}
+
+SUFIJOS_EMPRESA = (
+    "spa", "s p a", "ltda", "limitada", "s a", "sa",
+    "eirl", "e i r l", "sociedad anonima",
+)
+
+PATRON_EMPRESA_CHAT = re.compile(
+    r"(?:Nombre de la empresa|Empresa)\s*:\s*([^\n]+)",
+    re.IGNORECASE,
+)
+
+
+def _normalizar_empresa(nombre: str) -> str:
+    """
+    Minúsculas, sin tildes, sin puntuación ni sufijos
+    societarios (SpA, Ltda, S.A., etc.).
+    """
+
+    texto = unicodedata.normalize("NFKD", str(nombre or "").lower())
+    texto = texto.encode("ascii", "ignore").decode("ascii")
+    texto = re.sub(r"[^a-z0-9 ]", " ", texto)
+    texto = " ".join(texto.split())
+
+    cambio = True
+
+    while cambio:
+        cambio = False
+        for sufijo in SUFIJOS_EMPRESA:
+            if texto.endswith(" " + sufijo):
+                texto = texto[: -len(sufijo) - 1].strip()
+                cambio = True
+
+    return texto
+
+
+# Funcion desarrollada con el fin de extraer del chat los nombres de empresa que escribió el cliente (o que el bot repitió en su resumen).
+def extraer_candidatos_empresa(texto_chat: str) -> set:
+
+    empresas = set()
+
+    for valor in PATRON_EMPRESA_CHAT.findall(texto_chat or ""):
+
+        normalizada = _normalizar_empresa(valor)
+
+        if len(normalizada) >= 3 and normalizada not in EMPRESAS_EXCLUIDAS:
+            empresas.add(normalizada)
+
+    return empresas
+
+
+def _empresa_del_deal(registro: dict) -> str:
+
+    nombre = str(registro.get("Deal_Name") or "")
+
+    # "Cotización - RV Equipos Industriales SpA" -> "RV Equipos..."
+    nombre = re.sub(r"^\s*cotizaci[oó]n\s*-\s*", "", nombre, flags=re.IGNORECASE)
+
+    return _normalizar_empresa(nombre)
+
+
+def _coincide_empresa(registro: dict, empresas: set) -> bool:
+
+    empresa_deal = _empresa_del_deal(registro)
+
+    if len(empresa_deal) < 3 or empresa_deal in EMPRESAS_EXCLUIDAS:
+        return False
+
+    compacto_deal = empresa_deal.replace(" ", "")
+
+    for e in empresas:
+
+        # Igualdad ignorando espacios ("r v equipos" = "rv equipos").
+        if e.replace(" ", "") == compacto_deal:
+            return True
+
+        # Contención solo si el nombre más corto tiene al menos
+        # 2 palabras y cubre la mayor parte del más largo, para
+        # que "equipos" no calce con "rv equipos industriales".
+        corto, largo = sorted((e, empresa_deal), key=len)
+
+        if (
+            len(corto.split()) >= 2
+            and len(corto) >= 0.6 * len(largo)
+            and f" {corto} " in f" {largo} "
+        ):
+            return True
+
+    return False
+
+
+# Funcion desarrollada con el fin de cruzar una lista de Deals con los correos, teléfonos y empresa del chat, en ese orden de prioridad (del dato más específico al menos específico).
+def _buscar_coincidencias(
+    registros,
+    telefonos,
+    emails,
+    min_digitos=MIN_DIGITOS_TELEFONO,
+    empresas=None,
+    excluir_ids=None,
+):
+    """
+    Devuelve (coincidencias, criterio, ya_asignados).
+
+    - coincidencias: Deals que calzan y NO están asignados a otra
+      fila de Analytics.
+    - ya_asignados: IDs que calzaban por el criterio más fuerte,
+      pero ya pertenecen a otra fila. Si el criterio más fuerte
+      solo apunta a Deals ya usados, se detiene ahí y no se
+      prueba un criterio más débil (evita asignar un Deal
+      equivocado de la misma empresa).
+    """
+
+    excluir_ids = excluir_ids or set()
 
     telefonos_validos = {t for t in telefonos if len(t) >= min_digitos}
 
-    coincidencias = [
-        r
-        for r in registros
-        if any(
-            _coincide(tel_deal, telefonos_validos)
-            for tel_deal in _telefonos_del_deal(r)
-            if len(tel_deal) >= min_digitos
-        )
-    ]
-
-    if coincidencias:
-        return coincidencias, "telefono"
+    criterios = []
 
     if emails:
+        criterios.append((
+            "email",
+            lambda r: bool(_emails_del_deal(r) & emails),
+        ))
 
-        coincidencias = [
-            r
-            for r in registros
-            if _emails_del_deal(r) & emails
+    if telefonos_validos:
+        criterios.append((
+            "telefono",
+            lambda r: any(
+                _coincide(tel_deal, telefonos_validos)
+                for tel_deal in _telefonos_del_deal(r)
+                if len(tel_deal) >= min_digitos
+            ),
+        ))
+
+    if empresas:
+        criterios.append((
+            "empresa",
+            lambda r: _coincide_empresa(r, empresas),
+        ))
+
+    for criterio, calza in criterios:
+
+        encontrados = [r for r in registros if calza(r)]
+
+        if not encontrados:
+            continue
+
+        disponibles = [
+            r for r in encontrados
+            if str(r.get("id")) not in excluir_ids
         ]
 
-        if coincidencias:
-            return coincidencias, "email"
+        if disponibles:
+            return disponibles, criterio, []
 
-    return [], None
+        return [], criterio, [str(r.get("id")) for r in encontrados]
+
+    return [], None, []
+
+
+# Margen para considerar que un Deal fue creado "durante" el
+# chat: el bot crea el Deal al finalizar la cotización.
+MARGEN_CREACION_DEAL = timedelta(hours=2)
+
+
+# Funcion desarrollada con el fin de elegir un único Deal entre varias coincidencias solo cuando la elección es segura; si no, devuelve None para dejar el caso en revisión manual.
+def _elegir_unico(coincidencias: list, referencias: list):
+    """
+    Reglas, en orden:
+        1. Si hay un solo candidato, se elige.
+        2. Si solo uno tiene fuente 'Chat Whatsapp', se elige.
+        3. Si solo uno fue creado dentro de ±2 h del inicio o
+           fin del chat, se elige.
+        4. Si no, es ambiguo: no se adivina.
+
+    Devuelve (deal | None, ids_candidatos).
+    """
+
+    if len(coincidencias) == 1:
+        return coincidencias[0], []
+
+    whatsapp = [
+        r for r in coincidencias
+        if r.get("Lead_Source") == "Chat Whatsapp"
+    ]
+
+    if len(whatsapp) == 1:
+        return whatsapp[0], [str(r.get("id")) for r in coincidencias]
+
+    pool = whatsapp or coincidencias
+
+    refs = [_a_utc(r) for r in referencias if r]
+
+    def _cercano(r):
+        try:
+            ct = _a_utc(datetime.fromisoformat(r["Created_Time"]))
+        except Exception:
+            return False
+        return any(abs(ct - ref) <= MARGEN_CREACION_DEAL for ref in refs)
+
+    cercanos = [r for r in pool if _cercano(r)]
+
+    if len(cercanos) == 1:
+        return cercanos[0], [str(r.get("id")) for r in pool]
+
+    return None, [str(r.get("id")) for r in pool][:5]
+
+
+def _resolver(info, coincidencias, criterio, ya_asignados, referencias, motivo_si_falla, sufijo=""):
+    """
+    Aplica las reglas de seguridad y completa `info`.
+    """
+
+    if not coincidencias:
+
+        if ya_asignados:
+            info["motivo"] = "deal_ya_asignado"
+            info["candidatos_globales"] = ya_asignados[:5]
+            print(
+                "[buscar_deal_id_por_chat] El Deal que calza por "
+                f"{criterio} ya está asignado a otra fila: {ya_asignados}"
+            )
+        else:
+            info["motivo"] = motivo_si_falla
+
+        return info
+
+    elegido, candidatos = _elegir_unico(coincidencias, referencias)
+
+    if not elegido:
+        info["motivo"] = f"ambiguo_{criterio}"
+        info["candidatos_globales"] = candidatos
+        print(
+            "[buscar_deal_id_por_chat] Ambiguo por "
+            f"{criterio}{sufijo}: {candidatos}"
+        )
+        return info
+
+    info["deal_id"] = elegido.get("id")
+    info["criterio"] = f"{criterio}{sufijo}"
+    info["motivo"] = None
+
+    if len(candidatos) > 1:
+        info["candidatos_globales"] = candidatos[:5]
+
+    print(
+        "[buscar_deal_id_por_chat] "
+        f"{len(coincidencias)} coincidencia(s) por {criterio}{sufijo}; "
+        f"deal={info['deal_id']}"
+    )
+
+    return info
 
 
 # Funcion desarrollada con el fin de resolver el Deal buscando por correo/teléfono en todo el CRM, cuando la búsqueda por ventana de fechas no encontró nada.
-def _busqueda_global(info, telefonos, emails, hora_referencia, motivo_si_falla):
+def _busqueda_global(
+    info,
+    telefonos,
+    emails,
+    referencias,
+    motivo_si_falla,
+    excluir_ids=None,
+):
 
     candidatos = _buscar_deals_globales(telefonos, emails)
 
@@ -581,50 +900,26 @@ def _busqueda_global(info, telefonos, emails, hora_referencia, motivo_si_falla):
     info["deals_busqueda_global"] = len(candidatos)
 
     # Se verifica que el Deal realmente contenga el dato del
-    # cliente (la búsqueda por palabra puede traer ruido).
-    coincidencias, criterio = _buscar_coincidencias(
-        candidatos, telefonos, emails, min_digitos=8
+    # cliente (la búsqueda por palabra puede traer ruido). Aquí
+    # nunca se usa el nombre de empresa: sin ventana de fechas
+    # no es lo bastante específico.
+    coincidencias, criterio, ya_asignados = _buscar_coincidencias(
+        candidatos,
+        telefonos,
+        emails,
+        min_digitos=8,
+        excluir_ids=excluir_ids,
     )
 
-    if not coincidencias:
-        info["motivo"] = motivo_si_falla
-        return info
-
-    def _orden(r):
-
-        # 1° los de fuente Chat Whatsapp
-        es_whatsapp = 0 if r.get("Lead_Source") == "Chat Whatsapp" else 1
-
-        # 2° el más cercano a la fecha de referencia (si hay)
-        distancia = 0.0
-
-        if hora_referencia:
-            try:
-                ct = datetime.fromisoformat(r["Created_Time"])
-                distancia = abs(
-                    (_a_utc(ct) - _a_utc(hora_referencia)).total_seconds()
-                )
-            except Exception:
-                distancia = float("inf")
-
-        return (es_whatsapp, distancia)
-
-    coincidencias.sort(key=_orden)
-
-    info["deal_id"] = coincidencias[0].get("id")
-    info["criterio"] = f"{criterio}_busqueda_global"
-    info["motivo"] = None
-
-    if len(coincidencias) > 1:
-        info["candidatos_globales"] = [c.get("id") for c in coincidencias[:5]]
-
-    print(
-        "[buscar_deal_id_por_chat] Búsqueda global: "
-        f"{len(coincidencias)} coincidencia(s) por {criterio}; "
-        f"deal={info['deal_id']}"
+    return _resolver(
+        info,
+        coincidencias,
+        criterio,
+        ya_asignados,
+        referencias,
+        motivo_si_falla,
+        sufijo="_busqueda_global",
     )
-
-    return info
 
 
 # Funcion desarrollada con el fin de buscar el Deal de un chat usando todo el texto de la conversación (teléfono y, como respaldo, correo), devolviendo además el motivo cuando no lo encuentra.
@@ -633,6 +928,7 @@ def buscar_deal_id_por_chat_detallado(
     hora_creacion,
     hora_finalizacion=None,
     margen_dias: int = 1,
+    excluir_ids: set = None,
 ) -> dict:
     """
     Devuelve un dict:
@@ -640,7 +936,8 @@ def buscar_deal_id_por_chat_detallado(
             "deal_id": str | None,
             "motivo": None | "sin_texto" | "sin_fecha" |
                       "error_crm" | "sin_deals_en_ventana" |
-                      "sin_coincidencia",
+                      "sin_coincidencia" | "ambiguo_<criterio>" |
+                      "deal_ya_asignado",
             "criterio": "telefono" | "email" | None,
             "telefonos": int, "emails": int,
             "deals_en_ventana": int,
@@ -665,11 +962,18 @@ def buscar_deal_id_por_chat_detallado(
     telefonos = extraer_candidatos_telefono(texto_chat)
     emails = extraer_candidatos_email(texto_chat)
 
+    empresas = extraer_candidatos_empresa(texto_chat)
+
     info["telefonos"] = len(telefonos)
     info["emails"] = len(emails)
+    info["empresas"] = len(empresas)
+
+    excluir_ids = {str(x) for x in (excluir_ids or set())}
 
     if not hora_creacion:
-        return _busqueda_global(info, telefonos, emails, None, "sin_fecha")
+        return _busqueda_global(
+            info, telefonos, emails, [], "sin_fecha", excluir_ids
+        )
 
     hora_creacion = _a_utc(hora_creacion)
 
@@ -697,17 +1001,28 @@ def buscar_deal_id_por_chat_detallado(
 
     info["deals_en_ventana"] = len(registros)
 
-    coincidencias, criterio = _buscar_coincidencias(
-        registros, telefonos, emails, min_digitos=MIN_DIGITOS_TELEFONO
+    referencias = [hora_creacion] + (
+        [_a_utc(hora_finalizacion)] if hora_finalizacion else []
     )
+
+    coincidencias, criterio, ya_asignados = _buscar_coincidencias(
+        registros,
+        telefonos,
+        emails,
+        min_digitos=MIN_DIGITOS_TELEFONO,
+        empresas=empresas,
+        excluir_ids=excluir_ids,
+    )
+
+    sufijo = ""
 
     # ---------------------------------------------------------
     # 2) Respaldo: cualquier Deal de la ventana, sin importar la
     #    fuente (un ejecutivo pudo cambiar el Lead_Source, o el
     #    bot antiguo usaba otro valor). Aquí se exige un match
-    #    más estricto: correo exacto o teléfono de 8+ dígitos.
+    #    más estricto: teléfono de 8+ dígitos.
     # ---------------------------------------------------------
-    if not coincidencias:
+    if not coincidencias and not ya_asignados:
 
         todos = _consultar_deals_whatsapp(inicio, fin, solo_whatsapp=False)
 
@@ -715,56 +1030,48 @@ def buscar_deal_id_por_chat_detallado(
 
             info["deals_en_ventana_cualquier_fuente"] = len(todos)
 
-            coincidencias, criterio = _buscar_coincidencias(
-                todos, telefonos, emails, min_digitos=8
+            coincidencias, criterio, ya_asignados = _buscar_coincidencias(
+                todos,
+                telefonos,
+                emails,
+                min_digitos=8,
+                empresas=empresas,
+                excluir_ids=excluir_ids,
             )
 
-            if criterio:
-                criterio = f"{criterio}_cualquier_fuente"
+            sufijo = "_cualquier_fuente"
 
-    if not coincidencias:
-
-        motivo = (
-            "sin_coincidencia"
-            if registros or info.get("deals_en_ventana_cualquier_fuente")
-            else "sin_deals_en_ventana"
+    if coincidencias or ya_asignados:
+        return _resolver(
+            info,
+            coincidencias,
+            criterio,
+            ya_asignados,
+            referencias,
+            "sin_coincidencia",
+            sufijo=sufijo,
         )
 
-        print(
-            "[buscar_deal_id_por_chat] Sin coincidencias en la ventana "
-            f"({len(registros)} deals WhatsApp, "
-            f"{info.get('deals_en_ventana_cualquier_fuente', 0)} en total, "
-            f"{len(telefonos)} teléfonos, {len(emails)} correos). "
-            "Se intenta búsqueda global."
-        )
-
-        # -----------------------------------------------------
-        # 3) Búsqueda global por correo/teléfono, sin fechas.
-        # -----------------------------------------------------
-        return _busqueda_global(
-            info, telefonos, emails, hora_creacion, motivo
-        )
-
-    def _distancia(r):
-        try:
-            # Created_Time viene con offset, ej: 2026-08-26T09:16:00-05:00
-            ct = datetime.fromisoformat(r["Created_Time"])
-            return abs((_a_utc(ct) - hora_creacion).total_seconds())
-        except Exception:
-            return float("inf")
-
-    coincidencias.sort(key=_distancia)
-
-    info["deal_id"] = coincidencias[0].get("id")
-    info["criterio"] = criterio
-
-    print(
-        "[buscar_deal_id_por_chat] "
-        f"{len(coincidencias)} coincidencia(s) por {criterio}; "
-        f"deal={info['deal_id']}"
+    motivo = (
+        "sin_coincidencia"
+        if registros or info.get("deals_en_ventana_cualquier_fuente")
+        else "sin_deals_en_ventana"
     )
 
-    return info
+    print(
+        "[buscar_deal_id_por_chat] Sin coincidencias en la ventana "
+        f"({len(registros)} deals WhatsApp, "
+        f"{info.get('deals_en_ventana_cualquier_fuente', 0)} en total, "
+        f"{len(telefonos)} teléfonos, {len(emails)} correos). "
+        "Se intenta búsqueda global."
+    )
+
+    # ---------------------------------------------------------
+    # 3) Búsqueda global por correo/teléfono, sin fechas.
+    # ---------------------------------------------------------
+    return _busqueda_global(
+        info, telefonos, emails, referencias, motivo, excluir_ids
+    )
 
 
 # Funcion desarrollada con el fin de buscar el Deal de un chat y devolver solo su ID (o None).
@@ -773,6 +1080,7 @@ def buscar_deal_id_por_chat(
     hora_creacion,
     hora_finalizacion=None,
     margen_dias: int = 1,
+    excluir_ids: set = None,
 ) -> str:
 
     return buscar_deal_id_por_chat_detallado(
@@ -780,6 +1088,7 @@ def buscar_deal_id_por_chat(
         hora_creacion,
         hora_finalizacion,
         margen_dias,
+        excluir_ids,
     )["deal_id"]
 
 

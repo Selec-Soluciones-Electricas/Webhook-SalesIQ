@@ -228,6 +228,14 @@ def reparar_deal_ids(
             == conversation_id_filtro.strip()
         ]
 
+    # Deal IDs que ya pertenecen a alguna fila OK: nunca se
+    # asignan a otra fila (dos chats no comparten un mismo Deal).
+    ids_asignados = {
+        str(f.get("Deal ID")).strip()
+        for f in filas_ok
+        if not _vacio(f.get("Deal ID"))
+    }
+
     total_pendientes = len(pendientes)
     lote = pendientes[offset:offset + limite]
 
@@ -309,6 +317,7 @@ def reparar_deal_ids(
                 inicio,
                 fin,
                 margen_dias=MARGEN_DIAS_REPARACION,
+                excluir_ids=ids_asignados,
             )
 
             deal_id = busqueda["deal_id"]
@@ -339,6 +348,8 @@ def reparar_deal_ids(
                     "deals_busqueda_global": busqueda.get(
                         "deals_busqueda_global", 0
                     ),
+                    "candidatos": busqueda.get("candidatos_globales"),
+                    "empresas": busqueda.get("empresas", 0),
                     "telefonos": busqueda["telefonos"],
                     "emails": busqueda["emails"],
                     "detalle_error": busqueda.get("detalle_error"),
@@ -346,6 +357,10 @@ def reparar_deal_ids(
             )
             time.sleep(PAUSA_ENTRE_LLAMADAS)
             continue
+
+        # Reservar el Deal para esta fila, incluso en dry_run, para
+        # que otra fila del mismo lote no reciba el mismo Deal.
+        ids_asignados.add(str(deal_id))
 
         resumen["propuestas"].append(
             {

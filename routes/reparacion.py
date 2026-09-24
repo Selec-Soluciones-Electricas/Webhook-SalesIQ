@@ -19,6 +19,13 @@ from routes.cron import _texto_mensaje, _a_epoch_ms
 
 PAUSA_ENTRE_LLAMADAS = 0.4
 
+# cron-job.org corta la conexión a los 30 s. Se procesa por
+# lotes y se deja de tomar filas nuevas al llegar a este tiempo,
+# para responder siempre antes del corte.
+TIEMPO_MAXIMO_SEG = 20
+
+LIMITE_POR_DEFECTO = 5
+
 # Margen de días alrededor del chat para buscar el Deal. Más
 # amplio que en el cron porque aquí se reparan chats antiguos
 # cuya fecha registrada puede no ser la de inicio.
@@ -86,7 +93,13 @@ def _ventana_chat(detalle: dict, fila: dict):
 
 
 # Funcion desarrollada con el fin de completar el Deal ID de todas las filas OK que lo tengan vacío en Analytics.
-def reparar_deal_ids(dry_run: bool = False) -> dict:
+def reparar_deal_ids(
+    dry_run: bool = False,
+    limite: int = LIMITE_POR_DEFECTO,
+    offset: int = 0,
+) -> dict:
+
+    t_inicio = time.monotonic()
 
     screenname = os.environ.get("SALESIQ_SCREENNAME")
 
@@ -108,7 +121,17 @@ def reparar_deal_ids(dry_run: bool = False) -> dict:
             )
         }
 
-    pendientes = [f for f in filas_ok if _vacio(f.get("Deal ID"))]
+    # Orden estable entre corridas, para que el offset sea válido.
+    pendientes = sorted(
+        (f for f in filas_ok if _vacio(f.get("Deal ID"))),
+        key=lambda f: (
+            str(f.get("Conversation ID") or ""),
+            str(f.get("Attempt ID") or ""),
+        ),
+    )
+
+    total_pendientes = len(pendientes)
+    lote = pendientes[offset:offset + limite]
 
     # Cuántas filas OK tiene cada conversación: si una fila sin
     # Attempt ID comparte conversación con otras filas OK, no se
@@ -122,7 +145,10 @@ def reparar_deal_ids(dry_run: bool = False) -> dict:
     resumen = {
         "dry_run": dry_run,
         "filas_ok": len(filas_ok),
-        "ok_sin_deal_id": len(pendientes),
+        "ok_sin_deal_id": total_pendientes,
+        "offset": offset,
+        "limite": limite,
+        "procesadas_en_lote": 0,
         "reparadas": 0,
         "no_encontradas": [],
         "requieren_revision_manual": [],
@@ -130,7 +156,13 @@ def reparar_deal_ids(dry_run: bool = False) -> dict:
         "propuestas": [],
     }
 
-    for fila in pendientes:
+    for fila in lote:
+
+        if time.monotonic() - t_inicio > TIEMPO_MAXIMO_SEG:
+            print("[reparar_deal_ids] Tiempo máximo alcanzado; se corta el lote.")
+            break
+
+        resumen["procesadas_en_lote"] += 1
 
         conversation_id = str(fila.get("Conversation ID") or "").strip()
         visit_id = str(fila.get("Visit ID") or "")
@@ -198,6 +230,11 @@ def reparar_deal_ids(dry_run: bool = False) -> dict:
 
         resumen["propuestas"].append({**referencia, "deal_id": deal_id})
 
+        print(
+            "[reparar_deal_ids] Propuesta: "
+            f"conv={conversation_id} visit={visit_id} deal={deal_id}"
+        )
+
         if dry_run:
             time.sleep(PAUSA_ENTRE_LLAMADAS)
             continue
@@ -218,6 +255,25 @@ def reparar_deal_ids(dry_run: bool = False) -> dict:
             )
 
         time.sleep(PAUSA_ENTRE_LLAMADAS)
+
+    # Siguiente offset: en dry_run nada cambia en Analytics, así
+    # que se avanza todo lo procesado. En modo real, las filas
+    # reparadas salen de la lista de pendientes, así que solo se
+    # avanza lo que quedó sin resolver.
+    avance = resumen["procesadas_en_lote"]
+
+    if not dry_run:
+        avance -= resumen["reparadas"]
+
+    siguiente = offset + avance
+
+    resumen["siguiente_offset"] = siguiente
+    resumen["quedan_por_revisar"] = max(
+        0,
+        (total_pendientes - (0 if dry_run else resumen["reparadas"]))
+        - siguiente,
+    )
+    resumen["duracion_seg"] = round(time.monotonic() - t_inicio, 1)
 
     return resumen
 
@@ -240,7 +296,21 @@ def register_reparacion_routes(app):
         dry_run = request.args.get("dry_run", "").lower() in ("1", "true", "si")
 
         try:
-            resultado = reparar_deal_ids(dry_run=dry_run)
+            limite = max(1, min(int(request.args.get("limite", LIMITE_POR_DEFECTO)), 50))
+        except ValueError:
+            limite = LIMITE_POR_DEFECTO
+
+        try:
+            offset = max(0, int(request.args.get("offset", 0)))
+        except ValueError:
+            offset = 0
+
+        try:
+            resultado = reparar_deal_ids(
+                dry_run=dry_run,
+                limite=limite,
+                offset=offset,
+            )
         except Exception as e:
             print(f"[reparar-deal-ids] ERROR no controlado: {e}")
             return jsonify({"error": str(e)}), 500

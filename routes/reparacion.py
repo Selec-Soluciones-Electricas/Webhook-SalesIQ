@@ -58,7 +58,6 @@ CAMPOS_INICIO_CHAT = (
     "chat_start_time",
     "created_time",
     "start_time_in_ms",
-    "time",
 )
 
 CAMPOS_FIN_CHAT = (
@@ -66,7 +65,6 @@ CAMPOS_FIN_CHAT = (
     "chat_end_time",
     "closed_time",
     "end_time_in_ms",
-    "last_modified_time",
 )
 
 _log_detalle_emitido = False
@@ -338,6 +336,9 @@ def reparar_deal_ids(
                     "deals_cualquier_fuente": busqueda.get(
                         "deals_en_ventana_cualquier_fuente", 0
                     ),
+                    "deals_busqueda_global": busqueda.get(
+                        "deals_busqueda_global", 0
+                    ),
                     "telefonos": busqueda["telefonos"],
                     "emails": busqueda["emails"],
                     "detalle_error": busqueda.get("detalle_error"),
@@ -351,6 +352,7 @@ def reparar_deal_ids(
                 **referencia,
                 "deal_id": deal_id,
                 "criterio": busqueda["criterio"],
+                "candidatos": busqueda.get("candidatos_globales"),
             }
         )
 

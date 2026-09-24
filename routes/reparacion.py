@@ -183,6 +183,7 @@ def reparar_deal_ids(
     dry_run: bool = False,
     limite: int = LIMITE_POR_DEFECTO,
     offset: int = 0,
+    conversation_id_filtro: str = None,
 ) -> dict:
 
     global _log_detalle_emitido
@@ -218,6 +219,15 @@ def reparar_deal_ids(
             str(f.get("Attempt ID") or ""),
         ),
     )
+
+    # Modo puntual: procesar solo una conversación (para probar
+    # un caso concreto sin recorrer toda la lista).
+    if conversation_id_filtro:
+        pendientes = [
+            f for f in pendientes
+            if str(f.get("Conversation ID") or "").strip()
+            == conversation_id_filtro.strip()
+        ]
 
     total_pendientes = len(pendientes)
     lote = pendientes[offset:offset + limite]
@@ -423,6 +433,7 @@ def register_reparacion_routes(app):
                 dry_run=dry_run,
                 limite=limite,
                 offset=offset,
+                conversation_id_filtro=request.args.get("conversation_id"),
             )
         except Exception as e:
             print(f"[reparar-deal-ids] ERROR no controlado: {e}")

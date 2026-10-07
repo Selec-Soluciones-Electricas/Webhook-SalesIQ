@@ -3,6 +3,44 @@ import requests
 
 
 # =========================================================
+# SALESIQ - REGISTRO DEL ÚLTIMO ERROR
+# =========================================================
+# NUEVO: mismo patrón que ultimo_error_analytics. Permite que
+# quien llama sepa por qué falló la última consulta, sin cambiar
+# lo que devuelven las funciones.
+
+ultimo_error_salesiq = {"status": None, "code": None, "message": None}
+
+# 6045 = Invalid Conversation Id (SalesIQ ya no entrega el chat)
+ERRORES_NO_RECUPERABLES = {"6045"}
+
+
+def _limpiar_error_salesiq():
+    ultimo_error_salesiq.update(status=None, code=None, message=None)
+
+
+def _registrar_error_salesiq(resp):
+
+    ultimo_error_salesiq["status"] = resp.status_code
+
+    try:
+        error = (resp.json() or {}).get("error", {}) or {}
+    except ValueError:
+        error = {}
+
+    ultimo_error_salesiq["code"] = error.get("code")
+    ultimo_error_salesiq["message"] = error.get("message")
+
+
+def es_no_recuperable() -> bool:
+    """
+    True si el último error de obtener_detalle_conversacion
+    indica que la conversación ya no se puede consultar.
+    """
+    return str(ultimo_error_salesiq["code"]) in ERRORES_NO_RECUPERABLES
+
+
+# =========================================================
 # SALESIQ - UTILIDADES
 # =========================================================
 
@@ -240,7 +278,12 @@ def obtener_detalle_conversacion(
     Se usa, entre otras cosas, para leer correctamente
     visitor.channel_details.channel / visitor.channel_name,
     ya que SalesIQ no expone el canal en visitor["channel"].
+
+    Si falla, devuelve {} y deja el motivo en
+    ultimo_error_salesiq (ver es_no_recuperable()).
     """
+
+    _limpiar_error_salesiq()  # NUEVO
 
     if not conversation_id:
         return {}
@@ -257,6 +300,7 @@ def obtener_detalle_conversacion(
         )
 
         if resp.status_code != 200:
+            _registrar_error_salesiq(resp)  # NUEVO
             print(
                 "[obtener_detalle_conversacion] "
                 f"status={resp.status_code} body={resp.text[:200]}"
@@ -309,6 +353,10 @@ def obtener_mensajes_conversacion(
 
     Esto permitirá analizar varios intentos de cotización
     dentro de una misma conversación.
+
+    IMPORTANTE: la hora de cada mensaje se entrega como
+    "time_ms" (no "time"). Quien lea estos mensajes debe
+    usar esa clave (ver CAMPOS_TIEMPO_MENSAJE en cron.py).
     """
 
     headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}

@@ -7,6 +7,8 @@ from flask import jsonify, request
 from services.salesiq_service import (
     obtener_detalle_conversacion,
     obtener_mensajes_conversacion,
+    es_no_recuperable,       # NUEVO
+    ultimo_error_salesiq,    # NUEVO
 )
 from services.zoho_service import get_salesiq_access_token
 from services.crm_lookup_service import buscar_deal_id_por_chat_detallado
@@ -31,6 +33,12 @@ LIMITE_POR_DEFECTO = 5
 # amplio que en el cron porque aquí se reparan chats antiguos
 # cuya fecha registrada puede no ser la de inicio.
 MARGEN_DIAS_REPARACION = 2
+
+# NUEVO: columna en Registro_CRM_WhatsApp para marcar filas que
+# SalesIQ ya no entrega (error 6045). Esas filas salen de la cola
+# de pendientes y no se vuelven a consultar.
+COLUMNA_ESTADO = "Estado reparacion"
+ESTADO_NO_RECUPERABLE = "no_recuperable"
 
 FORMATOS_FECHA_ANALYTICS = (
     "%d-%b-%Y %H:%M:%S",
@@ -76,6 +84,21 @@ def _vacio(valor) -> bool:
 
 def _escapar(valor) -> str:
     return str(valor).replace("'", "''")
+
+
+# NUEVO: criterio único para identificar la fila a actualizar en
+# Analytics (se usa al reparar el Deal ID y al marcar no recuperables).
+def _criteria_fila(conversation_id: str, attempt_id: str) -> str:
+
+    criteria = (
+        f"\"Conversation ID\"='{_escapar(conversation_id)}' "
+        "AND \"Resultado\"='OK'"
+    )
+
+    if attempt_id:
+        criteria += f" AND \"Attempt ID\"='{_escapar(attempt_id)}'"
+
+    return criteria
 
 
 # Funcion desarrollada con el fin de interpretar la fecha que devuelve Analytics, probando varios formatos (incluidos los que no traen año).
@@ -211,8 +234,13 @@ def reparar_deal_ids(
         }
 
     # Orden estable entre corridas, para que el offset sea válido.
+    # CAMBIO: se excluyen las filas ya marcadas como no recuperables.
     pendientes = sorted(
-        (f for f in filas_ok if _vacio(f.get("Deal ID"))),
+        (
+            f for f in filas_ok
+            if _vacio(f.get("Deal ID"))
+            and str(f.get(COLUMNA_ESTADO) or "").strip() != ESTADO_NO_RECUPERABLE
+        ),
         key=lambda f: (
             str(f.get("Conversation ID") or ""),
             str(f.get("Attempt ID") or ""),
@@ -257,6 +285,8 @@ def reparar_deal_ids(
         "procesadas_en_lote": 0,
         "reparadas": 0,
         "no_encontradas": [],
+        "no_recuperables": [],           # NUEVO
+        "marcadas_no_recuperables": 0,   # NUEVO
         "requieren_revision_manual": [],
         "fallos_actualizacion": [],
         "propuestas": [],
@@ -302,7 +332,41 @@ def reparar_deal_ids(
 
             detalle = obtener_detalle_conversacion(
                 conversation_id, screenname, salesiq_token
-            ) or {}
+            )
+
+            # NUEVO: SalesIQ ya no entrega esta conversación (6045).
+            # No se piden mensajes ni se busca el Deal; se marca la
+            # fila para que no vuelva a la cola de pendientes.
+            if not detalle and es_no_recuperable():
+
+                resumen["no_recuperables"].append(
+                    {
+                        **referencia,
+                        "codigo": ultimo_error_salesiq["code"],
+                        "fecha_fila": fila.get("Fecha"),
+                    }
+                )
+
+                if not dry_run:
+
+                    if actualizar_filas_analytics(
+                        {COLUMNA_ESTADO: ESTADO_NO_RECUPERABLE},
+                        _criteria_fila(conversation_id, attempt_id),
+                    ):
+                        resumen["marcadas_no_recuperables"] += 1
+                    else:
+                        resumen["fallos_actualizacion"].append(
+                            {
+                                **referencia,
+                                "motivo": "No se pudo marcar como no recuperable",
+                                "detalle_error": ultimo_error_analytics["detalle"],
+                            }
+                        )
+
+                time.sleep(PAUSA_ENTRE_LLAMADAS)
+                continue
+
+            detalle = detalle or {}
 
             mensajes = obtener_mensajes_conversacion(
                 conversation_id, screenname, salesiq_token
@@ -380,13 +444,8 @@ def reparar_deal_ids(
             time.sleep(PAUSA_ENTRE_LLAMADAS)
             continue
 
-        criteria = (
-            f"\"Conversation ID\"='{_escapar(conversation_id)}' "
-            "AND \"Resultado\"='OK'"
-        )
-
-        if attempt_id:
-            criteria += f" AND \"Attempt ID\"='{_escapar(attempt_id)}'"
+        # CAMBIO: se usa el helper común.
+        criteria = _criteria_fila(conversation_id, attempt_id)
 
         if actualizar_filas_analytics({"Deal ID": str(deal_id)}, criteria):
             resumen["reparadas"] += 1
@@ -401,22 +460,22 @@ def reparar_deal_ids(
 
         time.sleep(PAUSA_ENTRE_LLAMADAS)
 
-    # Siguiente offset: en dry_run nada cambia en Analytics, así
-    # que se avanza todo lo procesado. En modo real, las filas
-    # reparadas salen de la lista de pendientes, así que solo se
-    # avanza lo que quedó sin resolver.
-    avance = resumen["procesadas_en_lote"]
+    # CAMBIO: siguiente offset. En dry_run nada cambia en Analytics,
+    # así que se avanza todo lo procesado. En modo real, las filas
+    # reparadas y las marcadas como no recuperables salen de la
+    # lista de pendientes, así que solo se avanza lo que quedó
+    # sin resolver.
+    salidas = (
+        0 if dry_run
+        else resumen["reparadas"] + resumen["marcadas_no_recuperables"]
+    )
 
-    if not dry_run:
-        avance -= resumen["reparadas"]
-
+    avance = resumen["procesadas_en_lote"] - salidas
     siguiente = offset + avance
 
     resumen["siguiente_offset"] = siguiente
     resumen["quedan_por_revisar"] = max(
-        0,
-        (total_pendientes - (0 if dry_run else resumen["reparadas"]))
-        - siguiente,
+        0, total_pendientes - salidas - siguiente
     )
     resumen["duracion_seg"] = round(time.monotonic() - t_inicio, 1)
 

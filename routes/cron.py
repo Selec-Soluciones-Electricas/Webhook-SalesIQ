@@ -124,6 +124,7 @@ def _texto_mensaje(mensaje: dict) -> str:
 # Campos donde SalesIQ puede entregar la hora de un mensaje,
 # según el endpoint y la versión de la API.
 CAMPOS_TIEMPO_MENSAJE = (
+    "time_ms",          # formato normalizado por salesiq_service
     "time",
     "sent_time",
     "created_time",
@@ -303,7 +304,7 @@ def _registrar_en_analytics(
 ) -> bool:
 
     fecha_str = (
-        fecha.strftime("%d-%b-%Y %H:%M:%S")
+        fecha.astimezone(CHILE_TZ).strftime("%d-%b-%Y %H:%M:%S")
         if fecha
         else ""
     )
@@ -330,8 +331,11 @@ def _registrar_en_analytics(
 # JOB DE RECONCILIACIÓN
 # =========================================================
 
-def ejecutar_reconciliacion():
-
+def ejecutar_reconciliacion(
+    horas_desde: int = VENTANA_HORAS,
+    horas_hasta: int = 0,
+    dry_run: bool = False,
+):
     global _log_estructura_mensaje_emitido
     _log_estructura_mensaje_emitido = False
 
@@ -358,6 +362,9 @@ def ejecutar_reconciliacion():
 
     resumen = {
         "cerradas_recibidas": 0,
+        "dry_run": dry_run,
+        "ventana_horas": [horas_desde, horas_hasta],
+        "propuestos": [],
         "revisados": 0,
         "omitidos_no_whatsapp": 0,
         "ok": 0,
@@ -398,10 +405,11 @@ def ejecutar_reconciliacion():
         }
 
     ahora = datetime.now(timezone.utc)
-    desde = ahora - timedelta(hours=VENTANA_HORAS)
+    desde = ahora - timedelta(hours=horas_desde)
+    hasta = ahora - timedelta(hours=horas_hasta)
 
     desde_ms = int(desde.timestamp() * 1000)
-    hasta_ms = int(ahora.timestamp() * 1000)
+    hasta_ms = int(hasta.timestamp() * 1000)
 
     conversaciones = listar_conversaciones_cerradas(
         screenname,
@@ -534,12 +542,8 @@ def ejecutar_reconciliacion():
                     inicio_ms = int(inicio_ms)
                 except (TypeError, ValueError):
                     resumen["omitidos_sin_tiempo"] += 1
-                    print(
-                        "[cron] Intento sin hora de inicio: "
-                        f"conv={conversation_id} "
-                        f"resultado={resultado}"
-                    )
-                    continue
+                    print("[cron] Intento sin hora de inicio: ...")
+                    continue          # <- se salta el intento completo
 
                 # -----------------------------------------
                 # NO TOCAR DATOS HISTÓRICOS
@@ -573,6 +577,19 @@ def ejecutar_reconciliacion():
                     )
                     continue
 
+
+                
+                if dry_run:
+                    resumen["propuestos"].append(
+                        {
+                            "attempt_id": attempt_id,
+                            "visitid": str(visitid or ""),
+                            "resultado": resultado,
+                            "inicio": _fecha_desde_ms(inicio_ms).astimezone(CHILE_TZ).isoformat(),
+                            "ya_existe": bool(existe),
+                        }
+                    )
+                    continue
                 # -----------------------------------------
                 # ASEGURAR EL TAG CORRESPONDIENTE
                 # -----------------------------------------
@@ -691,10 +708,21 @@ def register_cron_routes(app):
         ):
             return jsonify({"error": "No autorizado"}), 401
 
+        dry_run = request.args.get("dry_run", "").lower() in ("1", "true", "si")
+
+        try:
+            horas_desde = max(1, min(int(request.args.get("horas_desde", VENTANA_HORAS)), 24 * 120))
+            horas_hasta = max(0, min(int(request.args.get("horas_hasta", 0)), horas_desde - 1))
+        except ValueError:
+            horas_desde, horas_hasta = VENTANA_HORAS, 0
+
         try:
 
-            resultado = ejecutar_reconciliacion()
-
+            resultado = ejecutar_reconciliacion(
+                horas_desde=horas_desde,
+                horas_hasta=horas_hasta,
+                dry_run=dry_run,
+            )
         except Exception as e:
 
             print(f"[cron/reconciliar] ERROR no controlado: {e}")

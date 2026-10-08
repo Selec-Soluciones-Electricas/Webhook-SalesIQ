@@ -16,16 +16,24 @@ CENTRO = Alignment(horizontal="center", vertical="center")
 IZQ = Alignment(horizontal="left", vertical="center")
 FILA_HDR = 7
 
-COLUMNAS = [  # (letra, título, ancho)
-    ("B", "Fecha Actual", 14),
+COLUMNAS = [  # (letra, título, ancho) -> anchos con margen para la flecha del autofiltro
+    ("B", "Fecha Actual", 16),
     ("C", "Part Number", 32),
     ("D", "Brand", 20),
-    ("E", "Qty", 7),
-    ("F", "Price USD", 14),
-    ("G", "Delivery Time", 14),
-    ("H", "Numero Registro", 16),
-    ("I", "Responsable", 18),
+    ("E", "Qty", 9),
+    ("F", "Price USD", 15),
+    ("G", "Delivery Time", 18),
+    ("H", "Numero Registro", 21),
+    ("I", "Responsable", 20),
 ]
+
+COLUMNAS_TEXTO = ("C", "D")  # Part Number y Brand: texto (conserva ceros iniciales)
+
+
+def _a_numero_si_corresponde(valor):
+    """Convierte a int si el valor es solo dígitos; si no, lo deja como texto."""
+    txt = str(valor if valor is not None else "").strip()
+    return int(txt) if txt.isdigit() else txt
 
 
 def generar_quote_xlsx(fecha_txt: str, filas: list) -> io.BytesIO:
@@ -57,6 +65,7 @@ def generar_quote_xlsx(fecha_txt: str, filas: list) -> io.BytesIO:
     ws["E4"].alignment = CENTRO
 
     # Encabezado
+    ws.row_dimensions[FILA_HDR].height = 18
     for letra, titulo, _ in COLUMNAS:
         c = ws[f"{letra}{FILA_HDR}"]
         c.value = titulo
@@ -74,7 +83,7 @@ def generar_quote_xlsx(fecha_txt: str, filas: list) -> io.BytesIO:
             f.get("qty", ""),
             "",  # Price USD (lo completa el proveedor)
             "",  # Delivery Time
-            f.get("registro", ""),
+            _a_numero_si_corresponde(f.get("registro", "")),
             f.get("responsable", ""),
         ]
         for (letra, _, _), valor in zip(COLUMNAS, valores):
@@ -85,8 +94,8 @@ def generar_quote_xlsx(fecha_txt: str, filas: list) -> io.BytesIO:
             c.alignment = IZQ if letra == "C" else CENTRO
             if letra == "B":
                 c.number_format = "dd-mm-yyyy"
-            elif letra in ("C", "D", "H"):
-                c.number_format = "@"  # texto: conserva ceros iniciales
+            elif letra in COLUMNAS_TEXTO:
+                c.number_format = "@"
 
     ultima = FILA_HDR + max(len(filas), 1)
     ws.freeze_panes = f"A{FILA_HDR + 1}"

@@ -17,7 +17,7 @@ IZQ = Alignment(horizontal="left", vertical="center")
 FILA_HDR = 7
 
 COLUMNAS = [  # (letra, título, ancho) -> anchos con margen para la flecha del autofiltro
-    ("B", "Fecha Actual", 16),
+    ("B", "Fecha Actual", 18),
     ("C", "Part Number", 32),
     ("D", "Brand", 20),
     ("E", "Qty", 9),

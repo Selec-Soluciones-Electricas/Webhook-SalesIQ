@@ -2533,21 +2533,32 @@ def crear_deal_en_zoho(
     }
 
     # =====================================================
-    # OWNER DEL NEGOCIO
+    # PROPIETARIO DEL TRATO
+    # =====================================================
+    #
+    # El propietario del Negocio debe ser Luis Hurtado.
+    # =====================================================
+
+    deal_data[
+        "Owner"
+    ] = {
+        "id":
+            "4358923000000251013"
+    }
+
+
+    # =====================================================
+    # ASIGNADO A
+    # =====================================================
+    #
+    # El ejecutivo asignado continúa viniendo del owner
+    # seleccionado para la cotización.
+    # Actualmente: Patricio.
     # =====================================================
 
     if owner.get(
         "id"
     ):
-
-        deal_data[
-            "Owner"
-        ] = {
-            "id":
-                owner[
-                    "id"
-                ]
-        }
 
         deal_data[
             "Asignado_a"

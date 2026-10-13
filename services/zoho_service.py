@@ -2516,7 +2516,7 @@ def crear_deal_en_zoho(
             "1",
 
         "Type":
-            "TI",
+            tipo_negocio,
 
         "Fecha_hora_1":
             fecha_hora_1_str,

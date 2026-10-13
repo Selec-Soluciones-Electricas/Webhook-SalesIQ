@@ -316,22 +316,18 @@ def iniciar_cotizacion(
     session: dict
 ) -> dict:
     """
-    Inicia el flujo de cotización utilizando
-    una experiencia conversacional paso a paso.
+    Envía al cliente al formulario web de cotización.
     """
 
-    session["state"] = (
-        "cotizacion_empresa_nombre"
-    )
-
+    session["state"] = "menu_principal"
     session["data"] = {}
 
     return build_reply(
         (
-            "Perfecto. Le haré unas preguntas breves "
-            "para preparar su solicitud de cotización.\n\n"
-            "Paso 1 de 5\n"
-            "¿Cuál es el nombre de la empresa?"
+            "Para solicitar una cotización, complete el "
+            "siguiente formulario con los datos de su requerimiento:\n\n"
+            "https://webhook-salesiq-production.up.railway.app/"
+            "solicitud/cotizacion?origen=whatsapp"
         )
     )
 
@@ -344,25 +340,18 @@ def iniciar_postventa(
     session: dict
 ) -> dict:
     """
-    Inicia el flujo de postventa.
+    Envía al cliente al formulario web de postventa.
     """
 
-    session["state"] = (
-        "postventa_bloque"
-    )
-
+    session["state"] = "menu_principal"
     session["data"] = {}
 
     return build_reply(
         (
-            "Perfecto, trabajaremos en su "
-            "solicitud de postventa.\n\n"
-            "Por favor, complete este formulario "
-            "en un solo mensaje:\n\n"
-            "Nombre:\n"
-            "RUT:\n"
-            "Número de factura y/o Orden de compra:\n"
-            "Descripción de la situación:"
+            "Para solicitar soporte postventa, complete el "
+            "siguiente formulario con los antecedentes de su caso:\n\n"
+            "https://webhook-salesiq-production.up.railway.app/"
+            "solicitud/postventa?origen=whatsapp"
         )
     )
 

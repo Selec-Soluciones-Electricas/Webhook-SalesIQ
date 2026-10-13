@@ -170,7 +170,7 @@ def crear_caso_postventa(
                     f"{factura_oc or nombre}"
                 ),
 
-                "Case_Origin": "Web",
+                "Case_Origin": origen_texto,
 
                 "Status": "New",
 

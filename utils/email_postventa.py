@@ -2,6 +2,8 @@ import os
 import html
 import requests
 
+from werkzeug.utils import secure_filename
+
 from services.zoho_service import get_access_token
 
 
@@ -10,6 +12,7 @@ from services.zoho_service import get_access_token
 # =========================================================
 
 CRM_BASE = "https://www.zohoapis.com/crm/v8"
+CRM_ORG_UI = "org706345205"
 
 
 # =========================================================
@@ -83,6 +86,13 @@ def crear_caso_postventa(
         )
     ).strip()
 
+    correo = str(
+        datos.get(
+            "correo",
+            ""
+        )
+    ).strip()
+
     rut = str(
         datos.get(
             "rut",
@@ -104,6 +114,28 @@ def crear_caso_postventa(
         )
     ).strip()
 
+
+    origen = str(
+        datos.get(
+            "origen",
+            ""
+        )
+    ).strip().lower()
+
+
+    if origen == "web":
+
+        origen_texto = "Web"
+
+    elif origen == "whatsapp":
+
+        origen_texto = "WhatsApp"
+
+    else:
+
+        origen_texto = "SELEC"
+
+
     url = (
         f"{CRM_BASE}/Cases"
     )
@@ -117,11 +149,11 @@ def crear_caso_postventa(
     }
 
     descripcion = (
-        "Solicitud recibida desde el chatbot "
-        "de WhatsApp de SELEC.\n\n"
+        "Solicitud recibida desde SELEC.\n\n"
 
         f"Nombre: {nombre}\n"
-        f"RUT: {rut}\n"
+        f"Correo: {correo}\n"
+        f"Rut de Empresa: {rut}\n"
 
         "Número de factura y/o Orden de compra: "
         f"{factura_oc}\n"
@@ -134,7 +166,7 @@ def crear_caso_postventa(
         "data": [
             {
                 "Subject": (
-                    "Postventa WhatsApp - "
+                    f"Postventa {origen_texto} - "
                     f"{factura_oc or nombre}"
                 ),
 
@@ -228,6 +260,201 @@ def crear_caso_postventa(
 
 
 # =========================================================
+# SUBIR ARCHIVOS AL CASE DE POSTVENTA
+# =========================================================
+
+def subir_archivos_postventa(
+    case_id: str,
+    archivos: list,
+    access_token: str,
+) -> list:
+    """
+    Sube fotografías y archivos PDF al Case
+    de postventa creado en Zoho CRM.
+    """
+
+    case_id = str(
+        case_id or ""
+    ).strip()
+
+    if not case_id:
+
+        print(
+            "[POSTVENTA ARCHIVOS] "
+            "No se recibió Case ID."
+        )
+
+        return []
+
+
+    if not archivos:
+
+        print(
+            "[POSTVENTA ARCHIVOS] "
+            "No hay archivos para subir."
+        )
+
+        return []
+
+
+    url = (
+        "https://www.zohoapis.com/"
+        f"crm/v8/Cases/{case_id}/Attachments"
+    )
+
+
+    headers = {
+        "Authorization":
+            f"Zoho-oauthtoken {access_token}"
+    }
+
+
+    resultados = []
+
+
+    for indice, archivo in enumerate(
+        archivos,
+        start=1,
+    ):
+
+        nombre_original = str(
+            getattr(
+                archivo,
+                "filename",
+                "",
+            )
+            or ""
+        ).strip()
+
+
+        if not nombre_original:
+
+            continue
+
+
+        nombre_seguro = secure_filename(
+            nombre_original
+        )
+
+
+        if not nombre_seguro:
+
+            nombre_seguro = (
+                f"archivo_postventa_{indice}"
+            )
+
+
+        nombre_zoho = (
+            f"Postventa_{indice}_"
+            f"{nombre_seguro}"
+        )
+
+
+        tipo_contenido = str(
+            getattr(
+                archivo,
+                "mimetype",
+                "",
+            )
+            or
+            "application/octet-stream"
+        )
+
+
+        try:
+
+            archivo.stream.seek(0)
+
+
+            files = {
+                "file": (
+                    nombre_zoho,
+                    archivo.stream,
+                    tipo_contenido,
+                )
+            }
+
+
+            print(
+                "[POSTVENTA ARCHIVOS] "
+                f"Subiendo {nombre_zoho} "
+                f"al Case {case_id}..."
+            )
+
+
+            response = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                timeout=60,
+            )
+
+
+            print(
+                "[POSTVENTA ARCHIVOS] "
+                f"Status: {response.status_code}"
+            )
+
+
+            try:
+
+                print(
+                    "[POSTVENTA ARCHIVOS] "
+                    f"Respuesta: {response.text}"
+                )
+
+            except Exception:
+
+                pass
+
+
+            resultados.append({
+                "archivo":
+                    nombre_zoho,
+
+                "status":
+                    response.status_code,
+
+                "ok":
+                    response.status_code
+                    in (
+                        200,
+                        201,
+                    ),
+            })
+
+
+            archivo.stream.seek(0)
+
+
+        except Exception as error:
+
+            print(
+                "[POSTVENTA ARCHIVOS] "
+                f"ERROR con {nombre_zoho}:",
+                error,
+            )
+
+
+            resultados.append({
+                "archivo":
+                    nombre_zoho,
+
+                "status":
+                    0,
+
+                "ok":
+                    False,
+
+                "error":
+                    str(error),
+            })
+
+
+    return resultados
+
+
+# =========================================================
 # ENVIAR CORREO DE POSTVENTA
 # =========================================================
 
@@ -267,6 +494,15 @@ def enviar_correo_postventa(
         )
     ).strip()
 
+
+    correo = str(
+        datos.get(
+            "correo",
+            ""
+        )
+    ).strip()
+
+
     rut = str(
         datos.get(
             "rut",
@@ -288,10 +524,31 @@ def enviar_correo_postventa(
         )
     ).strip()
 
+
+    origen = str(
+        datos.get(
+            "origen",
+            ""
+        )
+    ).strip().lower()
+
+
+    if origen == "web":
+
+        origen_texto = "sitio web de SELEC"
+
+    elif origen == "whatsapp":
+
+        origen_texto = "chatbot de WhatsApp de SELEC"
+
+    else:
+
+        origen_texto = "canal de atención de SELEC"
+
+
     # =====================================================
     # MODO PRUEBA / PRODUCCIÓN
     # =====================================================
-
     modo_prueba = valor_booleano(
         os.environ.get(
             "POSTVENTA_MODO_PRUEBA",
@@ -360,7 +617,7 @@ def enviar_correo_postventa(
             "SENDER_USER_EMAIL."
         )
 
-    # =====================================================
+        # =====================================================
     # CREAR CASE
     # =====================================================
 
@@ -369,12 +626,57 @@ def enviar_correo_postventa(
         access_token,
     )
 
+    case_link = (
+        f"https://crm.zoho.com/crm/"
+        f"{CRM_ORG_UI}/tab/Cases/"
+        f"{case_id}"
+    )
+
+
+    # =====================================================
+    # SUBIR ARCHIVOS AL CASE
+    # =====================================================
+
+    archivos = (
+        datos.get("archivos")
+        or []
+    )
+
+    try:
+
+        resultado_archivos = (
+            subir_archivos_postventa(
+                case_id,
+                archivos,
+                access_token,
+            )
+        )
+
+        print(
+            "[POSTVENTA] "
+            "Resultado archivos:",
+            resultado_archivos,
+        )
+
+    except Exception as error:
+
+        print(
+            "[POSTVENTA] "
+            "ERROR subiendo archivos:",
+            error,
+        )
+
+
     # =====================================================
     # PREPARAR CORREO
     # =====================================================
 
     nombre_html = html.escape(
-        nombre
+    nombre
+    )
+
+    correo_html = html.escape(
+        correo
     )
 
     rut_html = html.escape(
@@ -410,19 +712,24 @@ def enviar_correo_postventa(
 
         <p>
             Se ha recibido una nueva solicitud
-            de postventa mediante el chatbot
-            de WhatsApp de SELEC.
+            de postventa mediante el
+            {origen_texto}.
         </p>
 
         <hr>
 
-        <p>
+                <p>
             <strong>Nombre:</strong><br>
             {nombre_html}
         </p>
 
         <p>
-            <strong>RUT:</strong><br>
+            <strong>Correo:</strong><br>
+            {correo_html}
+        </p>
+
+        <p>
+            <strong>RUT de Empresa:</strong><br>
             {rut_html}
         </p>
 
@@ -434,7 +741,7 @@ def enviar_correo_postventa(
             {factura_html}
         </p>
 
-        <p>
+                <p>
             <strong>
                 Descripción de la situación:
             </strong>
@@ -442,11 +749,21 @@ def enviar_correo_postventa(
             {detalle_html}
         </p>
 
+        <p>
+            <strong>
+                Caso en Zoho CRM:
+            </strong>
+            <br>
+            <a href="{case_link}">
+                Abrir caso en Zoho CRM
+            </a>
+        </p>
+
         <hr>
 
         <p>
             Solicitud registrada automáticamente
-            desde el chatbot de WhatsApp.
+            desde el {origen_texto}.
         </p>
 
     </body>

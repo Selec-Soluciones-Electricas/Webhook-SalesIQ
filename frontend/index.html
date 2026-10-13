@@ -1,677 +1,3876 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
 
     <meta
         name="viewport"
-        content="width=device-width, initial-scale=1.0"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     >
 
-    <title>SELEC - Chat de Prueba</title>
+    <title>
+        SELEC - WhatsApp Flow MVP
+    </title>
 
     <style>
+        :root {
+            --wa-green: #00a884;
+            --wa-green-dark: #008069;
+
+            --wa-chat-bg: #efeae2;
+
+            --wa-incoming: #ffffff;
+            --wa-outgoing: #d9fdd3;
+
+            --wa-text: #111b21;
+            --wa-muted: #667781;
+            --wa-border: #e9edef;
+        }
+
         * {
             box-sizing: border-box;
         }
 
+        html,
         body {
             margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f2f4f7;
+            min-height: 100%;
+
+            font-family:
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                Roboto,
+                Helvetica,
+                Arial,
+                sans-serif;
+
+            color: var(--wa-text);
+
+            background: #d8dbdd;
+        }
+
+        body {
+            min-height: 100vh;
 
             display: flex;
-            justify-content: center;
-            align-items: center;
 
-            min-height: 100vh;
+            align-items: center;
+            justify-content: center;
+
+            padding: 18px;
+        }
+
+        button,
+        input,
+        textarea,
+        select {
+            font: inherit;
+        }
+
+        button {
+            -webkit-tap-highlight-color:
+                transparent;
         }
 
 
-        /* =========================================
-           CONTENEDOR
-        ========================================= */
+        /* =====================================================
+           TELÉFONO
+        ===================================================== */
 
-        .chat-container {
-            width: 420px;
-            height: 700px;
+        .phone {
+            position: relative;
 
-            background: white;
+            width: min(
+                100%,
+                390px
+            );
 
-            border-radius: 14px;
+            height: min(
+                844px,
+                calc(100vh - 36px)
+            );
+
+            min-height: 650px;
+
+            background: #ffffff;
+
+            border-radius: 30px;
+
+            overflow: hidden;
 
             box-shadow:
-                0 4px 20px
-                rgba(0, 0, 0, 0.15);
+                0 28px 70px
+                rgba(
+                    17,
+                    27,
+                    33,
+                    0.28
+                ),
+                0 0 0 8px #1f2528;
 
             display: flex;
             flex-direction: column;
-
-            overflow: hidden;
         }
 
 
-        /* =========================================
-           HEADER
-        ========================================= */
+        /* =====================================================
+           BARRA SUPERIOR
+        ===================================================== */
 
-        .chat-header {
-            background: #1f2937;
-            color: white;
+        .status-bar {
+            height: 28px;
 
-            padding: 18px;
+            background: #f7f8f8;
 
-            text-align: center;
+            display: flex;
 
-            font-size: 18px;
-            font-weight: bold;
-        }
+            align-items: center;
+            justify-content:
+                space-between;
 
-        .chat-header small {
-            display: block;
-
-            margin-top: 5px;
+            padding:
+                0 16px;
 
             font-size: 12px;
-            font-weight: normal;
+            font-weight: 600;
 
-            opacity: 0.8;
+            flex: 0 0 auto;
+        }
+
+        .status-icons {
+            display: flex;
+            gap: 6px;
+
+            align-items: center;
+        }
+
+        .status-icons svg {
+            width: 14px;
+            height: 14px;
         }
 
 
-        /* =========================================
-           MENSAJES
-        ========================================= */
+        /* =====================================================
+           HEADER WHATSAPP
+        ===================================================== */
+
+        .chat-header {
+            height: 62px;
+
+            background: #f7f8f8;
+
+            border-bottom:
+                1px solid
+                var(--wa-border);
+
+            display: flex;
+
+            align-items: center;
+
+            padding:
+                0 9px;
+
+            gap: 7px;
+
+            flex: 0 0 auto;
+        }
+
+        .icon-button {
+            width: 36px;
+            height: 36px;
+
+            border: 0;
+
+            background:
+                transparent;
+
+            display: grid;
+
+            place-items: center;
+
+            color: #54656f;
+
+            cursor: pointer;
+
+            border-radius: 50%;
+
+            padding: 0;
+        }
+
+        .icon-button svg {
+            width: 21px;
+            height: 21px;
+
+            fill:
+                currentColor;
+        }
+
+.avatar {
+    width: 38px;
+    height: 38px;
+
+    border-radius: 50%;
+
+    background: #ffffff;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    overflow: hidden;
+
+    flex: 0 0 auto;
+}
+
+.avatar img {
+    width: 100%;
+    height: 100%;
+
+    object-fit: contain;
+
+    padding: 4px;
+}
+
+        .chat-contact {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chat-contact strong {
+            display: block;
+
+            font-size: 16px;
+
+            line-height: 1.2;
+        }
+
+        .chat-contact span {
+            display: block;
+
+            color:
+                var(--wa-muted);
+
+            font-size: 12px;
+
+            margin-top: 3px;
+        }
+
+        .chat-actions {
+            display: flex;
+        }
+
+
+        /* =====================================================
+           CHAT
+        ===================================================== */
 
         .messages {
             flex: 1;
 
-            padding: 18px;
+            min-height: 0;
 
             overflow-y: auto;
 
-            background: #f8fafc;
+            padding:
+                12px 12px 18px;
+
+            background-color:
+                var(--wa-chat-bg);
+
+            background-image:
+                radial-gradient(
+                    circle at 12px 12px,
+                    rgba(
+                        17,
+                        27,
+                        33,
+                        .025
+                    ) 2px,
+                    transparent 2.4px
+                ),
+                radial-gradient(
+                    circle at 38px 38px,
+                    rgba(
+                        17,
+                        27,
+                        33,
+                        .018
+                    ) 2px,
+                    transparent 2.4px
+                );
+
+            background-size:
+                50px 50px;
+
+            scroll-behavior:
+                smooth;
         }
 
-        .message {
-            margin-bottom: 12px;
+        .date-chip {
+            width:
+                max-content;
 
+            margin:
+                0 auto 14px;
+
+            background:
+                rgba(
+                    255,
+                    255,
+                    255,
+                    .88
+                );
+
+            color: #54656f;
+
+            font-size: 11px;
+
+            border-radius: 7px;
+
+            padding:
+                6px 9px;
+
+            box-shadow:
+                0 1px 1px
+                rgba(
+                    11,
+                    20,
+                    26,
+                    .08
+                );
+        }
+
+        .message-row {
             display: flex;
+
+            margin:
+                3px 0;
         }
 
-        .message.bot {
-            justify-content: flex-start;
+        .message-row.incoming {
+            justify-content:
+                flex-start;
         }
 
-        .message.user {
-            justify-content: flex-end;
+        .message-row.outgoing {
+            justify-content:
+                flex-end;
         }
 
         .bubble {
-            max-width: 80%;
+            position: relative;
 
-            padding: 11px 14px;
+            max-width: 84%;
 
-            border-radius: 12px;
+            padding:
+                7px 9px 5px;
+
+            border-radius: 8px;
+
+            font-size: 14px;
+
+            line-height: 1.36;
+
+            box-shadow:
+                0 1px 1px
+                rgba(
+                    11,
+                    20,
+                    26,
+                    .10
+                );
+
+            white-space:
+                pre-wrap;
+
+            word-break:
+                break-word;
+        }
+
+        .incoming .bubble {
+            background:
+                var(--wa-incoming);
+
+            border-top-left-radius:
+                2px;
+        }
+
+        .outgoing .bubble {
+            background:
+                var(--wa-outgoing);
+
+            border-top-right-radius:
+                2px;
+        }
+
+        .bubble-meta {
+            display: flex;
+
+            justify-content:
+                flex-end;
+
+            align-items: center;
+
+            gap: 4px;
+
+            margin-top: 3px;
+
+            color: #667781;
+
+            font-size: 10.5px;
+
+            line-height: 1;
+        }
+
+        .ticks {
+            color: #53bdeb;
+
+            font-size: 13px;
+
+            letter-spacing:
+                -4px;
+
+            padding-right: 3px;
+        }
+
+
+        /* =====================================================
+           MENSAJE FLOW
+        ===================================================== */
+
+        .flow-invite {
+            padding: 0;
+
+            overflow: hidden;
+
+            min-width: 285px;
+        }
+
+        .flow-invite-body {
+            padding:
+                11px 10px 8px;
+        }
+
+        .flow-invite-title {
+            display: flex;
+
+            align-items: center;
+
+            gap: 9px;
+
+            font-weight: 650;
+
+            margin-bottom: 6px;
+        }
+
+        .flow-doc-icon {
+            width: 34px;
+            height: 34px;
+
+            border-radius: 8px;
+
+            background:
+                #e7fce9;
+
+            color:
+                var(--wa-green-dark);
+
+            display: grid;
+
+            place-items: center;
+
+            flex: 0 0 auto;
+        }
+
+        .flow-doc-icon svg {
+            width: 19px;
+            height: 19px;
+
+            fill:
+                currentColor;
+        }
+
+        .flow-invite-text {
+            color: #3b4a54;
+
+            font-size: 13px;
 
             line-height: 1.4;
-
-            white-space: pre-wrap;
-            word-wrap: break-word;
         }
 
-        .bot .bubble {
-            background: #e5e7eb;
-            color: #111827;
-
-            border-bottom-left-radius: 3px;
-        }
-
-        .user .bubble {
-            background: #2563eb;
-            color: white;
-
-            border-bottom-right-radius: 3px;
-        }
-
-
-        /* =========================================
-           BOTONES / SELECT DE SALESIQ
-        ========================================= */
-
-        .bot-options {
-            width: 80%;
-
-            margin-top: -3px;
-            margin-bottom: 16px;
-
-            display: flex;
-            flex-direction: column;
-
-            gap: 8px;
-        }
-
-        .option-button {
+        .flow-cta {
             width: 100%;
 
-            padding: 12px 14px;
+            height: 44px;
+
+            border: 0;
+
+            border-top:
+                1px solid
+                var(--wa-border);
 
             background: white;
 
-            border: 1px solid #2563eb;
-            border-radius: 10px;
+            color:
+                var(--wa-green);
 
-            color: #2563eb;
-
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-            font-weight: bold;
+            font-weight: 600;
 
             cursor: pointer;
-
-            transition:
-                background 0.15s ease,
-                color 0.15s ease,
-                transform 0.1s ease;
-        }
-
-        .option-button:hover {
-            background: #2563eb;
-            color: white;
-        }
-
-        .option-button:active {
-            transform: scale(0.98);
         }
 
 
-        /* =========================================
-           INPUT
-        ========================================= */
+        /* =====================================================
+           CAJA DE MENSAJES
+        ===================================================== */
 
-        .input-area {
+        .composer {
+            min-height: 58px;
+
+            padding:
+                7px 8px;
+
+            background:
+                #f0f2f5;
+
             display: flex;
 
-            padding: 12px;
+            align-items:
+                flex-end;
 
-            border-top: 1px solid #ddd;
+            gap: 6px;
+
+            flex: 0 0 auto;
+        }
+
+        .composer-box {
+            flex: 1;
+
+            min-height: 42px;
 
             background: white;
 
-            gap: 8px;
+            border-radius: 22px;
+
+            display: flex;
+
+            align-items:
+                flex-end;
+
+            padding:
+                0 4px;
         }
 
-        .input-area textarea {
+        .composer textarea {
             flex: 1;
+
+            min-width: 0;
+
+            height: 42px;
+
+            max-height: 100px;
 
             resize: none;
 
-            height: 45px;
+            border: 0;
 
-            border: 1px solid #ccc;
-            border-radius: 8px;
+            outline: 0;
 
-            padding: 12px;
+            background:
+                transparent;
 
-            font-family: Arial, sans-serif;
-            font-size: 14px;
+            padding:
+                11px 6px 8px;
 
-            outline: none;
+            color:
+                var(--wa-text);
+
+            font-size: 15px;
         }
 
-        .input-area textarea:focus {
-            border-color: #2563eb;
+        .composer textarea::placeholder {
+            color: #8696a0;
         }
 
-        .input-area > button {
-            width: 80px;
+        .send-button {
+            width: 42px;
+            height: 42px;
 
-            border: none;
-            border-radius: 8px;
+            flex: 0 0 auto;
 
-            background: #2563eb;
+            border: 0;
+
+            border-radius: 50%;
+
+            background:
+                var(--wa-green);
+
             color: white;
 
-            font-weight: bold;
+            display: grid;
+
+            place-items: center;
 
             cursor: pointer;
         }
 
-        .input-area > button:hover {
-            background: #1d4ed8;
+        .send-button svg {
+            width: 20px;
+            height: 20px;
+
+            fill:
+                currentColor;
         }
 
 
-        /* =========================================
-           ESTADO
-        ========================================= */
+/* =====================================================
+   WHATSAPP FLOW - SIMULACIÓN NATIVA
+===================================================== */
 
-        .status {
-            padding: 5px 12px;
+.flow-layer {
+    position: absolute;
 
-            font-size: 11px;
-            color: #666;
+    /* Dejamos visible la barra de estado del teléfono */
+    top: 28px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+
+    z-index: 30;
+
+    background: #ffffff;
+
+    display: flex;
+    flex-direction: column;
+
+    transform: translateX(102%);
+
+    transition:
+        transform
+        0.22s
+        cubic-bezier(
+            0.2,
+            0.8,
+            0.2,
+            1
+        );
+}
+
+.flow-layer.open {
+    transform: translateX(0);
+}
+
+
+/* =====================================================
+   HEADER NATIVO DEL FLOW
+===================================================== */
+
+.flow-topbar {
+    height: 56px;
+
+    flex: 0 0 auto;
+
+    display: flex;
+    align-items: center;
+
+    padding: 0 8px;
+
+    background: #ffffff;
+
+    border-bottom:
+        1px solid
+        #e9edef;
+}
+
+.flow-topbar .icon-button {
+    width: 40px;
+    height: 40px;
+
+    color: #3b4a54;
+}
+
+.flow-title-wrap {
+    flex: 1;
+
+    min-width: 0;
+
+    text-align: center;
+}
+
+.flow-title {
+    color: #111b21;
+
+    font-size: 16px;
+    font-weight: 600;
+
+    line-height: 1.2;
+
+    white-space: nowrap;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+}
+
+
+/* =====================================================
+   ÁREA DEL FORMULARIO
+===================================================== */
+
+.flow-scroll {
+    flex: 1;
+
+    min-height: 0;
+
+    overflow-y: auto;
+
+    padding:
+        20px 16px
+        115px;
+
+    background: #ffffff;
+
+    overscroll-behavior: contain;
+}
+
+.flow-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+
+.flow-scroll::-webkit-scrollbar-thumb {
+    background: #c7d0d4;
+
+    border-radius: 10px;
+}
+
+
+/* =====================================================
+   TEXTOS
+===================================================== */
+
+.flow-heading {
+    margin:
+        2px 0 8px;
+
+    color: #111b21;
+
+    font-size: 20px;
+    font-weight: 600;
+
+    line-height: 1.3;
+}
+
+.flow-subheading {
+    margin:
+        20px 0 8px;
+
+    color: #111b21;
+
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.flow-body {
+    margin:
+        0 0 20px;
+
+    color: #3b4a54;
+
+    font-size: 14px;
+
+    line-height: 1.45;
+}
+
+.flow-caption {
+    margin:
+        0 0 20px;
+
+    color: #667781;
+
+    font-size: 13px;
+
+    line-height: 1.4;
+}
+
+
+/* =====================================================
+   CAMPOS TIPO WHATSAPP FLOW
+===================================================== */
+
+.flow-field {
+    position: relative;
+
+    margin-bottom: 18px;
+
+    padding-top: 7px;
+}
+
+
+/* LABEL FLOTANTE */
+
+.flow-field > label {
+    position: absolute;
+
+    top: 0;
+    left: 10px;
+
+    z-index: 2;
+
+    margin: 0;
+
+    padding:
+        0 4px;
+
+    background: #ffffff;
+
+    color: #667781;
+
+    font-size: 12px;
+    font-weight: 400;
+
+    line-height: 14px;
+}
+
+
+/* INPUTS */
+
+.flow-field input,
+.flow-field textarea,
+.flow-field select {
+    width: 100%;
+
+    margin: 0;
+
+    border:
+        1px solid
+        #8696a0;
+
+    border-radius: 4px;
+
+    background: #ffffff;
+
+    color: #111b21;
+
+    outline: none;
+
+    font-size: 15px;
+
+    transition:
+        border-color 0.12s ease,
+        box-shadow 0.12s ease;
+}
+
+.flow-field input,
+.flow-field select {
+    height: 52px;
+
+    padding:
+        5px 12px 0;
+}
+
+.flow-field textarea {
+    min-height: 98px;
+
+    padding:
+        15px 12px 10px;
+
+    resize: none;
+
+    line-height: 1.4;
+}
+
+
+/* FOCUS */
+
+.flow-field input:focus,
+.flow-field textarea:focus,
+.flow-field select:focus {
+    border-color: #008069;
+
+    box-shadow:
+        inset 0 0 0 1px #008069;
+}
+
+.flow-field:focus-within > label {
+    color: #008069;
+}
+
+
+/* REQUIRED */
+
+.required-star {
+    color: #d92d20;
+
+    margin-left: 2px;
+}
+
+
+/* TEXTO DE AYUDA */
+
+.helper-text {
+    margin:
+        5px 2px 0;
+
+    color: #667781;
+
+    font-size: 11px;
+
+    line-height: 1.3;
+}
+
+
+/* ERROR */
+
+.error-text {
+    display: none;
+
+    margin:
+        5px 2px 0;
+
+    color: #d92d20;
+
+    font-size: 11px;
+}
+
+.flow-field.invalid
+.error-text {
+    display: block;
+}
+
+.flow-field.invalid input,
+.flow-field.invalid textarea,
+.flow-field.invalid select {
+    border-color: #d92d20;
+}
+
+
+/* =====================================================
+   RADIO BUTTONS
+===================================================== */
+
+.flow-group-label {
+    display: block;
+
+    margin:
+        0 0 9px;
+
+    color: #111b21;
+
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.radio-group {
+    width: 100%;
+
+    border:
+        1px solid
+        #d1d7db;
+
+    border-radius: 5px;
+
+    overflow: hidden;
+
+    background: #ffffff;
+}
+
+.radio-option {
+    min-height: 56px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 12px;
+
+    padding:
+        0 14px;
+
+    background: #ffffff;
+
+    border-bottom:
+        1px solid
+        #e9edef;
+
+    color: #111b21;
+
+    font-size: 14px;
+
+    cursor: pointer;
+}
+
+.radio-option:last-child {
+    border-bottom: 0;
+}
+
+.radio-option:hover {
+    background: #f7f8f8;
+}
+
+.radio-option input {
+    width: 20px;
+    height: 20px;
+
+    flex: 0 0 auto;
+
+    margin: 0;
+
+    accent-color: #008069;
+}
+
+
+/* =====================================================
+   DROPDOWN
+===================================================== */
+
+.flow-field select {
+    appearance: auto;
+
+    cursor: pointer;
+}
+
+
+/* =====================================================
+   FOOTER NATIVO DEL FLOW
+===================================================== */
+
+.flow-footer {
+    position: absolute;
+
+    left: 0;
+    right: 0;
+    bottom: 0;
+
+    z-index: 5;
+
+    padding:
+        10px 16px
+        calc(
+            10px +
+            env(
+                safe-area-inset-bottom
+            )
+        );
+
+    background: #ffffff;
+
+    border-top:
+        1px solid
+        #e9edef;
+
+    box-shadow:
+        0 -2px 8px
+        rgba(
+            17,
+            27,
+            33,
+            0.04
+        );
+}
+
+
+/* CTA */
+
+.flow-primary {
+    width: 100%;
+
+    height: 46px;
+
+    min-height: 46px;
+
+    border: 0;
+
+    border-radius: 4px;
+
+    background: #008069;
+
+    color: #ffffff;
+
+    font-size: 14px;
+    font-weight: 600;
+
+    cursor: pointer;
+
+    transition:
+        background
+        0.12s ease;
+}
+
+.flow-primary:hover:not(:disabled) {
+    background: #006f5c;
+}
+
+.flow-primary:active:not(:disabled) {
+    transform: scale(0.995);
+}
+
+.flow-primary:disabled {
+    background: #e9edef;
+
+    color: #8696a0;
+
+    cursor: default;
+}
+
+
+/* TEXTO INFERIOR */
+
+.flow-managed {
+    margin-top: 8px;
+
+    text-align: center;
+
+    color: #8696a0;
+
+    font-size: 10px;
+
+    line-height: 1.2;
+}
+
+.flow-managed span {
+    color: #667781;
+}
+
+
+        /* =====================================================
+           ERRORES / LOADING
+        ===================================================== */
+
+        .flow-error-banner {
+            display: none;
+
+            margin-bottom: 14px;
+
+            padding:
+                10px 12px;
+
+            border-radius: 8px;
+
+            background:
+                #fff1f0;
+
+            color:
+                #912018;
+
+            font-size: 12px;
+        }
+
+        .flow-error-banner.show {
+            display: block;
+        }
+
+        .flow-loading {
+            min-height: 350px;
+
+            display: grid;
+
+            place-items: center;
+
+            color: #667781;
+
+            font-size: 13px;
 
             text-align: center;
-
-            background: #fafafa;
         }
 
+        .spinner {
+            width: 28px;
+            height: 28px;
 
-        /* =========================================
-           RESPONSIVE
-        ========================================= */
+            margin:
+                0 auto 10px;
 
-        @media (max-width: 500px) {
+            border:
+                3px solid
+                #e7ecee;
+
+            border-top-color:
+                var(--wa-green);
+
+            border-radius: 50%;
+
+            animation:
+                spin .8s
+                linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform:
+                    rotate(360deg);
+            }
+        }
+
+        .toast {
+            position: absolute;
+
+            z-index: 40;
+
+            left: 50%;
+            bottom: 82px;
+
+            transform:
+                translate(
+                    -50%,
+                    15px
+                );
+
+            max-width:
+                calc(
+                    100% - 32px
+                );
+
+            padding:
+                9px 13px;
+
+            border-radius: 8px;
+
+            background:
+                rgba(
+                    17,
+                    27,
+                    33,
+                    .92
+                );
+
+            color: white;
+
+            font-size: 12px;
+
+            opacity: 0;
+
+            pointer-events: none;
+
+            transition:
+                .18s;
+        }
+
+        .toast.show {
+            opacity: 1;
+
+            transform:
+                translate(
+                    -50%,
+                    0
+                );
+        }
+
+    
+/* =====================================================
+   TARJETA QUE ABRE EL FLOW
+===================================================== */
+
+.flow-card {
+    width: 276px;
+    max-width: 82%;
+
+    padding: 0;
+
+    overflow: hidden;
+
+    border-radius: 8px;
+
+    background: #ffffff;
+
+    white-space: normal;
+
+    word-break: normal;
+}
+
+.flow-card-image {
+    width: 100%;
+    height: 124px;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    background: #ffffff;
+
+    overflow: hidden;
+}
+
+.flow-card-image img {
+    width: 68%;
+    height: 105px;
+
+    object-fit: contain;
+
+    display: block;
+}
+
+.flow-card-content {
+    padding:
+        9px 10px 7px;
+}
+
+.flow-card-title {
+    margin: 0 0 4px;
+
+    color: #111b21;
+
+    font-size: 14px;
+    font-weight: 600;
+
+    line-height: 1.25;
+}
+
+.flow-card-description {
+    margin: 0;
+
+    color: #3b4a54;
+
+    font-size: 12.5px;
+
+    line-height: 1.35;
+}
+
+.flow-card-content
+.bubble-meta {
+    margin-top: 5px;
+}
+
+.flow-card-button {
+    width: 100%;
+    height: 42px;
+
+    border: 0;
+
+    border-top:
+        1px solid
+        #e9edef;
+
+    background: #ffffff;
+
+    color: #00a884;
+
+    font-size: 13.5px;
+    font-weight: 600;
+
+    cursor: pointer;
+}
+
+.flow-card-button:hover {
+    background: #f5f6f6;
+}
+
+
+        /* =====================================================
+           MOBILE
+        ===================================================== */
+
+        @media (
+            max-width: 540px
+        ) {
 
             body {
-                align-items: stretch;
+                padding: 0;
+
+                background: white;
             }
 
-            .chat-container {
-                width: 100%;
-                height: 100vh;
+            .phone {
+                width: 100vw;
+                height: 100dvh;
+
+                min-height: 0;
 
                 border-radius: 0;
+
+                box-shadow: none;
             }
+
         }
     </style>
 </head>
 
-
 <body>
 
-    <div class="chat-container">
+<div
+    class="phone"
+    id="phone"
+>
 
-        <div class="chat-header">
+    <!-- =====================================================
+         STATUS BAR
+    ===================================================== -->
 
-            SELEC
+    <div class="status-bar">
 
-            <small>
-                Simulador WhatsApp / SalesIQ
-            </small>
+        <span id="clock">
+            09:41
+        </span>
 
-        </div>
+        <div class="status-icons">
 
+            <span>
+                ▮▮▮
+            </span>
 
-        <div
-            id="messages"
-            class="messages"
-        ></div>
+            <span>
+                ◉
+            </span>
 
-
-        <div
-            id="status"
-            class="status"
-        >
-            Conectado al servidor de pruebas
-        </div>
-
-
-        <div class="input-area">
-
-            <textarea
-                id="messageInput"
-                placeholder="Escribe tu mensaje..."
-            ></textarea>
-
-            <button
-                type="button"
-                onclick="sendMessage()"
-            >
-                Enviar
-            </button>
+            <span>
+                ▰
+            </span>
 
         </div>
 
     </div>
 
 
+    <!-- =====================================================
+         HEADER WHATSAPP
+    ===================================================== -->
+
+    <header class="chat-header">
+
+        <button
+            class="icon-button"
+            type="button"
+        >
+            <svg viewBox="0 0 24 24">
+                <path
+                    d="
+                        m15.4 5.4
+                        -1.4-1.4
+                        L6 12
+                        l8 8
+                        1.4-1.4
+                        L8.8 12
+                        l6.6-6.6Z
+                    "
+                />
+            </svg>
+        </button>
+
+<div class="avatar">
+    <img
+        src="/static/selec-logo.png"
+        alt="SELEC"
+    >
+</div>
+
+        <div class="chat-contact">
+
+            <strong>
+                SELEC
+            </strong>
+
+            <span>
+                cuenta de empresa
+            </span>
+
+        </div>
+
+        <div class="chat-actions">
+
+            <button
+                class="icon-button"
+                type="button"
+            >
+                <svg viewBox="0 0 24 24">
+                    <path
+                        d="
+                            M17 10.5V7
+                            a2 2 0 0 0-2-2H5
+                            a2 2 0 0 0-2 2v10
+                            a2 2 0 0 0 2 2h10
+                            a2 2 0 0 0 2-2v-3.5
+                            l4 4v-11l-4 4Z
+                        "
+                    />
+                </svg>
+            </button>
+
+            <button
+                class="icon-button"
+                type="button"
+            >
+                <svg viewBox="0 0 24 24">
+                    <path
+                        d="
+                            M6.6 10.8
+                            a15.5 15.5 0 0 0 6.6 6.6
+                            l2.2-2.2
+                            c.3-.3.7-.4 1.1-.3
+                            1.2.4 2.5.6 3.8.6
+                            .6 0 1 .4 1 1V20
+                            c0 .6-.4 1-1 1
+                            C10.7 21 3 13.3 3 3.7
+                            c0-.6.4-1 1-1h3.5
+                            c.6 0 1 .4 1 1
+                            0 1.3.2 2.6.6 3.8
+                            .1.4 0 .8-.3 1.1
+                            l-2.2 2.2Z
+                        "
+                    />
+                </svg>
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- =====================================================
+         MENSAJES
+    ===================================================== -->
+
+    <main
+        class="messages"
+        id="messages"
+    >
+
+        <div class="date-chip">
+            HOY
+        </div>
+
+    </main>
+
+
+    <!-- =====================================================
+         COMPOSER
+    ===================================================== -->
+
+    <div class="composer">
+
+        <div class="composer-box">
+
+            <button
+                class="icon-button"
+                type="button"
+            >
+                ☺
+            </button>
+
+            <textarea
+                id="messageInput"
+                rows="1"
+                placeholder="Mensaje"
+            ></textarea>
+
+            <button
+                class="icon-button"
+                type="button"
+            >
+                📎
+            </button>
+
+        </div>
+
+        <button
+            class="send-button"
+            id="sendButton"
+            type="button"
+        >
+            <svg viewBox="0 0 24 24">
+                <path
+                    d="
+                        m3 20
+                        18-8
+                        L3 4
+                        v6
+                        l12 2
+                        -12 2
+                        v6Z
+                    "
+                />
+            </svg>
+        </button>
+
+    </div>
+
+
+    <!-- =====================================================
+         FLOW
+    ===================================================== -->
+
+    <section
+        class="flow-layer"
+        id="flowLayer"
+    >
+
+        <div class="flow-topbar">
+
+            <button
+                class="icon-button"
+                id="flowNav"
+                type="button"
+            >
+
+                <svg
+                    id="flowNavIcon"
+                    viewBox="0 0 24 24"
+                >
+
+                    <path
+                        d="
+                            m18.3 5.7
+                            -1.4-1.4
+                            L12 9.2
+                            7.1 4.3
+                            5.7 5.7
+                            l4.9 4.9
+                            -4.9 4.9
+                            1.4 1.4
+                            L12 12
+                            l4.9 4.9
+                            1.4-1.4
+                            -4.9-4.9
+                            4.9-4.9Z
+                        "
+                    />
+
+                </svg>
+
+            </button>
+
+            <div class="flow-title-wrap">
+
+                <div
+                    class="flow-title"
+                    id="flowTitle"
+                >
+                    Atención SELEC
+                </div>
+
+            </div>
+
+            <button
+                class="icon-button"
+                type="button"
+            >
+                ⋮
+            </button>
+
+        </div>
+
+
+        <div
+            class="flow-scroll"
+            id="flowScroll"
+        >
+
+            <div id="flowContent">
+
+                <div class="flow-loading">
+
+                    <div>
+
+                        <div class="spinner">
+                        </div>
+
+                        Cargando formulario…
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div
+            class="flow-footer"
+            id="flowFooter"
+            hidden
+        ></div>
+
+    </section>
+
+
+    <div
+        class="toast"
+        id="toast"
+    ></div>
+
+</div>
+
+
 <script>
-
-/* =========================================================
-   VISITOR ID ÚNICO PARA ESTA PRUEBA
-========================================================= */
-
-const VISITOR_ID =
-    "test-visitor-" +
-    Date.now() +
-    "-" +
-    Math.random()
-        .toString(36)
-        .substring(2, 8);
+    const VISITOR_ID =
+        "flow-mvp-" +
+        Date.now() +
+        "-" +
+        Math
+            .random()
+            .toString(36)
+            .slice(2, 8);
 
 
-/* =========================================================
-   ELEMENTOS
-========================================================= */
+    const messages =
+        document
+            .getElementById(
+                "messages"
+            );
 
-const messagesContainer =
-    document.getElementById("messages");
+    const messageInput =
+        document
+            .getElementById(
+                "messageInput"
+            );
 
-const messageInput =
-    document.getElementById("messageInput");
+    const sendButton =
+        document
+            .getElementById(
+                "sendButton"
+            );
 
-const statusElement =
-    document.getElementById("status");
+    const flowLayer =
+        document
+            .getElementById(
+                "flowLayer"
+            );
 
+    const flowContent =
+        document
+            .getElementById(
+                "flowContent"
+            );
 
-/* =========================================================
-   AGREGAR MENSAJE
-========================================================= */
+    const flowFooter =
+        document
+            .getElementById(
+                "flowFooter"
+            );
 
-function addMessage(text, type) {
+    const flowTitle =
+        document
+            .getElementById(
+                "flowTitle"
+            );
 
-    const message =
-        document.createElement("div");
+    const flowNav =
+        document
+            .getElementById(
+                "flowNav"
+            );
 
-    message.className =
-        `message ${type}`;
+    const flowNavIcon =
+        document
+            .getElementById(
+                "flowNavIcon"
+            );
 
+    const flowScroll =
+        document
+            .getElementById(
+                "flowScroll"
+            );
 
-    const bubble =
-        document.createElement("div");
-
-    bubble.className =
-        "bubble";
-
-    bubble.textContent =
-        text;
-
-
-    message.appendChild(
-        bubble
-    );
-
-    messagesContainer.appendChild(
-        message
-    );
-
-
-    scrollToBottom();
-}
-
-
-/* =========================================================
-   SCROLL
-========================================================= */
-
-function scrollToBottom() {
-
-    messagesContainer.scrollTop =
-        messagesContainer.scrollHeight;
-}
-
-
-/* =========================================================
-   ELIMINAR BOTONES ANTERIORES
-========================================================= */
-
-function clearInteractiveOptions() {
-
-    const options =
-        document.querySelectorAll(
-            ".bot-options"
-        );
-
-    options.forEach(element => {
-        element.remove();
-    });
-}
+    const toast =
+        document
+            .getElementById(
+                "toast"
+            );
 
 
-/* =========================================================
-   MOSTRAR BOTONES SELECT
-========================================================= */
+    let flowDefinition = null;
 
-function addSelectOptions(options) {
+    let currentScreenId = null;
 
-    if (
-        !Array.isArray(options) ||
-        options.length === 0
-    ) {
-        return;
+    let flowData = {};
+
+    let history = [];
+
+    let currentFormValues = {};
+
+    let submittingFlow = false;
+
+    let sendingChat = false;
+
+
+    /* =====================================================
+       HORA
+    ===================================================== */
+
+    function nowTime() {
+
+        return new Intl
+            .DateTimeFormat(
+                "es-CL",
+                {
+                    hour:
+                        "2-digit",
+
+                    minute:
+                        "2-digit",
+
+                    hour12:
+                        false,
+                }
+            )
+            .format(
+                new Date()
+            );
+
     }
 
 
-    const container =
-        document.createElement("div");
+    function updateClock() {
 
-    container.className =
-        "bot-options";
+        document
+            .getElementById(
+                "clock"
+            )
+            .textContent =
+                nowTime();
+
+    }
 
 
-    options.forEach(option => {
+    updateClock();
 
-        /*
-         * SalesIQ normalmente entrega strings:
-         *
-         * "Solicitud cotización"
-         *
-         * Pero dejamos compatibilidad por si
-         * más adelante llegan objetos:
-         *
-         * {
-         *     label: "...",
-         *     value: "..."
-         * }
-         */
+    setInterval(
+        updateClock,
+        30000
+    );
 
-        let label = "";
-        let value = "";
+
+    /* =====================================================
+       UTILIDADES
+    ===================================================== */
+
+    function escapeHtml(
+        value
+    ) {
+
+        return String(
+            value ?? ""
+        )
+            .replaceAll(
+                "&",
+                "&amp;"
+            )
+            .replaceAll(
+                "<",
+                "&lt;"
+            )
+            .replaceAll(
+                ">",
+                "&gt;"
+            )
+            .replaceAll(
+                "\"",
+                "&quot;"
+            )
+            .replaceAll(
+                "'",
+                "&#039;"
+            );
+
+    }
+
+
+    function scrollMessages() {
+
+        messages.scrollTop =
+            messages.scrollHeight;
+
+    }
+
+
+    /* =====================================================
+       BURBUJAS WHATSAPP
+    ===================================================== */
+
+    function addBubble(
+        text,
+        direction = "incoming"
+    ) {
+
+        const row =
+            document
+                .createElement(
+                    "div"
+                );
+
+        row.className =
+            `message-row ${direction}`;
+
+
+        const bubble =
+            document
+                .createElement(
+                    "div"
+                );
+
+        bubble.className =
+            "bubble";
+
+
+        const content =
+            document
+                .createElement(
+                    "div"
+                );
+
+        content.textContent =
+            String(
+                text ?? ""
+            );
+
+
+        bubble.appendChild(
+            content
+        );
+
+
+        const meta =
+            document
+                .createElement(
+                    "div"
+                );
+
+        meta.className =
+            "bubble-meta";
+
+
+        meta.innerHTML = `
+            <span>
+                ${nowTime()}
+            </span>
+
+            ${
+                direction ===
+                "outgoing"
+
+                    ? (
+                        '<span class="ticks">' +
+                        '✓✓' +
+                        '</span>'
+                    )
+
+                    : ""
+            }
+        `;
+
+
+        bubble.appendChild(
+            meta
+        );
+
+        row.appendChild(
+            bubble
+        );
+
+        messages.appendChild(
+            row
+        );
+
+        scrollMessages();
+
+    }
+
+
+    /* =====================================================
+       TARJETA WHATSAPP FLOW
+    ===================================================== */
+
+function addFlowInvite() {
+
+    const row =
+        document.createElement(
+            "div"
+        );
+
+    row.className =
+        "message-row incoming";
+
+
+    const bubble =
+        document.createElement(
+            "div"
+        );
+
+    bubble.className =
+        "bubble flow-card";
+
+
+    bubble.innerHTML = `
+        <div class="flow-card-image">
+
+            <img
+                src="/static/selec-logo.png"
+                alt="SELEC"
+            >
+
+        </div>
+
+        <div class="flow-card-content">
+
+            <div class="flow-card-title">
+                Atención SELEC
+            </div>
+
+            <div class="flow-card-description">
+                Cotice productos o gestione
+                una solicitud de postventa
+                directamente desde WhatsApp.
+            </div>
+
+            <div class="bubble-meta">
+                <span>
+                    ${nowTime()}
+                </span>
+            </div>
+
+        </div>
+
+        <button
+            class="flow-card-button"
+            type="button"
+        >
+            Completar solicitud
+        </button>
+    `;
+
+
+    bubble
+        .querySelector(
+            ".flow-card-button"
+        )
+        .addEventListener(
+            "click",
+            openFlow
+        );
+
+
+    row.appendChild(
+        bubble
+    );
+
+    messages.appendChild(
+        row
+    );
+
+    scrollMessages();
+}
+
+
+    /* =====================================================
+       CARGAR JSON FLOW
+    ===================================================== */
+
+    async function fetchFlowDefinition() {
+
+        if (
+            flowDefinition
+        ) {
+
+            return flowDefinition;
+
+        }
+
+
+        const response =
+            await fetch(
+                "/api/flow-mvp",
+                {
+                    headers: {
+                        "Accept":
+                            "application/json"
+                    }
+                }
+            );
 
 
         if (
-            typeof option === "string"
+            !response.ok
         ) {
 
-            label = option;
-            value = option;
-
-        } else if (
-            option &&
-            typeof option === "object"
-        ) {
-
-            label =
-                option.label ||
-                option.value ||
-                "";
-
-            value =
-                option.value ||
-                option.label ||
-                "";
+            throw new Error(
+                `HTTP ${response.status}`
+            );
 
         }
 
 
-        if (!label) {
+        const data =
+            await response.json();
+
+
+        if (
+            !data.success ||
+            !data.flow
+        ) {
+
+            throw new Error(
+                data.error ||
+                "No fue posible cargar el Flow."
+            );
+
+        }
+
+
+        flowDefinition =
+            data.flow;
+
+
+        return flowDefinition;
+
+    }
+
+
+    /* =====================================================
+       ABRIR FLOW
+    ===================================================== */
+
+    async function openFlow() {
+
+        flowLayer
+            .classList
+            .add(
+                "open"
+            );
+
+
+        flowContent.innerHTML = `
+            <div class="flow-loading">
+
+                <div>
+
+                    <div class="spinner">
+                    </div>
+
+                    Cargando formulario…
+
+                </div>
+
+            </div>
+        `;
+
+
+        flowFooter.hidden =
+            true;
+
+
+        try {
+
+            const flow =
+                await fetchFlowDefinition();
+
+
+            flowData = {};
+
+            history = [];
+
+
+            currentScreenId =
+                flow
+                    .screens?.[0]
+                    ?.id;
+
+
+            if (
+                !currentScreenId
+            ) {
+
+                throw new Error(
+                    "El Flow no contiene pantallas."
+                );
+
+            }
+
+
+            renderScreen(
+                currentScreenId
+            );
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                error
+            );
+
+
+            flowContent.innerHTML = `
+                <div
+                    class="
+                        flow-error-banner
+                        show
+                    "
+                >
+                    No fue posible cargar
+                    el formulario.
+                </div>
+            `;
+
+        }
+
+    }
+
+
+    function closeFlow() {
+
+        flowLayer
+            .classList
+            .remove(
+                "open"
+            );
+
+    }
+
+
+    /* =====================================================
+       BUSCAR PANTALLA
+    ===================================================== */
+
+    function getScreen(
+        screenId
+    ) {
+
+        return (
+            flowDefinition
+                ?.screens
+                ?.find(
+                    screen =>
+                        screen.id ===
+                        screenId
+                )
+            ||
+            null
+        );
+
+    }
+
+
+    /* =====================================================
+       VARIABLES ${data.x} / ${form.x}
+    ===================================================== */
+
+    function resolveTemplate(
+        value,
+        formValues =
+            currentFormValues
+    ) {
+
+        if (
+            typeof value !==
+            "string"
+        ) {
+
+            return value;
+
+        }
+
+
+        const exact =
+            value.match(
+                /^\$\{(data|form)\.([^}]+)\}$/
+            );
+
+
+        if (
+            exact
+        ) {
+
+            const source =
+                exact[1] ===
+                "data"
+
+                    ? flowData
+                    : formValues;
+
+
+            return (
+                source[
+                    exact[2]
+                ]
+                ??
+                ""
+            );
+
+        }
+
+
+        return value.replace(
+            /\$\{(data|form)\.([^}]+)\}/g,
+
+            (
+                _,
+                kind,
+                key
+            ) => {
+
+                const source =
+                    kind ===
+                    "data"
+
+                        ? flowData
+                        : formValues;
+
+
+                return String(
+                    source[key]
+                    ??
+                    ""
+                );
+
+            }
+        );
+
+    }
+
+
+    function renderRichText(
+        text
+    ) {
+
+        let safe =
+            escapeHtml(
+                resolveTemplate(
+                    String(
+                        text ?? ""
+                    )
+                )
+            );
+
+
+        safe =
+            safe.replace(
+                /\*\*(.*?)\*\*/g,
+                "<strong>$1</strong>"
+            );
+
+
+        safe =
+            safe.replace(
+                /\n/g,
+                "<br>"
+            );
+
+
+        return safe;
+
+    }
+
+
+    /* =====================================================
+       SWITCH
+    ===================================================== */
+
+    function flattenVisibleComponents(
+        children
+    ) {
+
+        const result = [];
+
+
+        (
+            children ||
+            []
+        )
+            .forEach(
+                component => {
+
+                    if (
+                        component.type ===
+                        "Switch"
+                    ) {
+
+                        const selected =
+                            String(
+                                resolveTemplate(
+                                    component.value
+                                )
+                                ??
+                                ""
+                            );
+
+
+                        const caseChildren =
+                            component
+                                .cases
+                                ?.[selected]
+                            ||
+                            [];
+
+
+                        result.push(
+                            ...flattenVisibleComponents(
+                                caseChildren
+                            )
+                        );
+
+
+                        return;
+
+                    }
+
+
+                    result.push(
+                        component
+                    );
+
+                }
+            );
+
+
+        return result;
+
+    }
+
+
+    /* =====================================================
+       RENDER SCREEN
+    ===================================================== */
+
+    function renderScreen(
+        screenId,
+        restoredFormValues = {}
+    ) {
+
+        const screen =
+            getScreen(
+                screenId
+            );
+
+
+        if (
+            !screen
+        ) {
+
+            showToast(
+                "Pantalla no encontrada."
+            );
+
             return;
+
         }
+
+
+        currentScreenId =
+            screenId;
+
+
+        currentFormValues = {
+            ...restoredFormValues
+        };
+
+
+        flowTitle.textContent =
+            screen.title ||
+            "SELEC";
+
+
+        updateFlowNavIcon();
+
+
+        flowScroll.scrollTop =
+            0;
+
+
+        const layoutChildren =
+            screen
+                .layout
+                ?.children
+            ||
+            [];
+
+
+        const rootForm =
+            layoutChildren
+                .find(
+                    item =>
+                        item.type ===
+                        "Form"
+                );
+
+
+        const children =
+            rootForm
+                ? (
+                    rootForm.children
+                    ||
+                    []
+                )
+
+                : layoutChildren;
+
+
+        const visibleChildren =
+            flattenVisibleComponents(
+                children
+            );
+
+
+        flowContent.innerHTML =
+            "";
+
+
+        flowFooter.innerHTML =
+            "";
+
+
+        flowFooter.hidden =
+            true;
+
+
+        const errorBanner =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        errorBanner.className =
+            "flow-error-banner";
+
+
+        errorBanner.id =
+            "flowErrorBanner";
+
+
+        errorBanner.textContent =
+            (
+                "Revise los campos " +
+                "obligatorios antes " +
+                "de continuar."
+            );
+
+
+        flowContent.appendChild(
+            errorBanner
+        );
+
+
+        visibleChildren
+            .forEach(
+                component => {
+
+                    if (
+                        component.type ===
+                        "Footer"
+                    ) {
+
+                        renderFooter(
+                            component
+                        );
+
+                    } else {
+
+                        const node =
+                            renderComponent(
+                                component
+                            );
+
+
+                        if (
+                            node
+                        ) {
+
+                            flowContent
+                                .appendChild(
+                                    node
+                                );
+
+                        }
+
+                    }
+
+                }
+            );
+
+    }
+
+
+    /* =====================================================
+       COMPONENTES
+    ===================================================== */
+
+    function renderComponent(
+        component
+    ) {
+
+        switch (
+            component.type
+        ) {
+
+            case "TextHeading": {
+
+                const element =
+                    document
+                        .createElement(
+                            "h1"
+                        );
+
+                element.className =
+                    "flow-heading";
+
+                element.innerHTML =
+                    renderRichText(
+                        component.text
+                    );
+
+                return element;
+
+            }
+
+
+            case "TextSubheading": {
+
+                const element =
+                    document
+                        .createElement(
+                            "h2"
+                        );
+
+                element.className =
+                    "flow-subheading";
+
+                element.innerHTML =
+                    renderRichText(
+                        component.text
+                    );
+
+                return element;
+
+            }
+
+
+            case "TextBody": {
+
+                const element =
+                    document
+                        .createElement(
+                            "p"
+                        );
+
+                element.className =
+                    "flow-body";
+
+                element.innerHTML =
+                    renderRichText(
+                        component.text
+                    );
+
+                return element;
+
+            }
+
+
+            case "TextCaption": {
+
+                const element =
+                    document
+                        .createElement(
+                            "p"
+                        );
+
+                element.className =
+                    "flow-caption";
+
+                element.innerHTML =
+                    renderRichText(
+                        component.text
+                    );
+
+                return element;
+
+            }
+
+
+            case "TextInput":
+
+                return renderTextInput(
+                    component,
+                    false
+                );
+
+
+            case "TextArea":
+
+                return renderTextInput(
+                    component,
+                    true
+                );
+
+
+            case "RadioButtonsGroup":
+
+                return renderRadioGroup(
+                    component
+                );
+
+
+            case "Dropdown":
+
+                return renderDropdown(
+                    component
+                );
+
+
+            default:
+
+                console.warn(
+                    (
+                        "Componente no " +
+                        "soportado:"
+                    ),
+                    component.type
+                );
+
+                return null;
+
+        }
+
+    }
+
+
+    /* =====================================================
+       TEXT INPUT / TEXT AREA
+    ===================================================== */
+
+    function renderTextInput(
+        component,
+        multiline
+    ) {
+
+        const wrap =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        wrap.className =
+            "flow-field";
+
+
+        const label =
+            document
+                .createElement(
+                    "label"
+                );
+
+
+        label.innerHTML =
+            escapeHtml(
+                component.label
+                ||
+                component.name
+                ||
+                "Campo"
+            )
+            +
+            (
+                component.required
+                    ? (
+                        '<span ' +
+                        'class="required-star">' +
+                        '*' +
+                        '</span>'
+                    )
+                    : ""
+            );
+
+
+        wrap.appendChild(
+            label
+        );
+
+
+        const input =
+            multiline
+
+                ? document
+                    .createElement(
+                        "textarea"
+                    )
+
+                : document
+                    .createElement(
+                        "input"
+                    );
+
+
+        if (
+            !multiline
+        ) {
+
+            const typeMap = {
+                email:
+                    "email",
+
+                phone:
+                    "tel",
+
+                number:
+                    "number",
+
+                text:
+                    "text",
+            };
+
+
+            input.type =
+                typeMap[
+                    component[
+                        "input-type"
+                    ]
+                ]
+                ||
+                "text";
+
+        }
+
+
+        input.name =
+            component.name
+            ||
+            "";
+
+
+        input.value =
+            currentFormValues[
+                input.name
+            ]
+            ??
+            "";
+
+
+        input.required =
+            Boolean(
+                component.required
+            );
+
+
+        input.dataset.required =
+            component.required
+                ? "true"
+                : "false";
+
+
+        input.addEventListener(
+            "input",
+            () => {
+
+                currentFormValues[
+                    input.name
+                ] =
+                    input.value;
+
+
+                wrap.classList.remove(
+                    "invalid"
+                );
+
+
+                updateFooterState();
+
+            }
+        );
+
+
+        wrap.appendChild(
+            input
+        );
+
+
+        if (
+            component[
+                "helper-text"
+            ]
+        ) {
+
+            const helper =
+                document
+                    .createElement(
+                        "div"
+                    );
+
+
+            helper.className =
+                "helper-text";
+
+
+            helper.textContent =
+                component[
+                    "helper-text"
+                ];
+
+
+            wrap.appendChild(
+                helper
+            );
+
+        }
+
+
+        const error =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        error.className =
+            "error-text";
+
+
+        error.textContent =
+            "Este campo es obligatorio.";
+
+
+        wrap.appendChild(
+            error
+        );
+
+
+        return wrap;
+
+    }
+
+
+    /* =====================================================
+       RADIO BUTTONS
+    ===================================================== */
+
+    function renderRadioGroup(
+        component
+    ) {
+
+        const wrap =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        wrap.className =
+            "flow-field";
+
+
+        const label =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        label.className =
+            "flow-group-label";
+
+
+        label.textContent =
+            component.label
+            ||
+            "Seleccione una opción";
+
+
+        wrap.appendChild(
+            label
+        );
+
+
+        const group =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        group.className =
+            "radio-group";
+
+
+        (
+            component[
+                "data-source"
+            ]
+            ||
+            []
+        )
+            .forEach(
+                option => {
+
+                    const optionLabel =
+                        document
+                            .createElement(
+                                "label"
+                            );
+
+
+                    optionLabel.className =
+                        "radio-option";
+
+
+                    const radio =
+                        document
+                            .createElement(
+                                "input"
+                            );
+
+
+                    radio.type =
+                        "radio";
+
+
+                    radio.name =
+                        component.name;
+
+
+                    radio.value =
+                        option.id;
+
+
+                    radio.checked =
+                        (
+                            currentFormValues[
+                                component.name
+                            ]
+                            ===
+                            option.id
+                        );
+
+
+                    radio.dataset.required =
+                        component.required
+                            ? "true"
+                            : "false";
+
+
+                    radio
+                        .addEventListener(
+                            "change",
+                            () => {
+
+                                currentFormValues[
+                                    component.name
+                                ] =
+                                    radio.value;
+
+
+                                updateFooterState();
+
+                            }
+                        );
+
+
+                    const text =
+                        document
+                            .createElement(
+                                "span"
+                            );
+
+
+                    text.textContent =
+                        option.title
+                        ||
+                        option.id;
+
+
+                    optionLabel
+                        .appendChild(
+                            radio
+                        );
+
+
+                    optionLabel
+                        .appendChild(
+                            text
+                        );
+
+
+                    group
+                        .appendChild(
+                            optionLabel
+                        );
+
+                }
+            );
+
+
+        wrap.appendChild(
+            group
+        );
+
+
+        return wrap;
+
+    }
+
+
+    /* =====================================================
+       DROPDOWN
+    ===================================================== */
+
+    function renderDropdown(
+        component
+    ) {
+
+        const wrap =
+            document
+                .createElement(
+                    "div"
+                );
+
+
+        wrap.className =
+            "flow-field";
+
+
+        const label =
+            document
+                .createElement(
+                    "label"
+                );
+
+
+        label.textContent =
+            component.label
+            ||
+            "Seleccione";
+
+
+        wrap.appendChild(
+            label
+        );
+
+
+        const select =
+            document
+                .createElement(
+                    "select"
+                );
+
+
+        select.name =
+            component.name
+            ||
+            "";
+
+
+        select.dataset.required =
+            component.required
+                ? "true"
+                : "false";
+
+
+        const empty =
+            document
+                .createElement(
+                    "option"
+                );
+
+
+        empty.value = "";
+
+        empty.textContent =
+            "Seleccione";
+
+
+        select.appendChild(
+            empty
+        );
+
+
+        (
+            component[
+                "data-source"
+            ]
+            ||
+            []
+        )
+            .forEach(
+                option => {
+
+                    const item =
+                        document
+                            .createElement(
+                                "option"
+                            );
+
+
+                    item.value =
+                        option.id;
+
+
+                    item.textContent =
+                        option.title
+                        ||
+                        option.id;
+
+
+                    select.appendChild(
+                        item
+                    );
+
+                }
+            );
+
+
+        select.value =
+            currentFormValues[
+                select.name
+            ]
+            ??
+            "";
+
+
+        select
+            .addEventListener(
+                "change",
+                () => {
+
+                    currentFormValues[
+                        select.name
+                    ] =
+                        select.value;
+
+
+                    updateFooterState();
+
+                }
+            );
+
+
+        wrap.appendChild(
+            select
+        );
+
+
+        return wrap;
+
+    }
+
+
+    /* =====================================================
+       FOOTER
+    ===================================================== */
+
+    function renderFooter(
+        component
+    ) {
+
+        flowFooter.hidden =
+            false;
 
 
         const button =
-            document.createElement(
-                "button"
-            );
+            document
+                .createElement(
+                    "button"
+                );
+
 
         button.type =
             "button";
 
+
         button.className =
-            "option-button";
+            "flow-primary";
+
 
         button.textContent =
-            label;
+            component.label
+            ||
+            "Continuar";
 
 
         button.addEventListener(
             "click",
-            function() {
+            () => {
 
-                /*
-                 * Al seleccionar la opción,
-                 * hacemos exactamente lo mismo
-                 * que haría el usuario en WhatsApp:
-                 *
-                 * enviamos el texto seleccionado
-                 * al webhook.
-                 */
-
-                sendToBot(
-                    value,
-                    true
+                handleFlowAction(
+                    component[
+                        "on-click-action"
+                    ],
+                    button
                 );
+
             }
         );
 
 
-        container.appendChild(
+        flowFooter.appendChild(
             button
         );
-    });
 
 
-    messagesContainer.appendChild(
-        container
-    );
+        const managed =
+            document
+                .createElement(
+                    "div"
+                );
 
 
-    scrollToBottom();
-}
+        managed.className =
+            "flow-managed";
 
 
-/* =========================================================
-   PROCESAR RESPUESTA DEL BOT
-========================================================= */
+        managed.innerHTML =
+            (
+                "Administrado por SELEC " +
+                "· <span>Más información</span>"
+            );
 
-function addBotReplies(response) {
 
-    if (!response) {
-        return;
+        flowFooter.appendChild(
+            managed
+        );
+
+
+        updateFooterState();
+
     }
 
 
-    /*
-     * MENSAJES NORMALES
-     */
+    /* =====================================================
+       HABILITAR BOTÓN SOLO AL COMPLETAR
+    ===================================================== */
 
-    if (
-        Array.isArray(
-            response.replies
-        )
-    ) {
+    function isCurrentFormComplete() {
 
-        response.replies.forEach(
-            reply => {
+        const required = [
+            ...flowContent
+                .querySelectorAll(
+                    (
+                        "input, " +
+                        "textarea, " +
+                        "select"
+                    )
+                )
+        ]
+            .filter(
+                field =>
+                    field
+                        .dataset
+                        .required ===
+                    "true"
+            );
+
+
+        for (
+            const field
+            of required
+        ) {
+
+            if (
+                field.type ===
+                "radio"
+            ) {
+
+                const checked =
+                    flowContent
+                        .querySelector(
+                            (
+                                'input[name="' +
+                                field.name +
+                                '"]:checked'
+                            )
+                        );
+
 
                 if (
-                    typeof reply === "string"
+                    !checked
                 ) {
 
-                    addMessage(
-                        reply,
-                        "bot"
+                    return false;
+
+                }
+
+
+                continue;
+
+            }
+
+
+            if (
+                !String(
+                    field.value
+                    ||
+                    ""
+                ).trim()
+            ) {
+
+                return false;
+
+            }
+
+
+            if (
+                field.type ===
+                    "email"
+                &&
+                !field.checkValidity()
+            ) {
+
+                return false;
+
+            }
+
+        }
+
+
+        return true;
+
+    }
+
+
+    function updateFooterState() {
+
+        const button =
+            flowFooter
+                .querySelector(
+                    ".flow-primary"
+                );
+
+
+        if (
+            !button
+        ) {
+
+            return;
+
+        }
+
+
+        button.disabled =
+            !isCurrentFormComplete();
+
+    }
+
+
+    /* =====================================================
+       PAYLOAD
+    ===================================================== */
+
+    function buildActionPayload(
+        payload
+    ) {
+
+        const result = {};
+
+
+        Object
+            .entries(
+                payload
+                ||
+                {}
+            )
+            .forEach(
+                (
+                    [
+                        key,
+                        value
+                    ]
+                ) => {
+
+                    result[key] =
+                        resolveTemplate(
+                            value
+                        );
+
+                }
+            );
+
+
+        return result;
+
+    }
+
+
+    /* =====================================================
+       NAVEGAR / COMPLETE
+    ===================================================== */
+
+    async function handleFlowAction(
+        action,
+        button
+    ) {
+
+        if (
+            !action ||
+            submittingFlow
+        ) {
+
+            return;
+
+        }
+
+
+        const payload =
+            buildActionPayload(
+                action.payload
+                ||
+                {}
+            );
+
+
+        if (
+            action.name ===
+            "navigate"
+        ) {
+
+            const nextScreen =
+                action
+                    .next
+                    ?.name;
+
+
+            if (
+                !nextScreen
+            ) {
+
+                return;
+
+            }
+
+
+            history.push(
+                {
+                    screenId:
+                        currentScreenId,
+
+                    data: {
+                        ...flowData
+                    },
+
+                    formValues: {
+                        ...currentFormValues
+                    }
+                }
+            );
+
+
+            flowData = {
+                ...flowData,
+                ...payload
+            };
+
+
+            renderScreen(
+                nextScreen
+            );
+
+
+            return;
+
+        }
+
+
+        if (
+            action.name ===
+            "complete"
+        ) {
+
+            submittingFlow =
+                true;
+
+
+            button.disabled =
+                true;
+
+
+            const oldText =
+                button.textContent;
+
+
+            button.textContent =
+                "Enviando…";
+
+
+            try {
+
+                const finalPayload = {
+                    ...flowData,
+                    ...payload
+                };
+
+
+                const response =
+                    await fetch(
+                        "/api/flow-mvp/submit",
+                        {
+                            method:
+                                "POST",
+
+                            headers: {
+                                "Content-Type":
+                                    "application/json"
+                            },
+
+                            body:
+                                JSON.stringify(
+                                    finalPayload
+                                )
+                        }
+                    );
+
+
+                const data =
+                    await response.json();
+
+
+                if (
+                    !response.ok ||
+                    !data.success
+                ) {
+
+                    throw new Error(
+                        data.error
+                        ||
+                        (
+                            "No fue posible " +
+                            "enviar la solicitud."
+                        )
                     );
 
                 }
 
+
+                closeFlow();
+
+
+                addBubble(
+                    "Formulario enviado",
+                    "outgoing"
+                );
+
+
+                setTimeout(
+                    () => {
+
+                        if (
+                            data
+                                .tipo_solicitud
+                            ===
+                            "postventa"
+                        ) {
+
+                            addBubble(
+                                (
+                                    "Gracias. Hemos recibido " +
+                                    "su solicitud de postventa. " +
+                                    "Nuestro equipo revisará " +
+                                    "la información y se pondrá " +
+                                    "en contacto con usted."
+                                ),
+                                "incoming"
+                            );
+
+                        } else {
+
+                            addBubble(
+                                (
+                                    "Gracias. Hemos recibido " +
+                                    "su solicitud de cotización. " +
+                                    "Un ejecutivo de SELEC se " +
+                                    "pondrá en contacto con usted."
+                                ),
+                                "incoming"
+                            );
+
+                        }
+
+                    },
+                    450
+                );
+
+            } catch (
+                error
+            ) {
+
+                console.error(
+                    error
+                );
+
+
+                showToast(
+                    error.message
+                    ||
+                    (
+                        "No fue posible " +
+                        "enviar la solicitud."
+                    )
+                );
+
+
+                button.disabled =
+                    false;
+
+
+                button.textContent =
+                    oldText;
+
+            } finally {
+
+                submittingFlow =
+                    false;
+
             }
-        );
-    }
 
-
-    /*
-     * INPUT SELECT DE SALESIQ
-     *
-     * {
-     *     "input": {
-     *         "type": "select",
-     *         "options": [...]
-     *     }
-     * }
-     */
-
-    if (
-        response.input &&
-        response.input.type === "select" &&
-        Array.isArray(
-            response.input.options
-        )
-    ) {
-
-        addSelectOptions(
-            response.input.options
-        );
-    }
-}
-
-
-/* =========================================================
-   ENVIAR MENSAJE AL WEBHOOK
-========================================================= */
-
-async function sendToBot(
-    text,
-    showUserMessage = true
-) {
-
-    const cleanText =
-        String(text || "")
-            .trim();
-
-
-    if (!cleanText) {
-        return;
-    }
-
-
-    /*
-     * Cuando el usuario selecciona algo,
-     * quitamos los botones anteriores.
-     */
-
-    clearInteractiveOptions();
-
-
-    if (showUserMessage) {
-
-        addMessage(
-            cleanText,
-            "user"
-        );
-    }
-
-
-    statusElement.textContent =
-        "Enviando...";
-
-
-    const payload = {
-
-        handler: "message",
-
-        visitor: {
-            id: VISITOR_ID
-        },
-
-        message: {
-            text: cleanText
         }
 
-    };
+    }
 
 
-    try {
+    /* =====================================================
+       ATRÁS
+    ===================================================== */
+
+    function goBackFlow() {
+
+        if (
+            !history.length
+        ) {
+
+            closeFlow();
+
+            return;
+
+        }
+
+
+        const previous =
+            history.pop();
+
+
+        flowData =
+            previous.data;
+
+
+        renderScreen(
+            previous.screenId,
+            previous.formValues
+            ||
+            {}
+        );
+
+    }
+
+
+    function updateFlowNavIcon() {
+
+        if (
+            history.length
+        ) {
+
+            flowNavIcon.innerHTML = `
+                <path
+                    d="
+                        m15.4 5.4
+                        -1.4-1.4
+                        L6 12
+                        l8 8
+                        1.4-1.4
+                        L8.8 12
+                        l6.6-6.6Z
+                    "
+                />
+            `;
+
+        } else {
+
+            flowNavIcon.innerHTML = `
+                <path
+                    d="
+                        m18.3 5.7
+                        -1.4-1.4
+                        L12 9.2
+                        7.1 4.3
+                        5.7 5.7
+                        l4.9 4.9
+                        -4.9 4.9
+                        1.4 1.4
+                        L12 12
+                        l4.9 4.9
+                        1.4-1.4
+                        -4.9-4.9
+                        4.9-4.9Z
+                    "
+                />
+            `;
+
+        }
+
+    }
+
+
+    flowNav.addEventListener(
+        "click",
+        () => {
+
+            if (
+                history.length
+            ) {
+
+                goBackFlow();
+
+            } else {
+
+                closeFlow();
+
+            }
+
+        }
+    );
+
+
+    /* =====================================================
+       TOAST
+    ===================================================== */
+
+    function showToast(
+        message
+    ) {
+
+        toast.textContent =
+            message;
+
+
+        toast
+            .classList
+            .add(
+                "show"
+            );
+
+
+        clearTimeout(
+            showToast.timer
+        );
+
+
+        showToast.timer =
+            setTimeout(
+                () => {
+
+                    toast
+                        .classList
+                        .remove(
+                            "show"
+                        );
+
+                },
+                2500
+            );
+
+    }
+
+
+    /* =====================================================
+       CHAT NORMAL - CONSERVAMOS EL WEBHOOK
+    ===================================================== */
+
+    async function postWebhook(
+        text
+    ) {
 
         const response =
             await fetch(
                 "/salesiq-webhook",
                 {
-
-                    method: "POST",
+                    method:
+                        "POST",
 
                     headers: {
                         "Content-Type":
@@ -680,137 +3879,206 @@ async function sendToBot(
 
                     body:
                         JSON.stringify(
-                            payload
-                        )
+                            {
+                                handler:
+                                    "message",
 
+                                visitor: {
+                                    id:
+                                        VISITOR_ID
+                                },
+
+                                message: {
+                                    text
+                                }
+                            }
+                        )
                 }
             );
 
 
-        if (!response.ok) {
+        if (
+            !response.ok
+        ) {
 
             throw new Error(
                 `HTTP ${response.status}`
             );
+
         }
 
 
-        const data =
-            await response.json();
+        return response.json();
 
-
-        addBotReplies(
-            data
-        );
-
-
-        statusElement.textContent =
-            "Conectado al servidor de pruebas";
-
-
-    } catch (error) {
-
-        console.error(
-            error
-        );
-
-
-        addMessage(
-            "Error al comunicarse con el servidor.",
-            "bot"
-        );
-
-
-        statusElement.textContent =
-            "Error de conexión";
-    }
-}
-
-
-/* =========================================================
-   BOTÓN ENVIAR
-========================================================= */
-
-function sendMessage() {
-
-    const text =
-        messageInput.value.trim();
-
-
-    if (!text) {
-        return;
     }
 
 
-    messageInput.value = "";
+    async function sendChatText(
+        text
+    ) {
 
+        const clean =
+            String(
+                text
+                ||
+                ""
+            ).trim();
 
-    sendToBot(
-        text,
-        true
-    );
-
-
-    messageInput.focus();
-}
-
-
-/* =========================================================
-   ENTER PARA ENVIAR
-========================================================= */
-
-messageInput.addEventListener(
-    "keydown",
-    function(event) {
 
         if (
-            event.key === "Enter" &&
-            !event.shiftKey
+            !clean ||
+            sendingChat
         ) {
 
-            event.preventDefault();
+            return;
 
-            sendMessage();
         }
-    }
-);
 
 
-/* =========================================================
-   INICIO AUTOMÁTICO DEL CHAT
-========================================================= */
-
-window.addEventListener(
-    "load",
-    async function() {
-
-        statusElement.textContent =
-            "Iniciando conversación...";
+        sendingChat =
+            true;
 
 
-        /*
-         * Mandamos "hola" internamente.
-         *
-         * NO se muestra como mensaje del usuario.
-         *
-         * Tu backend ya reconoce "hola"
-         * como inicio/reinicio de conversación,
-         * así que responderá inmediatamente
-         * con reply_menu_principal().
-         */
-
-        await sendToBot(
-            "hola",
-            false
+        addBubble(
+            clean,
+            "outgoing"
         );
 
 
-        messageInput.focus();
+        try {
+
+            const response =
+                await postWebhook(
+                    clean
+                );
+
+
+            (
+                response.replies
+                ||
+                []
+            )
+                .forEach(
+                    reply => {
+
+                        addBubble(
+                            reply,
+                            "incoming"
+                        );
+
+                    }
+                );
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                error
+            );
+
+
+            showToast(
+                (
+                    "No fue posible " +
+                    "conectar con el bot."
+                )
+            );
+
+        } finally {
+
+            sendingChat =
+                false;
+
+        }
+
     }
-);
+
+
+    sendButton
+        .addEventListener(
+            "click",
+            async () => {
+
+                const text =
+                    messageInput
+                        .value
+                        .trim();
+
+
+                if (
+                    !text
+                ) {
+
+                    return;
+
+                }
+
+
+                messageInput.value =
+                    "";
+
+
+                await sendChatText(
+                    text
+                );
+
+            }
+        );
+
+
+    messageInput
+        .addEventListener(
+            "keydown",
+            event => {
+
+                if (
+                    event.key ===
+                        "Enter"
+                    &&
+                    !event.shiftKey
+                ) {
+
+                    event
+                        .preventDefault();
+
+
+                    sendButton
+                        .click();
+
+                }
+
+            }
+        );
+
+
+    /* =====================================================
+       INICIO DEL MVP
+    ===================================================== */
+
+    window.addEventListener(
+        "load",
+        () => {
+
+            addBubble(
+                (
+                    "Gracias por contactarse con SELEC. " +
+                    "Para atender su solicitud, puede " +
+                    "completar el siguiente formulario."
+                ),
+                "incoming"
+            );
+
+
+            setTimeout(
+                addFlowInvite,
+                300
+            );
+
+        }
+    );
 
 </script>
 
 </body>
-
 </html>

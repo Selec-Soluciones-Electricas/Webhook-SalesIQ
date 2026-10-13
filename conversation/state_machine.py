@@ -316,28 +316,22 @@ def iniciar_cotizacion(
     session: dict
 ) -> dict:
     """
-    Inicia el flujo de cotización.
+    Inicia el flujo de cotización utilizando
+    una experiencia conversacional paso a paso.
     """
 
     session["state"] = (
-        "cotizacion_empresa_bloque"
+        "cotizacion_empresa_nombre"
     )
 
     session["data"] = {}
 
     return build_reply(
         (
-            "Perfecto, trabajaremos en su "
-            "solicitud de cotización.\n\n"
-            "Por favor, complete los siguientes "
-            "datos. "
-            "Puede copiar "
-            "y completar este formato:\n\n"
-            "Nombre de la empresa:\n"
-            "RUT:\n"
-            "Nombre de contacto:\n"
-            "Correo:\n"
-            "Teléfono:"
+            "Perfecto. Le haré unas preguntas breves "
+            "para preparar su solicitud de cotización.\n\n"
+            "Paso 1 de 5\n"
+            "¿Cuál es el nombre de la empresa?"
         )
     )
 

@@ -1,0 +1,476 @@
+{
+  "version": "7.3",
+  "screens": [
+    {
+      "id": "MENU",
+      "title": "Atención SELEC",
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "menu_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "¿En qué podemos ayudarle?"
+              },
+              {
+                "type": "TextBody",
+                "text": "Seleccione el tipo de solicitud que desea realizar."
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "tipo_solicitud",
+                "label": "Seleccione una opción",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "cotizacion",
+                    "title": "Solicitud cotización"
+                  },
+                  {
+                    "id": "postventa",
+                    "title": "Servicio posventa"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "FORMULARIO"
+                  },
+                  "payload": {
+                    "tipo_solicitud": "${form.tipo_solicitud}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "FORMULARIO",
+      "title": "Datos de solicitud",
+      "data": {
+        "tipo_solicitud": {
+          "type": "string",
+          "__example__": "cotizacion"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "solicitud_form",
+            "children": [
+              {
+                "type": "Switch",
+                "value": "${data.tipo_solicitud}",
+                "cases": {
+                  "cotizacion": [
+                    {
+                      "type": "TextHeading",
+                      "text": "Solicitud de cotización"
+                    },
+                    {
+                      "type": "TextCaption",
+                      "text": "Ingrese los datos de la empresa y del contacto."
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "empresa",
+                      "label": "Empresa",
+                      "input-type": "text",
+                      "helper-text": "Ej: SELEC SPA",
+                      "required": true
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "rut_empresa",
+                      "label": "RUT",
+                      "input-type": "text",
+                      "helper-text": "Ej: 76123456-7",
+                      "required": true
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "contacto",
+                      "label": "Nombre de contacto",
+                      "input-type": "text",
+                      "helper-text": "Ej: Juan Pérez",
+                      "required": true
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "correo",
+                      "label": "Correo",
+                      "input-type": "email",
+                      "helper-text": "Ej: nombre@empresa.cl",
+                      "required": true
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "telefono",
+                      "label": "Teléfono",
+                      "input-type": "phone",
+                      "helper-text": "Ej: +56912345678",
+                      "required": true
+                    },
+                    {
+                      "type": "Footer",
+                      "label": "Continuar",
+                      "on-click-action": {
+                        "name": "navigate",
+                        "next": {
+                          "type": "screen",
+                          "name": "COTIZACION_PRODUCTO"
+                        },
+                        "payload": {
+                          "tipo_solicitud": "${data.tipo_solicitud}",
+                          "empresa": "${form.empresa}",
+                          "rut": "${form.rut_empresa}",
+                          "contacto": "${form.contacto}",
+                          "correo": "${form.correo}",
+                          "telefono": "${form.telefono}"
+                        }
+                      }
+                    }
+                  ],
+                  "postventa": [
+                    {
+                      "type": "TextHeading",
+                      "text": "Servicio posventa"
+                    },
+                    {
+                      "type": "TextCaption",
+                      "text": "Cuéntenos los datos necesarios para revisar su caso."
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "nombre_postventa",
+                      "label": "Nombre",
+                      "input-type": "text",
+                      "helper-text": "Nombre de contacto",
+                      "required": true
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "rut_postventa",
+                      "label": "RUT",
+                      "input-type": "text",
+                      "helper-text": "Ej: 12345678-9",
+                      "required": true
+                    },
+                    {
+                      "type": "TextInput",
+                      "name": "factura_oc",
+                      "label": "Factura u OC",
+                      "input-type": "text",
+                      "helper-text": "Número de factura y/o Orden de compra",
+                      "required": true
+                    },
+                    {
+                      "type": "TextArea",
+                      "name": "descripcion_postventa",
+                      "label": "Descripción",
+                      "helper-text": "Describa brevemente la situación",
+                      "required": true
+                    },
+                    {
+                      "type": "Footer",
+                      "label": "Continuar",
+                      "on-click-action": {
+                        "name": "navigate",
+                        "next": {
+                          "type": "screen",
+                          "name": "RESUMEN_POSTVENTA"
+                        },
+                        "payload": {
+                          "tipo_solicitud": "${data.tipo_solicitud}",
+                          "nombre": "${form.nombre_postventa}",
+                          "rut": "${form.rut_postventa}",
+                          "factura_oc": "${form.factura_oc}",
+                          "descripcion": "${form.descripcion_postventa}"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "COTIZACION_PRODUCTO",
+      "title": "Producto a cotizar",
+      "data": {
+        "tipo_solicitud": {
+          "type": "string",
+          "__example__": "cotizacion"
+        },
+        "empresa": {
+          "type": "string",
+          "__example__": "SELEC SPA"
+        },
+        "rut": {
+          "type": "string",
+          "__example__": "76123456-7"
+        },
+        "contacto": {
+          "type": "string",
+          "__example__": "Juan Pérez"
+        },
+        "correo": {
+          "type": "string",
+          "__example__": "juan@empresa.cl"
+        },
+        "telefono": {
+          "type": "string",
+          "__example__": "+56912345678"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "producto_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Información del producto"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Ingrese los datos del producto que desea cotizar."
+              },
+              {
+                "type": "TextInput",
+                "name": "numero_parte",
+                "label": "Número de parte",
+                "input-type": "text",
+                "helper-text": "Ej: ABC123",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "marca",
+                "label": "Marca",
+                "input-type": "text",
+                "helper-text": "Ej: Siemens",
+                "required": true
+              },
+              {
+                "type": "TextArea",
+                "name": "descripcion_producto",
+                "label": "Descripción",
+                "helper-text": "Descripción detallada del producto",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "cantidad",
+                "label": "Cantidad",
+                "input-type": "number",
+                "helper-text": "Ej: 5",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "direccion_entrega",
+                "label": "Dirección entrega",
+                "input-type": "text",
+                "helper-text": "Ej: Av. Ejemplo 1234, Santiago",
+                "required": true
+              },
+              {
+                "type": "Footer",
+                "label": "Revisar solicitud",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "RESUMEN_COTIZACION"
+                  },
+                  "payload": {
+                    "tipo_solicitud": "${data.tipo_solicitud}",
+                    "empresa": "${data.empresa}",
+                    "rut": "${data.rut}",
+                    "contacto": "${data.contacto}",
+                    "correo": "${data.correo}",
+                    "telefono": "${data.telefono}",
+                    "numero_parte": "${form.numero_parte}",
+                    "marca": "${form.marca}",
+                    "descripcion": "${form.descripcion_producto}",
+                    "cantidad": "${form.cantidad}",
+                    "direccion_entrega": "${form.direccion_entrega}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "RESUMEN_COTIZACION",
+      "title": "Revisar cotización",
+      "terminal": true,
+      "data": {
+        "tipo_solicitud": {
+          "type": "string",
+          "__example__": "cotizacion"
+        },
+        "empresa": {
+          "type": "string",
+          "__example__": "SELEC SPA"
+        },
+        "rut": {
+          "type": "string",
+          "__example__": "76123456-7"
+        },
+        "contacto": {
+          "type": "string",
+          "__example__": "Juan Pérez"
+        },
+        "correo": {
+          "type": "string",
+          "__example__": "juan@empresa.cl"
+        },
+        "telefono": {
+          "type": "string",
+          "__example__": "+56912345678"
+        },
+        "numero_parte": {
+          "type": "string",
+          "__example__": "ABC123"
+        },
+        "marca": {
+          "type": "string",
+          "__example__": "Siemens"
+        },
+        "descripcion": {
+          "type": "string",
+          "__example__": "Producto de prueba"
+        },
+        "cantidad": {
+          "type": "string",
+          "__example__": "5"
+        },
+        "direccion_entrega": {
+          "type": "string",
+          "__example__": "Av. Ejemplo 1234, Santiago"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "resumen_cotizacion_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Revise su solicitud"
+              },
+              {
+                "type": "TextBody",
+                "text": "**Empresa:** ${data.empresa}\n**RUT:** ${data.rut}\n**Contacto:** ${data.contacto}\n**Correo:** ${data.correo}\n**Teléfono:** ${data.telefono}\n\n**Número de parte:** ${data.numero_parte}\n**Marca:** ${data.marca}\n**Descripción:** ${data.descripcion}\n**Cantidad:** ${data.cantidad}\n**Dirección de entrega:** ${data.direccion_entrega}"
+              },
+              {
+                "type": "Footer",
+                "label": "Enviar solicitud",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "tipo_solicitud": "${data.tipo_solicitud}",
+                    "empresa": "${data.empresa}",
+                    "rut": "${data.rut}",
+                    "contacto": "${data.contacto}",
+                    "correo": "${data.correo}",
+                    "telefono": "${data.telefono}",
+                    "numero_parte": "${data.numero_parte}",
+                    "marca": "${data.marca}",
+                    "descripcion": "${data.descripcion}",
+                    "cantidad": "${data.cantidad}",
+                    "direccion_entrega": "${data.direccion_entrega}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "RESUMEN_POSTVENTA",
+      "title": "Revisar postventa",
+      "terminal": true,
+      "data": {
+        "tipo_solicitud": {
+          "type": "string",
+          "__example__": "postventa"
+        },
+        "nombre": {
+          "type": "string",
+          "__example__": "Juan Pérez"
+        },
+        "rut": {
+          "type": "string",
+          "__example__": "12345678-9"
+        },
+        "factura_oc": {
+          "type": "string",
+          "__example__": "12345"
+        },
+        "descripcion": {
+          "type": "string",
+          "__example__": "Producto recibido con una falla"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "resumen_postventa_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Revise su solicitud"
+              },
+              {
+                "type": "TextBody",
+                "text": "**Nombre:** ${data.nombre}\n**RUT:** ${data.rut}\n**Factura / OC:** ${data.factura_oc}\n**Situación:** ${data.descripcion}"
+              },
+              {
+                "type": "Footer",
+                "label": "Enviar solicitud",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "tipo_solicitud": "${data.tipo_solicitud}",
+                    "nombre": "${data.nombre}",
+                    "rut": "${data.rut}",
+                    "factura_oc": "${data.factura_oc}",
+                    "descripcion": "${data.descripcion}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

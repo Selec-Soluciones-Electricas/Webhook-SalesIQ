@@ -7,6 +7,15 @@ from flask import Flask
 
 from routes.webhook import register_routes
 from routes.cron import register_cron_routes
+
+from routes.flow_mvp import (
+    flow_mvp_bp,
+)
+
+from formulario_mvp.app import (
+    formulario_mvp_bp,
+)
+
 from services.zoho_service import get_access_token
 
 try:
@@ -32,6 +41,14 @@ if load_dotenv:
 # =========================================================
 
 app = Flask(__name__)
+
+from routes.flow_mvp import (
+    flow_mvp_bp,
+)
+
+from formulario_mvp.app import (
+    formulario_mvp_bp,
+)
 
 
 # =========================================================
@@ -60,6 +77,13 @@ register_routes(
 
 register_cron_routes(app)
 
+app.register_blueprint(
+    flow_mvp_bp
+)
+
+app.register_blueprint(
+    formulario_mvp_bp
+)
 
 # =========================================================
 # DEBUG DE RUTAS

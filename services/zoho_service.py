@@ -14,6 +14,8 @@ from utils.security import (
     mask_phone,
 )
 
+from werkzeug.utils import secure_filename
+
 
 ACCOUNTS_BASE = "https://accounts.zoho.com"
 CRM_BASE = "https://www.zohoapis.com/crm/v2.1"
@@ -130,13 +132,6 @@ def get_access_token() -> str:
             resp.status_code
         )
 
-        try:
-            print(
-                resp.text
-            )
-        except Exception:
-            pass
-
         if resp.status_code != 200:
             return None
 
@@ -178,6 +173,108 @@ def get_access_token() -> str:
 
         return None
 
+# =========================================================
+# OBTENER ACCESS TOKEN PARA ZOHO CREATOR
+# =========================================================
+
+def get_creator_access_token() -> str:
+
+    client_id = os.environ.get(
+        "ZOHO_CREATOR_CLIENT_ID"
+    )
+
+    client_secret = os.environ.get(
+        "ZOHO_CREATOR_CLIENT_SECRET"
+    )
+
+    refresh_token = os.environ.get(
+        "ZOHO_CREATOR_REFRESH_TOKEN"
+    )
+
+
+    if (
+        not client_id
+        or not client_secret
+        or not refresh_token
+    ):
+
+        print(
+            "[Creator OAuth] "
+            "Faltan credenciales de Creator."
+        )
+
+        return None
+
+
+    url = (
+        "https://accounts.zoho.com/"
+        "oauth/v2/token"
+    )
+
+
+    params = {
+        "refresh_token":
+            refresh_token,
+
+        "client_id":
+            client_id,
+
+        "client_secret":
+            client_secret,
+
+        "grant_type":
+            "refresh_token",
+    }
+
+
+    try:
+
+        response = requests.post(
+            url,
+            params=params,
+            timeout=20,
+        )
+
+
+        print(
+            "[Creator OAuth] "
+            f"Status: {response.status_code}"
+        )
+
+
+        data = response.json()
+
+
+        access_token = (
+            data.get(
+                "access_token"
+            )
+        )
+
+
+        if not access_token:
+
+            print(
+                "[Creator OAuth] "
+                "No se recibió access_token:",
+                data,
+            )
+
+            return None
+
+
+        return access_token
+
+
+    except Exception as error:
+
+        print(
+            "[Creator OAuth] "
+            "Error obteniendo token:",
+            error,
+        )
+
+        return None
 
 # =========================================================
 # CACHE DEL ACCESS TOKEN — SALESIQ (independiente del de CRM)
@@ -1348,6 +1445,753 @@ def obtener_o_crear_contact(
 
     return None
 
+# =========================================================
+# SUBIR ARCHIVOS AL NEGOCIO EN ZOHO CRM
+# =========================================================
+
+def subir_archivos_negocio(
+    deal_id: str,
+    productos: list,
+):
+    """
+    Sube al Negocio de Zoho CRM los archivos adjuntos
+    enviados desde el formulario de cotización.
+
+    Los archivos se identifican según el producto al
+    que pertenecen.
+
+    Ejemplo:
+        Producto_1_foto_motor.jpg
+        Producto_2_ficha_tecnica.pdf
+    """
+
+    deal_id = str(
+        deal_id or ""
+    ).strip()
+
+    if not deal_id:
+
+        print(
+            "[subir_archivos_negocio] "
+            "No se recibió Deal ID."
+        )
+
+        return []
+
+
+    if not productos:
+
+        print(
+            "[subir_archivos_negocio] "
+            "No hay productos."
+        )
+
+        return []
+
+
+    # =====================================================
+    # TOKEN
+    # =====================================================
+
+    access_token = get_access_token()
+
+    if not access_token:
+
+        print(
+            "[subir_archivos_negocio] "
+            "No se pudo obtener access token."
+        )
+
+        return []
+
+
+    # =====================================================
+    # ENDPOINT CRM
+    # =====================================================
+
+    url = (
+        "https://www.zohoapis.com/"
+        f"crm/v8/Deals/{deal_id}/Attachments"
+    )
+
+
+    headers = {
+        "Authorization":
+            f"Zoho-oauthtoken {access_token}"
+    }
+
+
+    resultados = []
+
+
+    # =====================================================
+    # RECORRER PRODUCTOS
+    # =====================================================
+
+    for indice_producto, producto in enumerate(
+        productos,
+        start=1,
+    ):
+
+        archivos = (
+            producto.get("archivos")
+            or []
+        )
+
+
+        if not archivos:
+
+            continue
+
+
+        # =================================================
+        # RECORRER ARCHIVOS DEL PRODUCTO
+        # =================================================
+
+        for indice_archivo, archivo in enumerate(
+            archivos,
+            start=1,
+        ):
+
+            nombre_original = str(
+                getattr(
+                    archivo,
+                    "filename",
+                    "",
+                )
+                or ""
+            ).strip()
+
+
+            if not nombre_original:
+
+                continue
+
+
+            # =============================================
+            # NOMBRE SEGURO
+            # =============================================
+
+            nombre_seguro = secure_filename(
+                nombre_original
+            )
+
+
+            if not nombre_seguro:
+
+                nombre_seguro = (
+                    f"archivo_{indice_archivo}"
+                )
+
+
+            nombre_zoho = (
+                f"Producto_{indice_producto}_"
+                f"{nombre_seguro}"
+            )
+
+
+            tipo_contenido = str(
+                getattr(
+                    archivo,
+                    "mimetype",
+                    "",
+                )
+                or
+                "application/octet-stream"
+            )
+
+
+            try:
+
+                # =========================================
+                # REINICIAR STREAM
+                # =========================================
+
+                try:
+
+                    archivo.stream.seek(0)
+
+                except Exception:
+
+                    pass
+
+
+                # =========================================
+                # MULTIPART
+                # =========================================
+
+                files = {
+                    "file": (
+                        nombre_zoho,
+                        archivo.stream,
+                        tipo_contenido,
+                    )
+                }
+
+
+                print(
+                    "[subir_archivos_negocio] "
+                    f"Subiendo {nombre_zoho} "
+                    f"al Deal {deal_id}..."
+                )
+
+
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    files=files,
+                    timeout=30,
+                )
+
+
+                print(
+                    "[subir_archivos_negocio] "
+                    f"Status: {response.status_code}"
+                )
+
+
+                try:
+
+                    print(
+                        "[subir_archivos_negocio] "
+                        f"Respuesta: {response.text}"
+                    )
+
+                except Exception:
+
+                    pass
+
+
+                resultado = {
+                    "producto":
+                        indice_producto,
+
+                    "archivo":
+                        nombre_zoho,
+
+                    "status":
+                        response.status_code,
+
+                    "ok":
+                        response.status_code
+                        in (
+                            200,
+                            201,
+                        ),
+                }
+
+
+                resultados.append(
+                    resultado
+                )
+
+
+                # =========================================
+                # REINICIAR NUEVAMENTE EL ARCHIVO
+                # =========================================
+                #
+                # Esto es importante porque después vamos
+                # a reutilizar el mismo archivo para
+                # enviarlo también a Zoho Creator.
+                # =========================================
+
+                try:
+
+                    archivo.stream.seek(0)
+
+                except Exception:
+
+                    pass
+
+
+            except Exception as error:
+
+                print(
+                    "[subir_archivos_negocio] "
+                    f"ERROR subiendo "
+                    f"{nombre_zoho}:",
+                    error,
+                )
+
+
+                resultados.append({
+                    "producto":
+                        indice_producto,
+
+                    "archivo":
+                        nombre_zoho,
+
+                    "status":
+                        0,
+
+                    "ok":
+                        False,
+
+                    "error":
+                        str(error),
+                })
+
+
+    return resultados
+
+# =========================================================
+# OBTENER ID DE LA LICITACIÓN CREADA EN ZOHO CREATOR
+# =========================================================
+
+def obtener_creator_record_id(
+    deal_id: str,
+    access_token: str,
+):
+    """
+    Espera a que la automatización CRM -> Creator
+    genere la Licitación y escriba el link en el campo
+    Zoho_One_Negocio del Deal.
+
+    Del link se obtiene el recLinkID de Creator.
+    """
+
+    deal_id = str(
+        deal_id or ""
+    ).strip()
+
+    if not deal_id:
+        return None
+
+
+    url = (
+        "https://www.zohoapis.com/"
+        f"crm/v8/Deals/{deal_id}"
+    )
+
+
+    headers = {
+        "Authorization":
+            f"Zoho-oauthtoken {access_token}"
+    }
+
+
+    params = {
+        "fields":
+            "Zoho_One_Negocio"
+    }
+
+
+    # =====================================================
+    # ESPERAR AUTOMATIZACIÓN CRM -> CREATOR
+    # =====================================================
+
+    for intento in range(
+        1,
+        13,
+    ):
+
+        try:
+
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+
+
+            if response.status_code == 200:
+
+                data = response.json()
+
+                registros = (
+                    data.get("data")
+                    or []
+                )
+
+
+                if registros:
+
+                    creator_url = str(
+                        registros[0].get(
+                            "Zoho_One_Negocio"
+                        )
+                        or ""
+                    ).strip()
+
+
+                    if "recLinkID=" in creator_url:
+
+                        parte = creator_url.split(
+                            "recLinkID=",
+                            1,
+                        )[1]
+
+
+                        creator_record_id = (
+                            parte.split(
+                                "&",
+                                1,
+                            )[0]
+                            .strip()
+                        )
+
+
+                        if creator_record_id:
+
+                            print(
+                                "[Creator archivos] "
+                                "Licitación encontrada: "
+                                f"{creator_record_id}"
+                            )
+
+                            return (
+                                creator_record_id
+                            )
+
+
+            print(
+                "[Creator archivos] "
+                "Esperando creación de la "
+                f"Licitación... intento {intento}/12"
+            )
+
+
+        except Exception as error:
+
+            print(
+                "[Creator archivos] "
+                "Error consultando link:",
+                error,
+            )
+
+
+        time.sleep(1)
+
+
+    print(
+        "[Creator archivos] "
+        "No se encontró el link de Creator "
+        "después de esperar."
+    )
+
+    return None
+
+
+# =========================================================
+# SUBIR ARCHIVOS A ZOHO CREATOR
+# =========================================================
+
+def subir_archivos_creator(
+    deal_id: str,
+    productos: list,
+):
+    """
+    Sube a la Licitación de Zoho Creator los mismos
+    archivos que fueron adjuntados al Negocio en CRM.
+
+    El campo destino en Creator es:
+        Archivos
+
+    Los archivos se identifican por producto.
+    """
+
+    deal_id = str(
+        deal_id or ""
+    ).strip()
+
+
+    if not deal_id:
+
+        print(
+            "[Creator archivos] "
+            "No se recibió Deal ID."
+        )
+
+        return []
+
+
+    if not productos:
+
+        return []
+
+
+    # =====================================================
+    # ACCESS TOKENS
+    # =====================================================
+
+    # Token exclusivo para Zoho Creator
+    creator_access_token = (
+        get_creator_access_token()
+    )
+
+    if not creator_access_token:
+
+        print(
+            "[Creator archivos] "
+            "No fue posible obtener access token de Creator."
+        )
+
+        return []
+
+
+    # Token normal de Zoho CRM
+    # Se utiliza para consultar Zoho_One_Negocio
+    crm_access_token = (
+        get_access_token()
+    )
+
+    if not crm_access_token:
+
+        print(
+            "[Creator archivos] "
+            "No fue posible obtener access token de CRM."
+        )
+
+        return []
+
+
+    # =====================================================
+    # BUSCAR REGISTRO CREADO EN CREATOR
+    # =====================================================
+
+    creator_record_id = (
+        obtener_creator_record_id(
+            deal_id,
+            crm_access_token,
+        )
+    )
+
+
+    if not creator_record_id:
+
+        return []
+
+
+    # =====================================================
+    # URL CREATOR
+    # =====================================================
+
+    url = (
+        "https://www.zohoapis.com/"
+        "creator/v2.1/data/"
+        "selecspa/"
+        "selec/"
+        "report/"
+        "Licitaci_n_Report/"
+        f"{creator_record_id}/"
+        "Archivos/"
+        "upload"
+    )
+
+
+    headers = {
+        "Authorization":
+            f"Zoho-oauthtoken {creator_access_token}"
+    }
+
+
+    # Evita que subir cada archivo vuelva a disparar
+    # todos los workflows de la Licitación.
+    params = {
+        "skip_workflow":
+            '["all"]'
+    }
+
+
+    resultados = []
+
+
+    # =====================================================
+    # RECORRER PRODUCTOS
+    # =====================================================
+
+    for indice_producto, producto in enumerate(
+        productos,
+        start=1,
+    ):
+
+        archivos = (
+            producto.get("archivos")
+            or []
+        )
+
+
+        for indice_archivo, archivo in enumerate(
+            archivos,
+            start=1,
+        ):
+
+            nombre_original = str(
+                getattr(
+                    archivo,
+                    "filename",
+                    "",
+                )
+                or ""
+            ).strip()
+
+
+            if not nombre_original:
+
+                continue
+
+
+            nombre_seguro = secure_filename(
+                nombre_original
+            )
+
+
+            if not nombre_seguro:
+
+                nombre_seguro = (
+                    f"archivo_{indice_archivo}"
+                )
+
+
+            nombre_creator = (
+                f"Producto_{indice_producto}_"
+                f"{nombre_seguro}"
+            )
+
+
+            tipo_contenido = str(
+                getattr(
+                    archivo,
+                    "mimetype",
+                    "",
+                )
+                or
+                "application/octet-stream"
+            )
+
+
+            try:
+
+                # Volvemos al inicio del archivo.
+                archivo.stream.seek(0)
+
+
+                files = {
+                    "file": (
+                        nombre_creator,
+                        archivo.stream,
+                        tipo_contenido,
+                    )
+                }
+
+
+                print(
+                    "[Creator archivos] "
+                    f"Subiendo {nombre_creator}..."
+                )
+
+
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    params=params,
+                    files=files,
+                    timeout=60,
+                )
+
+
+                print(
+                    "[Creator archivos] "
+                    f"Status: {response.status_code}"
+                )
+
+
+                try:
+
+                    respuesta_json = (
+                        response.json()
+                    )
+
+                except Exception:
+
+                    respuesta_json = {
+                        "respuesta":
+                            response.text
+                    }
+
+
+                print(
+                    "[Creator archivos] "
+                    "Respuesta:",
+                    respuesta_json,
+                )
+
+
+                codigo_creator = (
+                    respuesta_json.get(
+                        "code"
+                    )
+                    if isinstance(
+                        respuesta_json,
+                        dict,
+                    )
+                    else None
+                )
+
+
+                ok = (
+                    response.status_code
+                    in (
+                        200,
+                        201,
+                    )
+                    and codigo_creator
+                    in (
+                        3000,
+                        "3000",
+                    )
+                )
+
+
+                resultados.append({
+                    "producto":
+                        indice_producto,
+
+                    "archivo":
+                        nombre_creator,
+
+                    "ok":
+                        ok,
+
+                    "status":
+                        response.status_code,
+
+                    "respuesta":
+                        respuesta_json,
+                })
+
+
+                # Lo dejamos nuevamente al inicio
+                # por seguridad.
+                archivo.stream.seek(0)
+
+
+            except Exception as error:
+
+                print(
+                    "[Creator archivos] "
+                    f"ERROR con {nombre_creator}:",
+                    error,
+                )
+
+
+                resultados.append({
+                    "producto":
+                        indice_producto,
+
+                    "archivo":
+                        nombre_creator,
+
+                    "ok":
+                        False,
+
+                    "error":
+                        str(error),
+                })
+
+
+    return resultados
 
 # =========================================================
 # CREAR DEAL EN ZOHO CRM
@@ -1372,9 +2216,19 @@ def crear_deal_en_zoho(
 
         return None, None
 
+
+    # =====================================================
+    # OWNER
+    # =====================================================
+
     owner = normalizar_owner(
         owner
     )
+
+
+    # =====================================================
+    # FECHAS
+    # =====================================================
 
     ahora = datetime.now().astimezone()
 
@@ -1399,6 +2253,11 @@ def crear_deal_en_zoho(
         )
     )
 
+
+    # =====================================================
+    # URL / HEADERS
+    # =====================================================
+
     url = (
         f"{CRM_BASE}/Deals"
     )
@@ -1411,74 +2270,295 @@ def crear_deal_en_zoho(
         "Content-Type": "application/json",
     }
 
+
     print(
         "[crear_deal_en_zoho] "
         f"Owner elegido: "
         f"{safe_owner_for_log(owner)}"
     )
 
+
     # =====================================================
-    # NOMBRE DEL DEAL
+    # NOMBRE DEL NEGOCIO
     # =====================================================
+    #
+    # Se genera un número aleatorio de 6 dígitos
+    # para identificar fácilmente la cotización.
+    #
+    # Ejemplo:
+    # Cotización - 583742
+    # =====================================================
+
+    identificador_cotizacion = (
+        random.randint(
+            100000,
+            999999,
+        )
+    )
 
     deal_name = (
         f"Cotización - "
-        f"{campos.get('empresa') or 'Sin empresa'}"
+        f"{identificador_cotizacion}"
     )
 
+
+    # =====================================================
+    # PRODUCTOS
+    # =====================================================
+    #
+    # El formulario nuevo puede enviar varios productos.
+    #
+    # Se guardan dentro de Description del Negocio.
+    # Esa información posteriormente aparece en
+    # el campo Notas de Zoho Creator.
+    # =====================================================
+
+    productos = (
+        campos.get(
+            "productos"
+        )
+        or []
+    )
+
+
+    # =====================================================
+    # COMPATIBILIDAD CON FLUJO ANTIGUO
+    # =====================================================
+    #
+    # Si el flujo antiguo envía un solo producto,
+    # lo convertimos a la nueva estructura.
+    # =====================================================
+
+    if not productos:
+
+        productos = [
+            {
+                "numero_parte":
+                    campos.get(
+                        "num_parte"
+                    )
+                    or "",
+
+                "marca":
+                    campos.get(
+                        "marca"
+                    )
+                    or "",
+
+                "descripcion":
+                    campos.get(
+                        "descripcion"
+                    )
+                    or "",
+
+                "cantidad":
+                    campos.get(
+                        "cantidad"
+                    )
+                    or "1",
+            }
+        ]
+
+
+    # =====================================================
+    # CREAR NOTAS DE PRODUCTOS
+    # =====================================================
+
+    bloques_productos = []
+
+
+    for indice, producto in enumerate(
+        productos,
+        start=1
+    ):
+
+        numero_parte = str(
+            producto.get(
+                "numero_parte"
+            )
+            or ""
+        ).strip()
+
+        marca = str(
+            producto.get(
+                "marca"
+            )
+            or ""
+        ).strip()
+
+        descripcion = str(
+            producto.get(
+                "descripcion"
+            )
+            or ""
+        ).strip()
+
+        cantidad = str(
+            producto.get(
+                "cantidad"
+            )
+            or "1"
+        ).strip()
+
+
+        bloque_producto = (
+            f"Producto {indice}\n"
+            f"Número de parte: "
+            f"{numero_parte or 'No informado'}\n"
+            f"Marca: "
+            f"{marca or 'No informada'}\n"
+            f"Descripción: "
+            f"{descripcion or 'No informada'}\n"
+            f"Cantidad: "
+            f"{cantidad or '1'}"
+        )
+
+
+        bloques_productos.append(
+            bloque_producto
+        )
+
+
+    descripcion_deal = (
+        "\n\n".join(
+            bloques_productos
+        )
+    )
+
+
+    # =====================================================
+    # ENTREGA
+    # =====================================================
+
+    direccion_entrega = str(
+        campos.get(
+            "direccion_entrega"
+        )
+        or ""
+    ).strip()
+
+
+    if direccion_entrega:
+
+        descripcion_deal += (
+            "\n\n"
+            "Dirección de entrega: "
+            f"{direccion_entrega}"
+        )
+
+
+      # =====================================================
+    # CANTIDAD DE PRODUCTOS SOLICITADOS
+    # =====================================================
+
+    cantidad_productos_solicitados = int(
+        campos.get(
+            "cantidad_productos_solicitados"
+        )
+        or len(
+            productos
+        )
+        or 1
+    )
+
+
+        # =====================================================
+    # ORIGEN DE LA COTIZACIÓN
+    # =====================================================
+
+    origen = str(
+        campos.get(
+            "origen"
+        )
+        or ""
+    ).strip().lower()
+
+
+    if origen == "web":
+
+        tipo_negocio = "Web"
+        fuente_posible_cliente = "Chat Pag Web"
+
+
+    elif origen == "whatsapp":
+
+        tipo_negocio = "WhatsApp"
+        fuente_posible_cliente = "Chat Whatsapp"
+
+
+    else:
+
+        tipo_negocio = "Web /WSP"
+        fuente_posible_cliente = "Chat Whatsapp"
+
+
+    # =====================================================
+    # DATOS DEL NEGOCIO
+    # =====================================================
+
     deal_data = {
-        "Deal_Name": deal_name,
 
-        "Description": (
-            f"Empresa: {campos.get('empresa')}\n"
-            f"RUT: {campos.get('rut')}\n"
-            f"Contacto: {campos.get('contacto')}\n"
-            f"Correo: {campos.get('correo')}\n"
-            f"Teléfono: {campos.get('telefono')}\n"
-            f"Producto / descripción: "
-            f"{campos.get('num_parte')}\n"
-            f"Marca: {campos.get('marca')}\n"
-            f"Cantidad: {campos.get('cantidad')}\n"
-            f"Dirección de entrega: "
-            f"{campos.get('direccion_entrega')}"
-        ),
+        "Deal_Name":
+            deal_name,
 
-        "Stage": "Pendiente por cotizar",
-        "Lead_Source": "Chat Whatsapp",
-        "Amount": "1",
-        "Type": "Web /WSP",
-        "Fecha_hora_1": fecha_hora_1_str,
-        "Closing_Date": closing_date_str,
+        "Description":
+            descripcion_deal,
+
+        "Stage":
+            "Pendiente por cotizar",
+
+        "Lead_Source":
+            fuente_posible_cliente,
+
+        "Amount":
+            "1",
+
+        "Type":
+            tipo_negocio,
+
+        "Fecha_hora_1":
+            fecha_hora_1_str,
+
+        "Closing_Date":
+            closing_date_str,
+
+        # ---------------------------------------------
+        # CANTIDAD DE PRODUCTOS
+        # ---------------------------------------------
+
+        "Cantidad_de_productos":
+            cantidad_productos_solicitados,
     }
 
     # =====================================================
-    # OWNER
+    # OWNER DEL NEGOCIO
     # =====================================================
 
-    if owner.get("id"):
+    if owner.get(
+        "id"
+    ):
 
-        deal_data["Owner"] = {
-            "id": owner["id"]
+        deal_data[
+            "Owner"
+        ] = {
+            "id":
+                owner[
+                    "id"
+                ]
         }
 
-        deal_data["Asignado_a"] = {
-            "id": owner["id"]
+        deal_data[
+            "Asignado_a"
+        ] = {
+            "id":
+                owner[
+                    "id"
+                ]
         }
+
 
     # =====================================================
     # ACCOUNT
-    # =====================================================
-    #
-    # IMPORTANTE:
-    #
-    # account_id viene de obtener_o_crear_account().
-    #
-    # Como esa función ahora utiliza el RUT como
-    # identificador principal, este account_id representa
-    # la Account correcta para el RUT recibido.
-    #
-    # Por lo tanto el Deal queda asociado a esa Account.
-    #
     # =====================================================
 
     if account_id:
@@ -1486,7 +2566,10 @@ def crear_deal_en_zoho(
         deal_data[
             "Account_Name"
         ] = {
-            "id": str(account_id)
+            "id":
+                str(
+                    account_id
+                )
         }
 
         print(
@@ -1503,6 +2586,7 @@ def crear_deal_en_zoho(
             "El Deal se creará sin Account_Name."
         )
 
+
     # =====================================================
     # CONTACT
     # =====================================================
@@ -1512,7 +2596,10 @@ def crear_deal_en_zoho(
         deal_data[
             "Contact_Name"
         ] = {
-            "id": str(contact_id)
+            "id":
+                str(
+                    contact_id
+                )
         }
 
     else:
@@ -1520,15 +2607,28 @@ def crear_deal_en_zoho(
         deal_data[
             "Contact_Name"
         ] = {
-            "id": CONTACT_NAME_ID,
-            "name": CONTACT_NAME_DEFAULT,
+            "id":
+                CONTACT_NAME_ID,
+
+            "name":
+                CONTACT_NAME_DEFAULT,
         }
+
+
+    # =====================================================
+    # PAYLOAD
+    # =====================================================
 
     payload = {
         "data": [
             deal_data
         ]
     }
+
+
+ # =========================================================
+# CREAR NEGOCIO
+# =========================================================
 
     try:
 
@@ -1560,7 +2660,13 @@ def crear_deal_en_zoho(
             )
 
         except Exception:
+
             pass
+
+
+        # =================================================
+        # RESPUESTA CORRECTA
+        # =================================================
 
         if resp.status_code in (
             200,
@@ -1572,7 +2678,10 @@ def crear_deal_en_zoho(
                 body = resp.json()
 
                 registros = (
-                    body.get("data") or []
+                    body.get(
+                        "data"
+                    )
+                    or []
                 )
 
                 if registros:
@@ -1596,32 +2705,108 @@ def crear_deal_en_zoho(
                         f"{mask_value(deal_id, 2, 2)}"
                     )
 
+
+                    # =====================================
+                    # SI EL NEGOCIO SE CREÓ CORRECTAMENTE
+                    # =====================================
+
                     if deal_id:
+
+                        # ===============================
+                        # SUBIR ARCHIVOS A ZOHO CRM
+                        # ===============================
+
+                        try:
+
+                            resultado_archivos = (
+                                subir_archivos_negocio(
+                                    str(
+                                        deal_id
+                                    ),
+                                    productos,
+                                )
+                            )
+
+                            print(
+                                "[crear_deal_en_zoho] "
+                                "Resultado archivos CRM:",
+                                resultado_archivos,
+                            )
+
+                        except Exception as error:
+
+                            print(
+                                "[crear_deal_en_zoho] "
+                                "ERROR subiendo archivos a CRM:",
+                                error,
+                            )
+
+
+                        # ===============================
+                        # SUBIR ARCHIVOS A ZOHO CREATOR
+                        # ===============================
+
+                        try:
+
+                            resultado_archivos_creator = (
+                                subir_archivos_creator(
+                                    str(
+                                        deal_id
+                                    ),
+                                    productos,
+                                )
+                            )
+
+                            print(
+                                "[crear_deal_en_zoho] "
+                                "Resultado archivos Creator:",
+                                resultado_archivos_creator,
+                            )
+
+                        except Exception as error:
+
+                            print(
+                                "[crear_deal_en_zoho] "
+                                "ERROR subiendo archivos a Creator:",
+                                error,
+                            )
+
+
+                        # ===============================
+                        # DEVOLVER NEGOCIO CREADO
+                        # ===============================
 
                         return (
                             resp,
                             deal_id
                         )
 
-            except Exception as e:
+
+            except Exception as error:
 
                 print(
                     "[crear_deal_en_zoho] "
                     "Error leyendo respuesta:",
-                    e,
+                    error,
                 )
+
+
+        # =================================================
+        # ZOHO RESPONDIÓ, PERO NO SE OBTUVO DEAL ID
+        # =================================================
 
         return (
             resp,
             None
         )
 
-    except Exception as e:
+
+    except Exception as error:
 
         print(
             "[crear_deal_en_zoho] "
             "ERROR llamando a Zoho CRM:",
-            e,
+            error,
         )
 
         return (

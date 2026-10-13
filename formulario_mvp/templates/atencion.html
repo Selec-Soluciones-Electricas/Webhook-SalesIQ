@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Atención al cliente | SELEC
+    </title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family:
+                Arial,
+                Helvetica,
+                sans-serif;
+            background:
+                #f5f6f8;
+            color:
+                #1f2933;
+        }
+
+        .page {
+            width: 100%;
+            min-height: 100vh;
+            padding: 28px 18px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .chat-shell {
+            width: 100%;
+            max-width: 720px;
+            height: min(760px, 90vh);
+            background: #ffffff;
+            border:
+                1px solid #e5e7eb;
+            border-radius: 22px;
+            box-shadow:
+                0 18px 45px
+                rgba(31, 41, 51, 0.10);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            padding:
+                20px 22px;
+            border-bottom:
+                1px solid #eceff2;
+            background: #ffffff;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 14px;
+            color: #667085;
+            font-size: 13px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .back-link:hover {
+            color: #f7941d;
+        }
+
+        .header-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .assistant-icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 14px;
+            background: #f7941d;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+
+        .header-copy {
+            min-width: 0;
+        }
+
+        .eyebrow {
+            margin: 0 0 3px;
+            color: #f7941d;
+            font-size: 10px;
+            line-height: 1;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
+        .chat-title {
+            margin: 0;
+            color: #1f2933;
+            font-size: 21px;
+            line-height: 1.25;
+        }
+
+        .chat-status {
+            margin:
+                4px 0 0;
+            color: #667085;
+            font-size: 13px;
+        }
+
+        .chat-body {
+            flex: 1;
+            overflow-y: auto;
+            padding:
+                22px;
+            background:
+                #f8f9fb;
+        }
+
+        .message-row {
+            width: 100%;
+            display: flex;
+            margin-bottom: 14px;
+        }
+
+        .message-row.assistant {
+            justify-content: flex-start;
+        }
+
+        .message-row.user {
+            justify-content: flex-end;
+        }
+
+        .bubble {
+            max-width: 78%;
+            padding:
+                12px 15px;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .assistant .bubble {
+            background: #ffffff;
+            color: #344054;
+            border:
+                1px solid #e5e7eb;
+            border-bottom-left-radius: 5px;
+        }
+
+        .user .bubble {
+            background: #f7941d;
+            color: #ffffff;
+            border-bottom-right-radius: 5px;
+        }
+
+        .quick-area {
+            padding:
+                15px 22px 8px;
+            background: #ffffff;
+            border-top:
+                1px solid #eceff2;
+        }
+
+        .quick-label {
+            margin:
+                0 0 9px;
+            color: #667085;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .quick-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .quick-button {
+            border:
+                1px solid #e1e5ea;
+            background: #ffffff;
+            color: #475467;
+            border-radius: 999px;
+            padding:
+                8px 11px;
+            cursor: pointer;
+            font-size: 12px;
+            transition:
+                0.2s ease;
+        }
+
+        .quick-button:hover {
+            border-color: #f7941d;
+            color: #f7941d;
+        }
+
+        .chat-footer {
+            padding:
+                12px 22px 20px;
+            background: #ffffff;
+        }
+
+        .composer {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .composer textarea {
+            flex: 1;
+            min-height: 48px;
+            max-height: 120px;
+            resize: none;
+            border:
+                1px solid #d9dee5;
+            border-radius: 12px;
+            padding:
+                13px 14px;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .composer textarea:focus {
+            border-color: #f7941d;
+            box-shadow:
+                0 0 0 3px
+                rgba(247, 148, 29, 0.10);
+        }
+
+        .send-button {
+            height: 48px;
+            min-width: 94px;
+            border: 0;
+            border-radius: 12px;
+            background: #f7941d;
+            color: #ffffff;
+            font-weight: 800;
+            cursor: pointer;
+            padding:
+                0 18px;
+        }
+
+        .send-button:hover {
+            background: #e88614;
+        }
+
+        .send-button:disabled {
+            opacity: 0.55;
+            cursor: default;
+        }
+
+        .disclaimer {
+            margin:
+                9px 0 0;
+            text-align: center;
+            color: #98a2b3;
+            font-size: 11px;
+        }
+
+        .typing {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .typing span {
+            width: 6px;
+            height: 6px;
+            background: #98a2b3;
+            border-radius: 50%;
+            animation:
+                pulse 1.1s
+                infinite ease-in-out;
+        }
+
+        .typing span:nth-child(2) {
+            animation-delay: 0.15s;
+        }
+
+        .typing span:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            80%,
+            100% {
+                opacity: 0.25;
+            }
+
+            40% {
+                opacity: 1;
+            }
+        }
+
+        @media (
+            max-width: 600px
+        ) {
+
+            .page {
+                padding: 0;
+                align-items: stretch;
+            }
+
+            .chat-shell {
+                max-width: none;
+                height: 100vh;
+                border-radius: 0;
+                border: 0;
+            }
+
+            .chat-header {
+                padding:
+                    17px 16px;
+            }
+
+            .chat-body {
+                padding:
+                    18px 14px;
+            }
+
+            .quick-area {
+                padding:
+                    13px 14px 7px;
+            }
+
+            .chat-footer {
+                padding:
+                    10px 14px 15px;
+            }
+
+            .bubble {
+                max-width: 86%;
+            }
+
+            .send-button {
+                min-width: 72px;
+                padding:
+                    0 13px;
+            }
+        }
+
+    </style>
+</head>
+
+<body>
+
+    <main class="page">
+
+        <section class="chat-shell">
+
+            <header class="chat-header">
+
+                <a
+                    href="/"
+                    class="back-link"
+                >
+                    ← Volver
+                </a>
+
+                <div class="header-row">
+
+                    <div
+                        class="assistant-icon"
+                        aria-hidden="true"
+                    >
+                        S
+                    </div>
+
+                    <div class="header-copy">
+
+                        <p class="eyebrow">
+                            SELEC
+                        </p>
+
+                        <h1 class="chat-title">
+                            Atención al cliente
+                        </h1>
+
+                        <p class="chat-status">
+                            Asistente virtual disponible
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </header>
+
+
+            <div
+                class="chat-body"
+                id="chatBody"
+            >
+
+                <div class="message-row assistant">
+
+                    <div class="bubble">
+                        Hola. Soy el asistente virtual de SELEC.
+
+                        Puedo ayudarte con información de contacto, teléfonos, ubicaciones y orientarte sobre cotizaciones o servicio posventa.
+
+                        ¿Qué necesitas saber?
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="quick-area">
+
+                <p class="quick-label">
+                    Preguntas frecuentes
+                </p>
+
+                <div class="quick-buttons">
+
+                    <button
+                        type="button"
+                        class="quick-button"
+                        data-question="¿Cuál es el correo de SELEC?"
+                    >
+                        Correo
+                    </button>
+
+                    <button
+                        type="button"
+                        class="quick-button"
+                        data-question="¿Cuál es el teléfono de SELEC en Chile?"
+                    >
+                        Teléfono
+                    </button>
+
+                    <button
+                        type="button"
+                        class="quick-button"
+                        data-question="¿Dónde están ubicados en Chile?"
+                    >
+                        Ubicación
+                    </button>
+
+                    <button
+                        type="button"
+                        class="quick-button"
+                        data-question="¿Cómo puedo solicitar una cotización?"
+                    >
+                        Cotización
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <footer class="chat-footer">
+
+                <form
+                    class="composer"
+                    id="chatForm"
+                >
+
+                    <textarea
+                        id="messageInput"
+                        placeholder="Escribe tu consulta..."
+                        rows="1"
+                        maxlength="500"
+                        required
+                    ></textarea>
+
+                    <button
+                        type="submit"
+                        class="send-button"
+                        id="sendButton"
+                    >
+                        Enviar
+                    </button>
+
+                </form>
+
+                <p class="disclaimer">
+                    El asistente responde utilizando información oficial disponible de SELEC.
+                </p>
+
+            </footer>
+
+        </section>
+
+    </main>
+
+
+    <script>
+
+        const chatBody =
+            document.getElementById(
+                "chatBody"
+            );
+
+        const chatForm =
+            document.getElementById(
+                "chatForm"
+            );
+
+        const messageInput =
+            document.getElementById(
+                "messageInput"
+            );
+
+        const sendButton =
+            document.getElementById(
+                "sendButton"
+            );
+
+        const quickButtons =
+            document.querySelectorAll(
+                ".quick-button"
+            );
+
+
+        function scrollChat() {
+
+            chatBody.scrollTop =
+                chatBody.scrollHeight;
+
+        }
+
+
+        function addMessage(
+            text,
+            type
+        ) {
+
+            const row =
+                document.createElement(
+                    "div"
+                );
+
+            row.className =
+                `message-row ${type}`;
+
+
+            const bubble =
+                document.createElement(
+                    "div"
+                );
+
+            bubble.className =
+                "bubble";
+
+            bubble.textContent =
+                text;
+
+
+            row.appendChild(
+                bubble
+            );
+
+            chatBody.appendChild(
+                row
+            );
+
+            scrollChat();
+
+            return row;
+
+        }
+
+
+        function addTyping() {
+
+            const row =
+                document.createElement(
+                    "div"
+                );
+
+            row.className =
+                "message-row assistant";
+
+            row.id =
+                "typingMessage";
+
+
+            const bubble =
+                document.createElement(
+                    "div"
+                );
+
+            bubble.className =
+                "bubble";
+
+
+            bubble.innerHTML = `
+                <div class="typing">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            `;
+
+
+            row.appendChild(
+                bubble
+            );
+
+            chatBody.appendChild(
+                row
+            );
+
+            scrollChat();
+
+        }
+
+
+        function removeTyping() {
+
+            const typing =
+                document.getElementById(
+                    "typingMessage"
+                );
+
+            if (typing) {
+                typing.remove();
+            }
+
+        }
+
+
+        async function sendMessage(
+            text
+        ) {
+
+            text =
+                String(
+                    text || ""
+                ).trim();
+
+            if (!text) {
+                return;
+            }
+
+
+            addMessage(
+                text,
+                "user"
+            );
+
+
+            messageInput.value =
+                "";
+
+            sendButton.disabled =
+                true;
+
+            addTyping();
+
+
+            try {
+
+                const response =
+                    await fetch(
+                        "/api/atencion",
+                        {
+                            method:
+                                "POST",
+
+                            headers: {
+                                "Content-Type":
+                                    "application/json"
+                            },
+
+                            body:
+                                JSON.stringify({
+                                    mensaje:
+                                        text
+                                })
+                        }
+                    );
+
+
+                const data =
+                    await response.json();
+
+
+                removeTyping();
+
+
+                if (
+                    !response.ok ||
+                    !data.ok
+                ) {
+
+                    throw new Error(
+                        data.error ||
+                        "No fue posible procesar la consulta."
+                    );
+
+                }
+
+
+                addMessage(
+                    data.respuesta,
+                    "assistant"
+                );
+
+            }
+
+            catch (error) {
+
+                removeTyping();
+
+                addMessage(
+                    "No fue posible responder en este momento. Intenta nuevamente.",
+                    "assistant"
+                );
+
+                console.error(
+                    error
+                );
+
+            }
+
+            finally {
+
+                sendButton.disabled =
+                    false;
+
+                messageInput.focus();
+
+            }
+
+        }
+
+
+        chatForm.addEventListener(
+            "submit",
+            event => {
+
+                event.preventDefault();
+
+                sendMessage(
+                    messageInput.value
+                );
+
+            }
+        );
+
+
+        messageInput.addEventListener(
+            "keydown",
+            event => {
+
+                if (
+                    event.key === "Enter" &&
+                    !event.shiftKey
+                ) {
+
+                    event.preventDefault();
+
+                    chatForm.requestSubmit();
+
+                }
+
+            }
+        );
+
+
+        quickButtons.forEach(
+            button => {
+
+                button.addEventListener(
+                    "click",
+                    () => {
+
+                        sendMessage(
+                            button.dataset.question
+                        );
+
+                    }
+                );
+
+            }
+        );
+
+    </script>
+
+</body>
+</html>

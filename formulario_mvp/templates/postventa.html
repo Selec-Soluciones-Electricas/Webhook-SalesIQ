@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    >
+
+    <meta
+        name="theme-color"
+        content="#ffffff"
+    >
+
+    <title>
+        SELEC | Servicio posventa
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('formulario_mvp.static', filename='style.css') }}"
+    >
+
+</head>
+
+
+<body class="form-page aftersales-page">
+
+<main class="aftersales-shell">
+
+
+    <!-- =====================================================
+         ENCABEZADO
+    ====================================================== -->
+
+    <header class="aftersales-header">
+
+        <a
+            href="/"
+            class="aftersales-back"
+            aria-label="Volver"
+        >
+            <span aria-hidden="true">
+                ←
+            </span>
+
+            Volver
+        </a>
+
+
+        <div class="aftersales-brand-row">
+
+            <img
+                src="{{ url_for('formulario_mvp.static', filename='selec-logo.png') }}"
+                alt="SELEC"
+                class="selec-brand-logo"
+            >
+
+
+            <div class="aftersales-header-copy">
+
+                <span class="aftersales-kicker">
+                    Servicio posventa
+                </span>
+
+                <h1>
+                    Cuéntanos qué ocurrió
+                </h1>
+
+                <p>
+                    Completa la información de tu compra
+                    y nuestro equipo revisará tu caso
+                    para ayudarte.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div class="aftersales-trust-row">
+
+            <span>
+                ⏱ Te tomará pocos minutos
+            </span>
+
+            <span>
+                🔒 Tus datos se utilizan solo para gestionar tu caso
+            </span>
+
+        </div>
+
+    </header>
+
+
+    <!-- =====================================================
+         FORMULARIO
+    ====================================================== -->
+
+    <section class="aftersales-card">
+
+        <form
+    method="POST"
+    action="/solicitud/postventa"
+    class="aftersales-form"
+    id="postventaForm"
+    enctype="multipart/form-data"
+>
+        <input
+            type="hidden"
+            name="origen"
+            value="{{ request.args.get('origen', '') }}"
+        >
+
+
+            <!-- =================================================
+                 DATOS DE CONTACTO
+            ================================================== -->
+
+            <section class="aftersales-section">
+
+                <div class="aftersales-section-heading">
+
+                    <span
+                        class="aftersales-section-icon"
+                        aria-hidden="true"
+                    >
+                        1
+                    </span>
+
+                    <div>
+
+                        <h2>
+                            Datos de contacto
+                        </h2>
+
+                        <p>
+                            Información de la persona
+                            que realiza la solicitud.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="field-group">
+
+                    <label for="nombre_postventa">
+                        Nombre
+                        <span>*</span>
+                    </label>
+
+                    <input
+                        type="text"
+                        id="nombre_postventa"
+                        name="nombre_postventa"
+                        placeholder="Nombre y apellido"
+                        autocomplete="name"
+                        required
+                    >
+
+                </div>
+
+
+<div class="field-group">
+
+    <label for="correo_postventa">
+        Correo
+        <span>*</span>
+    </label>
+
+    <input
+        type="email"
+        id="correo_postventa"
+        name="correo_postventa"
+        placeholder="Ej: nombre@empresa.cl"
+        autocomplete="email"
+        required
+    >
+
+    <p class="field-help">
+        Utilizaremos este correo para contactarte
+        respecto a tu solicitud.
+    </p>
+
+</div>
+
+                <div class="field-group">
+
+                    <label for="rut_postventa">
+                        RUT de Empresa
+                        <span>*</span>
+                    </label>
+
+                    <input
+                        type="text"
+                        id="rut_postventa"
+                        name="rut_postventa"
+                        placeholder="Ej: 22.123.456-7"
+                        autocomplete="off"
+                        autocapitalize="characters"
+                        required
+                    >
+
+                    <p class="field-help">
+                        Puedes ingresarlo con o sin puntos.
+                    </p>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 INFORMACIÓN DE COMPRA
+            ================================================== -->
+
+            <section class="aftersales-section">
+
+                <div class="aftersales-section-heading">
+
+                    <span
+                        class="aftersales-section-icon"
+                        aria-hidden="true"
+                    >
+                        2
+                    </span>
+
+                    <div>
+
+                        <h2>
+                            Información de compra
+                        </h2>
+
+                        <p>
+                            Indica el documento asociado
+                            a tu compra.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="field-group">
+
+                    <label for="factura_oc">
+                        Número de factura y/o Orden de compra
+                        <span>*</span>
+                    </label>
+
+                    <input
+                        type="text"
+                        id="factura_oc"
+                        name="factura_oc"
+                        placeholder="Ej: 12345678"
+                        autocomplete="off"
+                        inputmode="numeric"
+                        required
+                    >
+
+                    <p class="field-help">
+                        Puedes ingresar cualquiera de los dos:
+                        factura u Orden de compra.
+                    </p>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 DESCRIPCIÓN DEL CASO
+            ================================================== -->
+
+            <section class="aftersales-section last-section">
+
+                <div class="aftersales-section-heading">
+
+                    <span
+                        class="aftersales-section-icon"
+                        aria-hidden="true"
+                    >
+                        3
+                    </span>
+
+                    <div>
+
+                        <h2>
+                            Descripción de la situación
+                        </h2>
+
+                        <p>
+                            Cuéntanos brevemente qué ocurrió
+                            para que podamos revisar tu caso.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="field-group">
+
+                    <label for="descripcion_postventa">
+                        ¿Qué ocurrió?
+                        <span>*</span>
+                    </label>
+
+                    <textarea
+                        id="descripcion_postventa"
+                        name="descripcion_postventa"
+                        rows="6"
+                        placeholder="Ej: El producto llegó dañado, falta una pieza, recibí un producto distinto..."
+                        required
+                    ></textarea>
+
+                    <p class="field-help">
+                        Mientras más información nos entregues,
+                        más fácil será revisar tu solicitud.
+                    </p>
+
+                </div>
+
+                <div class="field-group">
+
+    <label for="archivos_postventa">
+        Archivos de respaldo
+    </label>
+
+    <input
+        type="file"
+        id="archivos_postventa"
+        name="archivos_postventa"
+        multiple
+        accept="image/*,application/pdf"
+    >
+
+    <p class="field-help">
+        Puedes adjuntar fotografías o archivos PDF
+        que ayuden a revisar tu caso.
+    </p>
+
+</div>
+
+            </section>
+
+
+            <!-- =================================================
+                 FINAL
+            ================================================== -->
+
+            <div class="aftersales-info-box">
+
+                <div
+                    class="aftersales-info-icon"
+                    aria-hidden="true"
+                >
+                    ✓
+                </div>
+
+                <div>
+
+                    <strong>
+                        Revisaremos tu solicitud
+                    </strong>
+
+                    <p>
+                        Una vez enviada, nuestro equipo de
+                        posventa podrá continuar con la gestión
+                        de tu caso.
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <p class="required-note">
+                * Campos obligatorios
+            </p>
+
+
+            <button
+                type="submit"
+                class="aftersales-submit"
+                id="submitPostventa"
+            >
+                Enviar solicitud
+            </button>
+
+
+            <p class="aftersales-privacy">
+                Tus datos serán utilizados únicamente
+                para gestionar esta solicitud con SELEC.
+            </p>
+
+        </form>
+
+    </section>
+
+</main>
+
+
+<!-- =====================================================
+     EVITAR DOBLE ENVÍO
+===================================================== -->
+
+<script>
+
+    (() => {
+
+        const form =
+            document.getElementById(
+                "postventaForm"
+            );
+
+        const submitButton =
+            document.getElementById(
+                "submitPostventa"
+            );
+
+
+        form.addEventListener(
+            "submit",
+            () => {
+
+                submitButton.disabled = true;
+
+                submitButton.textContent =
+                    "Enviando solicitud...";
+
+            }
+        );
+
+    })();
+
+</script>
+
+
+</body>
+
+</html>

@@ -188,7 +188,9 @@ salesiq_access_token_cache = {
     "expires_at": 0.0,
 }
 
-
+# ========================================================
+# OBTENER ACCESS TOKEN PARA SALESIQ (independiente del de CRM)
+# ========================================================
 def get_salesiq_access_token() -> str:
     """
     Obtiene el access token de Zoho SalesIQ utilizando su PROPIO
@@ -1446,7 +1448,7 @@ def crear_deal_en_zoho(
         "Stage": "Pendiente por cotizar",
         "Lead_Source": "Chat Whatsapp",
         "Amount": "1",
-        "Type": "Web /WSP",
+        "Type": "TI",
         "Fecha_hora_1": fecha_hora_1_str,
         "Closing_Date": closing_date_str,
     }

@@ -180,7 +180,7 @@ def agregar_fila_analytics(
         )
 
         return False
-
+# Función desarrollada con el fin de obtener la URL y headers para llamar a la API de Analytics, usando las credenciales y tokens configurados en las variables de entorno, para poder realizar consultas o inserciones de datos en la tabla de Analytics sin interrumpir la respuesta al visitante.
 def existe_attempt_id_analytics(attempt_id: str):
     """
     Comprueba si un Attempt ID ya existe en Zoho Analytics.

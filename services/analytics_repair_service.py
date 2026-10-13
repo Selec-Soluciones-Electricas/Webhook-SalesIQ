@@ -55,7 +55,7 @@ def _config_base():
 ultimo_error_analytics = {"detalle": None}
 
 
-# Funcion desarrollada con el fin de leer filas de la tabla Registro_CRM_WhatsApp que cumplan un criterio.
+# Función desarrollada con el fin de comprobar si existe un attempt_id en la tabla de Analytics.
 def listar_filas_analytics(criteria: str = None) -> list:
     """
     Devuelve una lista de dicts {columna: valor}, o None si la

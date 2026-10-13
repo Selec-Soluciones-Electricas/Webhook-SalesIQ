@@ -36,6 +36,10 @@ from routes.flow_mvp import (
     flow_mvp_bp,
 )
 
+from formulario_mvp.app import (
+    formulario_mvp_bp,
+)
+
 
 # =========================================================
 # SESIONES
@@ -63,6 +67,10 @@ register_routes(
 
 app.register_blueprint(
     flow_mvp_bp
+)
+
+app.register_blueprint(
+    formulario_mvp_bp
 )
 
 

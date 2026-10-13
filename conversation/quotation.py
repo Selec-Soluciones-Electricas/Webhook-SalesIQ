@@ -1250,55 +1250,35 @@ def registrar_cotizacion_en_zoho(
 ):
 
     # =====================================================
-    # OWNER GENERAL
+    # OWNER DE COTIZACIÓN
     # =====================================================
     #
-    # Se mantiene para Account y Contact.
-    # No modificamos el comportamiento existente.
+    # Todas las solicitudes de cotización provenientes
+    # de Web o WhatsApp quedan asignadas al owner
+    # configurado en las variables de entorno.
+    #
+    # Actualmente:
+    #
+    # Patricio
+    # OWNER_1_ID=4358923000098163001
+    #
     # =====================================================
 
-    owner_general = normalizar_owner(
+    owner_cotizacion = normalizar_owner(
         data.get(
             "owner_asignado"
         )
     )
 
-     # =====================================================
-    # OWNER ALEATORIO PARA LA COTIZACIÓN
-    # =====================================================
-
-    owner_seleccionado = random.choice(
-        COTIZACION_OWNERS
-    )
-
-    owner_cotizacion = normalizar_owner(
-        owner_seleccionado
-    )
 
     print(
         "[registrar_cotizacion_en_zoho] "
-        "Owner aleatorio seleccionado:",
-        owner_cotizacion.get("nombre")
+        "Owner seleccionado:",
+        owner_cotizacion.get(
+            "nombre"
+        )
     )
 
-    # =====================================================
-    # SEGURIDAD
-    # =====================================================
-    #
-    # Si por algún motivo el owner seleccionado
-    # no contiene un ID válido, utilizamos el owner
-    # general para evitar bloquear la creación del Deal.
-
-    if not owner_cotizacion.get("id"):
-
-        print(
-            "[registrar_cotizacion_en_zoho] "
-            "ADVERTENCIA: COTIZACION_OWNER_ID "
-            "no está configurado. "
-            "Se utilizará el owner general."
-        )
-
-        owner_cotizacion = owner_general
 
     # =====================================================
     # ACCOUNT
@@ -1307,9 +1287,10 @@ def registrar_cotizacion_en_zoho(
     account_id = (
         obtener_o_crear_account(
             data,
-            owner=owner_general,
+            owner=owner_cotizacion,
         )
     )
+
 
     # =====================================================
     # CONTACT
@@ -1319,15 +1300,13 @@ def registrar_cotizacion_en_zoho(
         obtener_o_crear_contact(
             data,
             account_id=account_id,
-            owner=owner_general,
+            owner=owner_cotizacion,
         )
     )
 
+
     # =====================================================
-    # DEAL
-    # =====================================================
-    #
-    # SOLO EL NEGOCIO queda asignado a Ivanna.
+    # NEGOCIO
     # =====================================================
 
     deal_resp, deal_id = (
@@ -1338,6 +1317,7 @@ def registrar_cotizacion_en_zoho(
             owner=owner_cotizacion,
         )
     )
+
 
     return (
         owner_cotizacion,

@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 
 from services.zoho_service import get_access_token
@@ -22,6 +23,19 @@ SENDER_USER_NAME = os.environ.get(
     "SENDER_USER_NAME",
     "Bot Selec"
 )
+
+# Modo de prueba para correos de cotización
+COTIZACION_MODO_PRUEBA = (
+    os.environ.get(
+        "COTIZACION_MODO_PRUEBA",
+        "false"
+    ).strip().lower() == "true"
+)
+
+COTIZACION_TEST_TO = os.environ.get(
+    "COTIZACION_TEST_TO",
+    ""
+).strip()
 
 # Destinatario fijo para correos generales
 # como primer contacto y solicitudes incompletas.
@@ -138,6 +152,104 @@ def construir_remitente() -> dict:
         "email": SENDER_USER_EMAIL,
     }
 
+def obtener_link_zoho_one(
+    deal_id: str,
+    access_token: str,
+) -> str:
+
+    deal_id = str(
+        deal_id or ""
+    ).strip()
+
+    if not deal_id:
+
+        return ""
+
+
+    url = (
+        "https://www.zohoapis.com/"
+        f"crm/v8/Deals/{deal_id}"
+    )
+
+
+    headers = {
+        "Authorization":
+            f"Zoho-oauthtoken {access_token}"
+    }
+
+
+    params = {
+        "fields":
+            "Zoho_One_Negocio"
+    }
+
+
+    for intento in range(
+        1,
+        11,
+    ):
+
+        try:
+
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=15,
+            )
+
+
+            if response.status_code == 200:
+
+                data = response.json()
+
+                registros = (
+                    data.get("data")
+                    or []
+                )
+
+
+                if registros:
+
+                    zoho_one_link = str(
+                        registros[0].get(
+                            "Zoho_One_Negocio"
+                        )
+                        or ""
+                    ).strip()
+
+
+                    if zoho_one_link:
+
+                        print(
+                            "[enviar_correo_owner] "
+                            "Link Zoho One encontrado:",
+                            zoho_one_link,
+                        )
+
+                        return zoho_one_link
+
+
+        except Exception as error:
+
+            print(
+                "[enviar_correo_owner] "
+                "Error obteniendo link Zoho One:",
+                error,
+            )
+
+
+        if intento < 10:
+
+            time.sleep(1)
+
+
+    print(
+        "[enviar_correo_owner] "
+        "No se encontró link de Zoho One."
+    )
+
+    return ""
 
 # =========================================================
 # CORREO DE NOTIFICACION DE DEAL
@@ -155,45 +267,163 @@ def enviar_correo_owner(
     """
 
     # =====================================================
-    # DESTINATARIO = OWNER REAL DEL DEAL
+    # OWNER REAL DEL DEAL
     # =====================================================
 
-    to_email = str(
+    owner_email = str(
         owner.get("email")
         or ""
     ).strip()
 
-    to_name = str(
+    owner_name = str(
         owner.get("nombre")
         or ""
     ).strip()
 
-       # =====================================================
-    # VALIDAR OWNER DEL DEAL
+    if not owner_name:
+        owner_name = "Ejecutivo Selec"
+
+    # =====================================================
+    # MODO PRUEBA / PRODUCCION
     # =====================================================
 
-    if not to_email:
+    if COTIZACION_MODO_PRUEBA:
+
+        if not COTIZACION_TEST_TO:
+
+            print(
+                "[enviar_correo_owner] "
+                "COTIZACION_MODO_PRUEBA está activo, "
+                "pero COTIZACION_TEST_TO está vacío. "
+                "No se enviará ningún correo."
+            )
+
+            return None
+
+        to_email = COTIZACION_TEST_TO
+        to_name = "Ederth"
+
+        # En modo prueba no enviamos copias
+        cc_destinatarios = []
 
         print(
-            "[enviar_correo_owner] "
-            "El owner del Deal no tiene correo configurado. "
-            "No se enviará la notificación."
+            "[enviar_correo_owner] MODO PRUEBA ACTIVO"
         )
 
-        return None
+        print(
+            "[enviar_correo_owner] Owner real:",
+            owner_name,
+            owner_email
+        )
 
-    if not to_name:
-        to_name = "Ejecutivo Selec"
+        print(
+            "[enviar_correo_owner] Correo redirigido a:",
+            to_email
+        )
+
+    else:
+
+        # En producción debe existir el correo del owner real
+        if not owner_email:
+
+            print(
+                "[enviar_correo_owner] "
+                "El owner del Deal no tiene correo configurado. "
+                "No se enviará la notificación."
+            )
+
+            return None
+
+        to_email = owner_email
+        to_name = owner_name
+        cc_destinatarios = construir_cc()
+
+    # =====================================================
+    # ACCESS TOKEN
+    # =====================================================
 
     access_token = get_access_token()
 
     if not access_token:
+
         print(
             "[enviar_correo_owner] "
             "No se pudo obtener access token; "
             "no se envía correo."
         )
+
         return None
+
+        deal_name_real = str(
+        deal_name or ""
+    ).strip()
+
+
+    try:
+
+        response_nombre = requests.get(
+            (
+                "https://www.zohoapis.com/"
+                f"crm/v8/Deals/{deal_id}"
+            ),
+            headers={
+                "Authorization":
+                    f"Zoho-oauthtoken {access_token}"
+            },
+            params={
+                "fields":
+                    "Deal_Name"
+            },
+            timeout=15,
+        )
+
+
+        if response_nombre.status_code == 200:
+
+            registros_nombre = (
+                response_nombre.json().get(
+                    "data"
+                )
+                or []
+            )
+
+
+            if registros_nombre:
+
+                nombre_crm = str(
+                    registros_nombre[0].get(
+                        "Deal_Name"
+                    )
+                    or ""
+                ).strip()
+
+
+                if nombre_crm:
+
+                    deal_name_real = (
+                        nombre_crm
+                    )
+
+
+                    print(
+                        "[enviar_correo_owner] "
+                        "Nombre real del Negocio:",
+                        deal_name_real,
+                    )
+
+
+    except Exception as error:
+
+        print(
+            "[enviar_correo_owner] "
+            "No se pudo obtener el nombre "
+            "real del Negocio:",
+            error,
+        )
+
+    # =====================================================
+    # ENDPOINT ZOHO CRM
+    # =====================================================
 
     url = (
         f"{CRM_BASE}/Deals/"
@@ -207,9 +437,31 @@ def enviar_correo_owner(
         "Content-Type": "application/json",
     }
 
+    origen = str(
+        campos.get("origen")
+        or ""
+    ).strip().lower()
+
+
+    if origen == "web":
+
+        origen_asunto = "Web"
+        origen_texto = "sitio web de SELEC"
+
+    elif origen == "whatsapp":
+
+        origen_asunto = "WhatsApp"
+        origen_texto = "chatbot de WhatsApp de SELEC"
+
+    else:
+
+        origen_asunto = "SELEC"
+        origen_texto = "canal de atención de SELEC"
+
+
     subject = (
-        "Nuevo Deal asignado desde WhatsApp: "
-        f"{deal_name}"
+        f"Nuevo Negocio asignado desde {origen_asunto}: "
+        f"{deal_name_real}"
     )
 
     deal_link = (
@@ -218,12 +470,34 @@ def enviar_correo_owner(
         f"{deal_id}"
     )
 
+    zoho_one_link = obtener_link_zoho_one(
+        deal_id,
+        access_token,
+    )
+
+
+    if zoho_one_link:
+
+        bloque_zoho_one = f"""
+<p>
+<b>Negocio en Zoho One:</b><br>
+<a href="{zoho_one_link}">
+Abrir Negocio en Zoho One
+</a>
+</p>
+"""
+
+    else:
+
+        bloque_zoho_one = ""
+
+
     content = f"""
 <p>Hola {to_name},</p>
 
 <p>
-Se ha creado un nuevo Deal asignado desde
-el chatbot de WhatsApp.
+Se ha creado un nuevo Negocio asignado desde
+el {origen_texto}.
 </p>
 
 <p>
@@ -232,16 +506,18 @@ el chatbot de WhatsApp.
 </p>
 
 <p>
-<b>Deal:</b>
-{deal_name}
+<b>Negocio:</b>
+{deal_name_real}
 </p>
 
 <p>
-<b>Link del Deal en Zoho CRM:</b>
+<b>Link del Negocio en Zoho CRM:</b>
 <a href="{deal_link}">
-Abrir Deal
+Abrir Negocio
 </a>
 </p>
+
+{bloque_zoho_one}
 
 <hr>
 
@@ -293,10 +569,19 @@ Abrir Deal
 <hr>
 
 <p>
+<b>Owner real del Negocio:</b>
+{owner_name}
+</p>
+
+<p>
 Saludos,<br>
-Bot WhatsApp Selec
+Sistema de atención SELEC
 </p>
 """
+
+    # =====================================================
+    # PAYLOAD
+    # =====================================================
 
     payload = {
         "data": [
@@ -304,13 +589,13 @@ Bot WhatsApp Selec
                 "from": construir_remitente(),
 
                 "to": [
-    build_mail_recipient(
-        to_email,
-        to_name
-    )
-],
+                    build_mail_recipient(
+                        to_email,
+                        to_name
+                    )
+                ],
 
-                "cc": construir_cc(),
+                "cc": cc_destinatarios,
 
                 "subject": subject,
 
@@ -321,7 +606,12 @@ Bot WhatsApp Selec
         ]
     }
 
+    # =====================================================
+    # ENVIO
+    # =====================================================
+
     try:
+
         print(
             "[enviar_correo_owner] "
             "Enviando correo..."
@@ -352,6 +642,7 @@ Bot WhatsApp Selec
         return response
 
     except Exception as error:
+
         print(
             "ERROR enviando correo "
             "de notificación:",
@@ -359,8 +650,6 @@ Bot WhatsApp Selec
         )
 
         return None
-
-
 # =========================================================
 # CORREO DE SOLICITUD DE COTIZACION INCOMPLETA
 # =========================================================

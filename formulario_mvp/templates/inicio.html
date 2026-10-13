@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        WhatsApp | SELEC
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('formulario_mvp.static', filename='style.css') }}"
+    >
+
+    <style>
+
+        .message-input {
+            flex: 1;
+
+            border: none;
+            outline: none;
+
+            background: transparent;
+
+            color: #111b21;
+
+            font: inherit;
+            font-size: 14px;
+
+            min-width: 0;
+        }
+
+
+        .message-input::placeholder {
+            color: #667781;
+        }
+
+
+        .send-chat-button {
+            border: none;
+
+            cursor: pointer;
+
+            color: white;
+
+            font-size: 18px;
+        }
+
+
+        .send-chat-button:disabled {
+            opacity: 0.55;
+            cursor: default;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<div class="phone">
+
+
+    <!-- =====================================================
+         HEADER TIPO WHATSAPP
+    ====================================================== -->
+
+    <header class="whatsapp-header">
+
+        <div class="back">
+            ‹
+        </div>
+
+
+        <div class="avatar">
+            S
+        </div>
+
+
+        <div class="contact-info">
+
+            <h1>
+                SELEC
+            </h1>
+
+            <span>
+                en línea
+            </span>
+
+        </div>
+
+
+        <div class="header-actions">
+            ⋮
+        </div>
+
+    </header>
+
+
+
+    <!-- =====================================================
+         CHAT
+    ====================================================== -->
+
+    <main
+        class="chat"
+        id="chat"
+    >
+
+        <div class="day-label">
+            Hoy
+        </div>
+
+
+        <div class="message bot-message">
+
+            <p>
+                Hola 👋 Bienvenido a SELEC.
+            </p>
+
+            <p>
+                ¿En qué podemos ayudarte?
+            </p>
+
+            <span
+                class="time"
+                id="welcomeTime"
+            ></span>
+
+        </div>
+
+
+
+        <!-- =================================================
+             OPCIONES INICIALES
+        ================================================== -->
+
+        <div
+            class="bot-options"
+            id="initialOptions"
+        >
+
+            <button
+                type="button"
+                onclick="selectOption('cotizacion')"
+                class="chat-option"
+            >
+                Solicitud de cotización
+            </button>
+
+
+            <button
+                type="button"
+                onclick="selectOption('postventa')"
+                class="chat-option"
+            >
+                Servicio posventa
+            </button>
+
+
+            <button
+                type="button"
+                onclick="selectOption('atencion')"
+                class="chat-option"
+            >
+                Atención al cliente
+            </button>
+
+        </div>
+
+
+
+        <!-- =================================================
+             INDICADOR ESCRIBIENDO
+        ================================================== -->
+
+        <div
+            class="typing"
+            id="typing"
+        >
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+
+    </main>
+
+
+
+    <!-- =====================================================
+         BARRA DE MENSAJE
+    ====================================================== -->
+
+    <footer class="message-bar">
+
+        <div class="fake-input">
+
+            <span class="emoji">
+                ☺
+            </span>
+
+
+            <input
+                type="text"
+                id="messageInput"
+                class="message-input"
+                placeholder="Mensaje"
+                autocomplete="off"
+                maxlength="500"
+            >
+
+
+            <span class="attachment">
+                📎
+            </span>
+
+        </div>
+
+
+        <button
+            type="button"
+            class="microphone send-chat-button"
+            id="sendButton"
+            aria-label="Enviar mensaje"
+        >
+            ➤
+        </button>
+
+    </footer>
+
+</div>
+
+
+
+<script>
+
+    /* =====================================================
+       ELEMENTOS
+    ====================================================== */
+
+    const chat =
+        document.getElementById(
+            "chat"
+        );
+
+
+    const initialOptions =
+        document.getElementById(
+            "initialOptions"
+        );
+
+
+    const typing =
+        document.getElementById(
+            "typing"
+        );
+
+
+    const messageInput =
+        document.getElementById(
+            "messageInput"
+        );
+
+
+    const sendButton =
+        document.getElementById(
+            "sendButton"
+        );
+
+
+    const welcomeTime =
+        document.getElementById(
+            "welcomeTime"
+        );
+
+
+    let sendingMessage = false;
+
+    let attentionMode = false;
+
+
+
+    /* =====================================================
+       HORA ACTUAL
+    ====================================================== */
+
+    function nowTime() {
+
+        return new Intl.DateTimeFormat(
+            "es-CL",
+            {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false
+            }
+        ).format(
+            new Date()
+        );
+
+    }
+
+
+    welcomeTime.textContent =
+        nowTime();
+
+
+
+    /* =====================================================
+       SCROLL
+    ====================================================== */
+
+    function scrollBottom() {
+
+        chat.scrollTop =
+            chat.scrollHeight;
+
+    }
+
+
+
+    /* =====================================================
+       MENSAJE DEL USUARIO
+    ====================================================== */
+
+    function addUserMessage(
+        text
+    ) {
+
+        const message =
+            document.createElement(
+                "div"
+            );
+
+
+        message.className =
+            "message user-message";
+
+
+        const content =
+            document.createElement(
+                "p"
+            );
+
+
+        content.textContent =
+            text;
+
+
+        const time =
+            document.createElement(
+                "span"
+            );
+
+
+        time.className =
+            "time";
+
+
+        time.textContent =
+            nowTime() + " ✓✓";
+
+
+        message.appendChild(
+            content
+        );
+
+
+        message.appendChild(
+            time
+        );
+
+
+        chat.insertBefore(
+            message,
+            typing
+        );
+
+
+        scrollBottom();
+
+    }
+
+
+
+    /* =====================================================
+       MENSAJE NORMAL DEL BOT
+    ====================================================== */
+
+    function addBotTextMessage(
+        text
+    ) {
+
+        const message =
+            document.createElement(
+                "div"
+            );
+
+
+        message.className =
+            "message bot-message";
+
+
+        const content =
+            document.createElement(
+                "p"
+            );
+
+
+        content.textContent =
+            text;
+
+
+        const time =
+            document.createElement(
+                "span"
+            );
+
+
+        time.className =
+            "time";
+
+
+        time.textContent =
+            nowTime();
+
+
+        message.appendChild(
+            content
+        );
+
+
+        message.appendChild(
+            time
+        );
+
+
+        chat.insertBefore(
+            message,
+            typing
+        );
+
+
+        scrollBottom();
+
+    }
+
+
+
+    /* =====================================================
+       MENSAJE CON LINK AL FORMULARIO
+    ====================================================== */
+
+    function addBotFormMessage(
+        tipo
+    ) {
+
+        const message =
+            document.createElement(
+                "div"
+            );
+
+
+        message.className =
+            "message bot-message";
+
+
+        if (
+            tipo === "cotizacion"
+        ) {
+
+            message.innerHTML = `
+                <p>
+                    Perfecto 👍
+                </p>
+
+                <p>
+                    Para registrar correctamente tu solicitud
+                    de cotización, completa el siguiente formulario.
+                </p>
+
+                <a
+                    href="/solicitud/cotizacion?origen=whatsapp"
+                    class="form-link"
+                >
+                    Abrir formulario de cotización
+                </a>
+
+                <span class="time">
+                    ${nowTime()}
+                </span>
+            `;
+
+        }
+
+        else {
+
+            message.innerHTML = `
+                <p>
+                    Claro 👍
+                </p>
+
+                <p>
+                    Para registrar correctamente tu solicitud
+                    de posventa, completa el siguiente formulario.
+                </p>
+
+                <a
+                    href="/solicitud/postventa?origen=whatsapp"
+                    class="form-link"
+                >
+                    Abrir formulario de posventa
+                </a>
+
+                <span class="time">
+                    ${nowTime()}
+                </span>
+            `;
+
+        }
+
+
+        chat.insertBefore(
+            message,
+            typing
+        );
+
+
+        scrollBottom();
+
+    }
+
+    /* =====================================================
+   BOTÓN DE DERIVACIÓN DESDE ATENCIÓN AL CLIENTE
+===================================================== */
+
+function addBotActionMessage(
+    tipo
+) {
+
+    const message =
+        document.createElement(
+            "div"
+        );
+
+
+    message.className =
+        "message bot-message";
+
+
+    if (
+        tipo === "cotizacion"
+    ) {
+
+        message.innerHTML = `
+            <a
+                href="/solicitud/cotizacion?origen=whatsapp"
+                class="form-link"
+            >
+                Abrir formulario de cotización
+            </a>
+
+            <span class="time">
+                ${nowTime()}
+            </span>
+        `;
+
+    }
+
+    else if (
+        tipo === "postventa"
+    ) {
+
+        message.innerHTML = `
+            <a
+                href="/solicitud/postventa?origen=whatsapp"
+                class="form-link"
+            >
+                Abrir formulario de posventa
+            </a>
+
+            <span class="time">
+                ${nowTime()}
+            </span>
+        `;
+
+    }
+
+    else {
+
+        return;
+
+    }
+
+
+    chat.insertBefore(
+        message,
+        typing
+    );
+
+
+    scrollBottom();
+
+}
+
+    /* =====================================================
+   VOLVER AL MENÚ PRINCIPAL
+===================================================== */
+
+function addReturnMenuButton() {
+
+    const container =
+        document.createElement(
+            "div"
+        );
+
+
+    container.className =
+        "bot-options";
+
+
+    container.innerHTML = `
+        <button
+            type="button"
+            class="chat-option"
+        >
+            ← Volver al menú
+        </button>
+    `;
+
+
+    container
+        .querySelector(
+            "button"
+        )
+        .addEventListener(
+            "click",
+            () => {
+
+                container.remove();
+
+
+                attentionMode =
+                    false;
+
+
+                addUserMessage(
+                    "Volver al menú"
+                );
+
+
+                setTimeout(
+                    () => {
+
+                        addBotTextMessage(
+                            "Claro. ¿En qué podemos ayudarte?"
+                        );
+
+
+                        chat.insertBefore(
+                            initialOptions,
+                            typing
+                        );
+
+
+                        initialOptions.style.display =
+                            "";
+
+
+                        scrollBottom();
+
+                    },
+                    400
+                );
+
+            }
+        );
+
+
+    chat.insertBefore(
+        container,
+        typing
+    );
+
+
+    scrollBottom();
+
+}
+
+
+    /* =====================================================
+       ATENCIÓN AL CLIENTE
+    ====================================================== */
+
+    function startCustomerService() {
+
+        attentionMode =
+            true;
+
+
+        typing.style.display =
+            "flex";
+
+
+        scrollBottom();
+
+
+        setTimeout(
+            () => {
+
+                typing.style.display =
+                    "none";
+
+
+addBotTextMessage(
+    "Claro. Puedes escribirme tu consulta. " +
+    "Puedo ayudarte con información de contacto, " +
+    "teléfonos, ubicaciones y orientarte sobre " +
+    "cotizaciones o servicio posventa."
+);
+
+
+addReturnMenuButton();
+
+
+messageInput.focus();
+
+            },
+            650
+        );
+
+    }
+
+
+
+    /* =====================================================
+       CONSULTAR OLLAMA
+    ====================================================== */
+
+    async function sendCustomerMessage() {
+
+        const text =
+            messageInput
+                .value
+                .trim();
+
+
+        if (
+            !text ||
+            sendingMessage
+        ) {
+
+            return;
+
+        }
+
+
+        /*
+         * Si el cliente escribe directamente sin tocar
+         * Atención al cliente, igualmente utilizamos
+         * el asistente.
+         */
+
+        attentionMode =
+            true;
+
+
+        initialOptions.style.display =
+            "none";
+
+
+        messageInput.value =
+            "";
+
+
+        addUserMessage(
+            text
+        );
+
+
+        sendingMessage =
+            true;
+
+
+        sendButton.disabled =
+            true;
+
+
+        typing.style.display =
+            "flex";
+
+
+        scrollBottom();
+
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/atencion",
+                    {
+                        method:
+                            "POST",
+
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+
+                        body:
+                            JSON.stringify(
+                                {
+                                    mensaje:
+                                        text
+                                }
+                            )
+                    }
+                );
+
+
+            const data =
+                await response.json();
+
+
+            typing.style.display =
+                "none";
+
+
+            if (
+                !response.ok ||
+                !data.ok
+            ) {
+
+                throw new Error(
+                    data.error ||
+                    "No fue posible procesar la consulta."
+                );
+
+            }
+
+
+addBotTextMessage(
+    data.respuesta
+);
+
+
+/* =================================================
+   SI LA IA DETECTÓ COTIZACIÓN O POSVENTA,
+   MOSTRAMOS EL BOTÓN CORRESPONDIENTE
+================================================= */
+
+if (
+    data.accion === "cotizacion" ||
+    data.accion === "postventa"
+) {
+
+    setTimeout(
+        () => {
+
+            addBotActionMessage(
+                data.accion
+            );
+
+        },
+        350
+    );
+
+}
+
+        }
+
+        catch (
+            error
+        ) {
+
+            console.error(
+                error
+            );
+
+
+            typing.style.display =
+                "none";
+
+
+            addBotTextMessage(
+                "No fue posible responder tu consulta en este momento. " +
+                "Por favor, intenta nuevamente."
+            );
+
+        }
+
+        finally {
+
+            sendingMessage =
+                false;
+
+
+            sendButton.disabled =
+                false;
+
+
+            messageInput.focus();
+
+        }
+
+    }
+
+
+
+    /* =====================================================
+       MENSAJE FINAL DESPUÉS DE FORMULARIO
+    ====================================================== */
+
+    function addFinalMessage(
+        tipo
+    ) {
+
+        const message =
+            document.createElement(
+                "div"
+            );
+
+
+        message.className =
+            "message bot-message";
+
+
+        if (
+            tipo === "cotizacion"
+        ) {
+
+            message.innerHTML = `
+                <p>
+                    ✅ ¡Gracias por tu solicitud de cotización!
+                </p>
+
+                <p>
+                    Hemos recibido correctamente la información.
+                    Nuestro equipo comercial la revisará y se pondrá
+                    en contacto contigo para continuar con la gestión.
+                </p>
+
+                <p>
+                    Gracias por confiar en SELEC.
+                </p>
+
+                <span class="time">
+                    ${nowTime()}
+                </span>
+            `;
+
+        }
+
+        else {
+
+            message.innerHTML = `
+                <p>
+                    ✅ ¡Gracias por tu solicitud de posventa!
+                </p>
+
+                <p>
+                    Hemos recibido correctamente la información.
+                    Nuestro equipo de posventa revisará tu caso
+                    y continuará con la gestión correspondiente.
+                </p>
+
+                <p>
+                    Gracias por contactarte con SELEC.
+                </p>
+
+                <span class="time">
+                    ${nowTime()}
+                </span>
+            `;
+
+        }
+
+
+        chat.insertBefore(
+            message,
+            typing
+        );
+
+
+        scrollBottom();
+
+
+
+        /* =================================================
+           VOLVER A MOSTRAR LAS 3 OPCIONES
+        ================================================== */
+
+        setTimeout(
+            () => {
+
+                const followUp =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                followUp.className =
+                    "message bot-message";
+
+
+                followUp.innerHTML = `
+                    <p>
+                        ¿Necesitas realizar otra gestión?
+                    </p>
+
+                    <span class="time">
+                        ${nowTime()}
+                    </span>
+                `;
+
+
+                chat.insertBefore(
+                    followUp,
+                    typing
+                );
+
+
+                chat.insertBefore(
+                    initialOptions,
+                    typing
+                );
+
+
+                initialOptions.style.display =
+                    "";
+
+
+                scrollBottom();
+
+            },
+            700
+        );
+
+    }
+
+
+
+    /* =====================================================
+       OPCIONES DEL MENÚ
+    ====================================================== */
+
+    function selectOption(
+        tipo
+    ) {
+
+        initialOptions.style.display =
+            "none";
+
+
+        attentionMode =
+            false;
+
+
+        let text =
+            "";
+
+
+        if (
+            tipo === "cotizacion"
+        ) {
+
+            text =
+                "Solicitud de cotización";
+
+        }
+
+        else if (
+            tipo === "postventa"
+        ) {
+
+            text =
+                "Servicio posventa";
+
+        }
+
+        else {
+
+            text =
+                "Atención al cliente";
+
+        }
+
+
+        addUserMessage(
+            text
+        );
+
+
+        if (
+            tipo === "atencion"
+        ) {
+
+            startCustomerService();
+
+            return;
+
+        }
+
+
+        typing.style.display =
+            "flex";
+
+
+        scrollBottom();
+
+
+        setTimeout(
+            () => {
+
+                typing.style.display =
+                    "none";
+
+
+                addBotFormMessage(
+                    tipo
+                );
+
+            },
+            700
+        );
+
+    }
+
+
+
+    /* =====================================================
+       BOTÓN ENVIAR
+    ====================================================== */
+
+    sendButton.addEventListener(
+        "click",
+        sendCustomerMessage
+    );
+
+
+
+    /* =====================================================
+       ENTER PARA ENVIAR
+    ====================================================== */
+
+    messageInput.addEventListener(
+        "keydown",
+        event => {
+
+            if (
+                event.key === "Enter"
+            ) {
+
+                event.preventDefault();
+
+                sendCustomerMessage();
+
+            }
+
+        }
+    );
+
+
+
+    /* =====================================================
+       REGRESO DESDE EL FORMULARIO
+    ====================================================== */
+
+    const params =
+        new URLSearchParams(
+            window.location.search
+        );
+
+
+    const finalizado =
+        params.get(
+            "finalizado"
+        );
+
+
+    if (
+        finalizado === "cotizacion" ||
+        finalizado === "postventa"
+    ) {
+
+        initialOptions.style.display =
+            "none";
+
+
+        typing.style.display =
+            "flex";
+
+
+        scrollBottom();
+
+
+        setTimeout(
+            () => {
+
+                typing.style.display =
+                    "none";
+
+
+                addFinalMessage(
+                    finalizado
+                );
+
+            },
+            500
+        );
+
+    }
+
+</script>
+
+</body>
+</html>

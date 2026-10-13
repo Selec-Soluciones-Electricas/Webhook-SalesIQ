@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    >
+
+    <meta
+        name="theme-color"
+        content="#ffffff"
+    >
+
+    <title>
+        SELEC | Solicitud enviada
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('formulario_mvp.static', filename='style.css') }}"
+    >
+
+</head>
+
+
+<body class="form-page confirmation-new-page">
+
+
+<main class="confirmation-shell">
+
+
+    <section class="confirmation-new-card">
+
+
+        <!-- =====================================================
+             MARCA
+        ====================================================== -->
+
+        <div class="confirmation-brand">
+
+            <img
+                src="{{ url_for('formulario_mvp.static', filename='selec-logo.png') }}"
+                alt="SELEC"
+                class="confirmation-logo"
+            >
+
+        </div>
+
+
+        <!-- =====================================================
+             ÉXITO
+        ====================================================== -->
+
+        <div
+            class="confirmation-success-icon"
+            aria-hidden="true"
+        >
+            ✓
+        </div>
+
+
+        <span class="confirmation-kicker">
+            Solicitud recibida
+        </span>
+
+
+        <h1>
+            Solicitud enviada correctamente
+        </h1>
+
+
+        {% if tipo == "cotizacion" %}
+
+            <p class="confirmation-new-intro">
+
+                Recibimos tu solicitud de cotización.
+                Nuestro equipo comercial revisará la información
+                para continuar con la gestión.
+
+            </p>
+
+        {% else %}
+
+            <p class="confirmation-new-intro">
+
+                Recibimos tu solicitud de posventa.
+                Nuestro equipo revisará la información
+                para continuar con la gestión de tu caso.
+
+            </p>
+
+        {% endif %}
+
+
+
+        <!-- =====================================================
+             RESUMEN COTIZACIÓN
+        ====================================================== -->
+
+        {% if tipo == "cotizacion" %}
+
+
+            <div class="confirmation-new-summary">
+
+
+                <!-- HEADER -->
+
+                <div class="confirmation-summary-header">
+
+                    <div>
+
+                        <span>
+                            Resumen
+                        </span>
+
+                        <h2>
+                            Solicitud de cotización
+                        </h2>
+
+                    </div>
+
+                </div>
+
+
+
+                <!-- =================================================
+                     DATOS DEL CLIENTE
+                ================================================== -->
+
+                <div class="summary-group">
+
+
+                    <div class="summary-group-title">
+                        Tus datos
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            Empresa
+                        </span>
+
+                        <strong>
+                            {{ solicitud.empresa }}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            RUT
+                        </span>
+
+                        <strong>
+                            {{ solicitud.rut_empresa }}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            Contacto
+                        </span>
+
+                        <strong>
+                            {{ solicitud.contacto }}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            Correo
+                        </span>
+
+                        <strong>
+                            {{ solicitud.correo }}
+                        </strong>
+
+                    </div>
+
+
+                    {% if solicitud.telefono %}
+
+                        <div class="summary-new-row">
+
+                            <span>
+                                Teléfono
+                            </span>
+
+                            <strong>
+                                {{ solicitud.telefono }}
+                            </strong>
+
+                        </div>
+
+                    {% endif %}
+
+
+                </div>
+
+
+
+                <!-- =================================================
+                     PRODUCTOS
+                ================================================== -->
+
+                <div class="summary-group">
+
+
+                    <div class="summary-group-title">
+
+                        Lo solicitado
+
+                        {% if solicitud.productos %}
+
+                            ·
+                            {{ solicitud.productos|length }}
+
+                            {% if solicitud.productos|length == 1 %}
+                                producto
+                            {% else %}
+                                productos
+                            {% endif %}
+
+                        {% endif %}
+
+                    </div>
+
+
+
+                    {% if solicitud.productos %}
+
+
+                        {% for producto in solicitud.productos %}
+
+
+                            <!-- PRODUCTO -->
+
+                            <div class="summary-new-row vertical">
+
+                                <span>
+                                    Producto {{ loop.index }}
+                                </span>
+
+                                <strong>
+                                    {{ producto.descripcion }}
+                                </strong>
+
+                            </div>
+
+
+                            <!-- NÚMERO DE PARTE -->
+
+                            <div class="summary-new-row">
+
+                                <span>
+                                    Número de parte
+                                </span>
+
+                                <strong>
+
+                                    {% if producto.numero_parte %}
+
+                                        {{ producto.numero_parte }}
+
+                                    {% else %}
+
+                                        No informado
+
+                                    {% endif %}
+
+                                </strong>
+
+                            </div>
+
+
+                            <!-- MARCA -->
+
+                            <div class="summary-new-row">
+
+                                <span>
+                                    Marca
+                                </span>
+
+                                <strong>
+
+                                    {% if producto.marca %}
+
+                                        {{ producto.marca }}
+
+                                    {% else %}
+
+                                        No informada
+
+                                    {% endif %}
+
+                                </strong>
+
+                            </div>
+
+
+                            <!-- CANTIDAD -->
+
+                            <div class="summary-new-row">
+
+                                <span>
+                                    Cantidad
+                                </span>
+
+                                <strong>
+                                    {{ producto.cantidad or "1" }}
+                                </strong>
+
+                            </div>
+
+
+                            <!-- ARCHIVOS -->
+
+                            {% if producto.archivos %}
+
+                                <div class="summary-new-row vertical">
+
+                                    <span>
+                                        Archivos adjuntos
+                                    </span>
+
+                                    <strong>
+
+                                        {% for archivo in producto.archivos %}
+
+                                            {{ archivo }}
+
+                                            {% if not loop.last %}
+                                                <br>
+                                            {% endif %}
+
+                                        {% endfor %}
+
+                                    </strong>
+
+                                </div>
+
+                            {% endif %}
+
+
+                            <!-- SEPARADOR ENTRE PRODUCTOS -->
+
+                            {% if not loop.last %}
+
+                                <div
+                                    style="
+                                        height: 1px;
+                                        background: #e7e9ee;
+                                        margin: 18px 0;
+                                    "
+                                ></div>
+
+                            {% endif %}
+
+
+                        {% endfor %}
+
+
+                    {% else %}
+
+
+                        <div class="summary-new-row vertical">
+
+                            <span>
+                                Producto
+                            </span>
+
+                            <strong>
+                                Información no disponible
+                            </strong>
+
+                        </div>
+
+
+                    {% endif %}
+
+
+                </div>
+
+
+
+                <!-- =================================================
+                     ENTREGA
+                ================================================== -->
+
+                <div class="summary-group last">
+
+
+                    <div class="summary-group-title">
+                        Entrega
+                    </div>
+
+
+                    <div class="summary-new-row vertical">
+
+                        <span>
+                            Ciudad o dirección
+                        </span>
+
+                        <strong>
+                            {{ solicitud.direccion_entrega or "Bodega SELEC" }}
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+
+        <!-- =====================================================
+             RESUMEN POSTVENTA
+        ====================================================== -->
+
+        {% else %}
+
+
+            <div class="confirmation-new-summary">
+
+
+                <div class="confirmation-summary-header">
+
+                    <div>
+
+                        <span>
+                            Resumen
+                        </span>
+
+                        <h2>
+                            Solicitud de posventa
+                        </h2>
+
+                    </div>
+
+                </div>
+
+
+
+                <!-- DATOS -->
+
+                <div class="summary-group">
+
+
+                    <div class="summary-group-title">
+                        Datos de contacto
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            Nombre
+                        </span>
+
+                        <strong>
+                            {{ solicitud.nombre_postventa }}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            RUT
+                        </span>
+
+                        <strong>
+                            {{ solicitud.rut_postventa }}
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+
+                <!-- COMPRA -->
+
+                <div class="summary-group">
+
+
+                    <div class="summary-group-title">
+                        Información de compra
+                    </div>
+
+
+                    <div class="summary-new-row">
+
+                        <span>
+                            Factura / OC
+                        </span>
+
+                        <strong>
+                            {{ solicitud.factura_oc }}
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+
+                <!-- SITUACIÓN -->
+
+                <div class="summary-group last">
+
+
+                    <div class="summary-group-title">
+                        Situación
+                    </div>
+
+
+                    <div class="summary-new-row vertical">
+
+                        <span>
+                            Descripción
+                        </span>
+
+                        <strong>
+                            {{ solicitud.descripcion_postventa }}
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+        {% endif %}
+
+
+
+        <!-- =====================================================
+             SIGUIENTE PASO
+        ====================================================== -->
+
+        <div class="confirmation-next-step">
+
+
+            <div
+                class="confirmation-next-icon"
+                aria-hidden="true"
+            >
+                ✓
+            </div>
+
+
+            <div>
+
+
+                <strong>
+                    ¿Qué ocurre ahora?
+                </strong>
+
+
+                {% if tipo == "cotizacion" %}
+
+                    <p>
+
+                        Un ejecutivo de SELEC revisará tu solicitud
+                        y continuará con el proceso de cotización.
+
+                    </p>
+
+                {% else %}
+
+                    <p>
+
+                        Nuestro equipo de posventa revisará tu caso
+                        y continuará con la gestión correspondiente.
+
+                    </p>
+
+                {% endif %}
+
+
+            </div>
+
+
+        </div>
+
+
+
+        <!-- =====================================================
+             ACCIONES
+        ====================================================== -->
+
+        <div class="confirmation-actions">
+
+
+            {% if solicitud.origen == "whatsapp" %}
+
+
+                <a
+                    href="/?finalizado={{ tipo }}"
+                    class="confirmation-home-button"
+                >
+                    Volver a WhatsApp
+                </a>
+
+
+            {% elif solicitud.origen == "web" %}
+
+
+                <a
+                    href="https://selec.cl/wp"
+                    class="confirmation-home-button"
+                >
+                    Volver al sitio web
+                </a>
+
+
+            {% else %}
+
+
+                <a
+                    href="/"
+                    class="confirmation-home-button"
+                >
+                    Volver al inicio
+                </a>
+
+
+            {% endif %}
+
+
+        </div>
+
+
+
+        <p class="confirmation-footer-text">
+            Gracias por contactarte con SELEC.
+        </p>
+
+
+    </section>
+
+
+</main>
+
+
+</body>
+
+</html>

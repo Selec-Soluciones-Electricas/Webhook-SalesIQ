@@ -1,5 +1,6 @@
 import os
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -13,10 +14,7 @@ from services.salesiq_service import (
 )
 from services.zoho_service import get_salesiq_access_token
 from services.clasificacion_cotizacion import decidir_resultado
-from services.crm_lookup_service import (
-    extraer_candidatos_telefono,
-    buscar_deal_id_por_telefono,
-)
+from services.crm_lookup_service import buscar_deal_id_por_chat
 from services.analytics_service import (
     agregar_fila_analytics,
     existe_attempt_id_analytics,
@@ -33,6 +31,8 @@ CHILE_TZ = ZoneInfo("America/Santiago")
 # =========================================================
 # FRASES PARA DETECTAR INTENTOS DE COTIZACIÓN
 # =========================================================
+# Deben coincidir con los mensajes de conversation/quotation.py.
+# Si cambias esos textos, actualiza también estas constantes.
 
 FRASE_INICIO_COTIZACION = (
     "Perfecto, trabajaremos en su solicitud de cotización"
@@ -47,6 +47,253 @@ FRASE_ERROR_COTIZACION = (
 )
 
 
+# =========================================================
+# FUNCIONES AUXILIARES
+# =========================================================
+
+# Funcion desarrollada con el fin de obtener el canal del visitante (whatsapp, website, etc.) sin importar en qué campo lo entregue SalesIQ.
+def _obtener_canal_visitante(visitor: dict) -> str:
+    """
+    Devuelve el canal en minúsculas, o "" si no se encuentra.
+
+    SalesIQ no es consistente: según el endpoint, el canal viene
+    en visitor["channel"], en visitor["channel_details"]["channel"]
+    o en visitor["channel_details"]["channel_name"].
+    """
+
+    if not isinstance(visitor, dict):
+        return ""
+
+    detalles = visitor.get("channel_details") or {}
+
+    if not isinstance(detalles, dict):
+        detalles = {}
+
+    candidatos = [
+        detalles.get("channel"),
+        detalles.get("channel_name"),
+        visitor.get("channel"),
+        visitor.get("channel_name"),
+    ]
+
+    for valor in candidatos:
+        if valor:
+            return str(valor).strip().lower()
+
+    return ""
+
+
+# Funcion desarrollada con el fin de convertir un epoch en milisegundos a datetime UTC, tolerando valores vacíos o inválidos.
+def _fecha_desde_ms(ms) -> datetime:
+    """
+    Devuelve un datetime aware en UTC, o None si el valor no es
+    válido.
+
+    Se usa UTC para ser consistente con quotation.py, que
+    registra en Analytics con datetime.now(timezone.utc).
+    """
+
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+# Funcion desarrollada con el fin de obtener el texto de un mensaje de SalesIQ, sin importar la estructura en que venga.
+def _texto_mensaje(mensaje: dict) -> str:
+
+    if not isinstance(mensaje, dict):
+        return str(mensaje or "")
+
+    texto = mensaje.get("text")
+
+    if texto:
+        return str(texto)
+
+    contenido = mensaje.get("message")
+
+    if isinstance(contenido, dict):
+        return str(contenido.get("text") or contenido.get("msg") or "")
+
+    if isinstance(contenido, str):
+        return contenido
+
+    return str(mensaje.get("msg") or "")
+
+
+# Campos donde SalesIQ puede entregar la hora de un mensaje,
+# según el endpoint y la versión de la API.
+CAMPOS_TIEMPO_MENSAJE = (
+    "time_ms",          # formato normalizado por salesiq_service
+    "time",
+    "sent_time",
+    "created_time",
+    "timestamp",
+    "msg_time",
+    "time_in_ms",
+    "message_time",
+    "sent_time_in_ms",
+)
+
+_log_estructura_mensaje_emitido = False
+
+
+# Funcion desarrollada con el fin de convertir un valor de tiempo (epoch en s/ms, texto numérico o ISO 8601) a epoch en milisegundos.
+def _a_epoch_ms(valor):
+
+    if valor is None or valor == "":
+        return None
+
+    # Numérico o texto numérico: "1790248157628", "1790248157628.0",
+    # 1790248157 (segundos)
+    try:
+        numero = float(valor)
+
+        if numero <= 0:
+            return None
+
+        # Si viene en segundos (10 dígitos), pasar a ms.
+        if numero < 1e11:
+            numero *= 1000
+
+        return int(numero)
+
+    except (TypeError, ValueError):
+        pass
+
+    # Texto ISO 8601: "2026-09-24T09:01:34.000Z", "2026-09-24T09:01:34-03:00"
+    try:
+        texto = str(valor).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(texto)
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return int(dt.timestamp() * 1000)
+
+    except (TypeError, ValueError):
+        return None
+
+
+# Funcion desarrollada con el fin de obtener el momento (epoch ms) de un mensaje de SalesIQ, revisando el nivel superior y el objeto "message" anidado.
+def _tiempo_mensaje(mensaje: dict):
+
+    global _log_estructura_mensaje_emitido
+
+    if not isinstance(mensaje, dict):
+        return None
+
+    fuentes = [mensaje]
+
+    if isinstance(mensaje.get("message"), dict):
+        fuentes.append(mensaje["message"])
+
+    for fuente in fuentes:
+        for campo in CAMPOS_TIEMPO_MENSAJE:
+            ms = _a_epoch_ms(fuente.get(campo))
+            if ms:
+                return ms
+
+    # Log único por corrida con la estructura real del mensaje,
+    # para poder ajustar CAMPOS_TIEMPO_MENSAJE si hace falta.
+    if not _log_estructura_mensaje_emitido:
+
+        _log_estructura_mensaje_emitido = True
+
+        anidado = mensaje.get("message")
+
+        print(
+            "[cron] Mensaje sin hora reconocible. "
+            f"claves={sorted(mensaje.keys())} "
+            f"claves_message={sorted(anidado.keys()) if isinstance(anidado, dict) else None} "
+            f"ejemplo={str(mensaje)[:300]}"
+        )
+
+    return None
+
+
+# Funcion desarrollada con el fin de separar una conversación en intentos de cotización, cada uno con su resultado (OK, Error o Incompleto).
+def _detectar_intentos_cotizacion(mensajes: list) -> list:
+    """
+    Recorre los mensajes en orden cronológico. Cada vez que
+    aparece FRASE_INICIO_COTIZACION se abre un intento nuevo.
+
+    El intento se cierra como:
+        - "Error"      si aparece FRASE_ERROR_COTIZACION
+        - "OK"         si aparece FRASE_EXITO_COTIZACION
+        - "Incompleto" si empieza otro intento antes de cerrarse,
+                       o si el chat terminó con el intento abierto
+
+    Devuelve una lista de dicts:
+        {
+            "resultado": "OK" | "Error" | "Incompleto",
+            "inicio_ms": int,
+            "fin_ms": int | None,
+            "mensajes": [str, ...],   # textos del intento
+        }
+    """
+
+    ordenados = sorted(
+        (m for m in (mensajes or []) if m),
+        key=lambda m: _tiempo_mensaje(m) or 0,
+    )
+
+    intentos = []
+    actual = None
+
+    for mensaje in ordenados:
+
+        texto = _texto_mensaje(mensaje)
+        tiempo = _tiempo_mensaje(mensaje)
+
+        if FRASE_INICIO_COTIZACION in texto:
+
+            # Un intento abierto que no terminó antes de que
+            # comenzara otro queda como Incompleto.
+            if actual:
+                actual["resultado"] = "Incompleto"
+                intentos.append(actual)
+
+            actual = {
+                "resultado": None,
+                "inicio_ms": tiempo,
+                "fin_ms": tiempo,
+                "mensajes": [texto],
+            }
+
+            continue
+
+        if not actual:
+            continue
+
+        actual["mensajes"].append(texto)
+
+        if tiempo:
+            actual["fin_ms"] = tiempo
+
+        # Se revisa primero el error: es el caso más específico.
+        if FRASE_ERROR_COTIZACION in texto:
+            actual["resultado"] = "Error"
+            intentos.append(actual)
+            actual = None
+            continue
+
+        if FRASE_EXITO_COTIZACION in texto:
+            actual["resultado"] = "OK"
+            intentos.append(actual)
+            actual = None
+            continue
+
+    # El chat ya está cerrado: si quedó un intento abierto,
+    # el visitante no terminó la cotización.
+    if actual:
+        actual["resultado"] = "Incompleto"
+        intentos.append(actual)
+
+    return intentos
+
+
+# Funcion desarrollada con el fin de registrar una fila en el sistema de analytics.
 def _registrar_en_analytics(
     conversation_id: str,
     visitid: str,
@@ -57,15 +304,20 @@ def _registrar_en_analytics(
 ) -> bool:
 
     fecha_str = (
-        fecha.strftime("%d-%b-%Y %H:%M:%S")
+        fecha.astimezone(CHILE_TZ).strftime("%d-%b-%Y %H:%M:%S")
         if fecha
         else ""
     )
 
+    visitid = str(visitid or "")
+
+    if visitid and not visitid.startswith("#"):
+        visitid = f"#{visitid}"
+
     return agregar_fila_analytics(
         {
             "Conversation ID": conversation_id or "",
-            "Visit ID": f"#{visitid}" if visitid else "",
+            "Visit ID": visitid,
             "Resultado": resultado,
             "Deal ID": deal_id or "",
             "Fecha": fecha_str,
@@ -75,134 +327,17 @@ def _registrar_en_analytics(
     )
 
 
-def _obtener_canal_visitante(visitor: dict) -> str:
-    """
-    Obtiene el canal real de SalesIQ.
+# =========================================================
+# JOB DE RECONCILIACIÓN
+# =========================================================
 
-    En las respuestas actuales de SalesIQ el canal suele venir
-    como visitor.channel_details.channel o visitor.channel_name,
-    no como visitor.channel.
-    """
-
-    visitor = visitor or {}
-    channel_details = visitor.get("channel_details") or {}
-
-    return str(
-        visitor.get("channel")
-        or channel_details.get("channel")
-        or visitor.get("channel_name")
-        or ""
-    ).strip().lower()
-
-
-def _detectar_intentos_cotizacion(mensajes: list) -> list:
-    """
-    Recorre los mensajes de una conversación en orden
-    cronológico y detecta cada intento de cotización.
-
-    Un intento comienza cuando aparece la frase de inicio
-    del flujo de cotización.
-
-    Puede terminar como:
-    - OK
-    - Error
-    - Incompleto
-    """
-
-    intentos = []
-    intento_actual = None
-    numero_intento = 0
-
-    for mensaje in mensajes:
-
-        texto = str(
-            mensaje.get("text") or ""
-        )
-
-        time_ms = mensaje.get("time_ms")
-
-        # =================================================
-        # INICIO DE UNA NUEVA COTIZACIÓN
-        # =================================================
-
-        if FRASE_INICIO_COTIZACION in texto:
-
-            # Si ya había un intento abierto y aparece
-            # otro inicio, el anterior quedó incompleto.
-            if (
-                intento_actual
-                and intento_actual["resultado"] == "En proceso"
-            ):
-                intento_actual["resultado"] = "Incompleto"
-                intento_actual["fin_ms"] = time_ms
-
-            numero_intento += 1
-
-            intento_actual = {
-                "numero": numero_intento,
-                "resultado": "En proceso",
-                "inicio_ms": time_ms,
-                "fin_ms": None,
-                "mensajes": [texto],
-            }
-
-            intentos.append(intento_actual)
-            continue
-
-        if intento_actual is None:
-            continue
-
-        intento_actual["mensajes"].append(texto)
-
-        # =================================================
-        # COTIZACIÓN EXITOSA
-        # =================================================
-
-        if FRASE_EXITO_COTIZACION in texto:
-            intento_actual["resultado"] = "OK"
-            intento_actual["fin_ms"] = time_ms
-            intento_actual = None
-            continue
-
-        # =================================================
-        # ERROR AL REGISTRAR
-        # =================================================
-
-        if FRASE_ERROR_COTIZACION in texto:
-            intento_actual["resultado"] = "Error"
-            intento_actual["fin_ms"] = time_ms
-            intento_actual = None
-            continue
-
-    # =====================================================
-    # INTENTO QUE QUEDÓ ABIERTO
-    # =====================================================
-
-    # Este cron procesa conversaciones cerradas. Si al final
-    # todavía hay un intento abierto, se considera incompleto.
-    if (
-        intento_actual
-        and intento_actual["resultado"] == "En proceso"
-    ):
-        intento_actual["resultado"] = "Incompleto"
-
-    return intentos
-
-
-def _fecha_desde_ms(valor_ms):
-    if not valor_ms:
-        return None
-
-    try:
-        return datetime.fromtimestamp(
-            int(valor_ms) / 1000,
-            tz=timezone.utc,
-        ).astimezone(CHILE_TZ)
-    except (TypeError, ValueError, OSError):
-        return None
-
-
-def ejecutar_reconciliacion():
+def ejecutar_reconciliacion(
+    horas_desde: int = VENTANA_HORAS,
+    horas_hasta: int = 0,
+    dry_run: bool = False,
+):
+    global _log_estructura_mensaje_emitido
+    _log_estructura_mensaje_emitido = False
 
     screenname = os.environ.get("SALESIQ_SCREENNAME")
     tag_id_ok = os.environ.get("SALESIQ_TAG_ID_CRM_OK")
@@ -227,6 +362,9 @@ def ejecutar_reconciliacion():
 
     resumen = {
         "cerradas_recibidas": 0,
+        "dry_run": dry_run,
+        "ventana_horas": [horas_desde, horas_hasta],
+        "propuestos": [],
         "revisados": 0,
         "omitidos_no_whatsapp": 0,
         "ok": 0,
@@ -236,6 +374,13 @@ def ejecutar_reconciliacion():
         "fallos_tag": 0,
         "registrados_analytics": 0,
         "ya_registrados_analytics": 0,
+        "ok_sin_deal_id": 0,
+        "errores_conversacion": 0,
+        "sin_intentos": 0,
+        "intentos_detectados": 0,
+        "omitidos_historicos": 0,
+        "omitidos_sin_tiempo": 0,
+        "verificacion_fallida": 0,
     }
 
     if (
@@ -260,224 +405,290 @@ def ejecutar_reconciliacion():
         }
 
     ahora = datetime.now(timezone.utc)
-    desde = ahora - timedelta(hours=VENTANA_HORAS)
+    desde = ahora - timedelta(hours=horas_desde)
+    hasta = ahora - timedelta(hours=horas_hasta)
 
     desde_ms = int(desde.timestamp() * 1000)
-    hasta_ms = int(ahora.timestamp() * 1000)
+    hasta_ms = int(hasta.timestamp() * 1000)
 
     conversaciones = listar_conversaciones_cerradas(
         screenname,
         salesiq_token,
         desde_ms,
         hasta_ms,
-    )
+    ) or []
 
     resumen["cerradas_recibidas"] = len(conversaciones)
 
     for conv in conversaciones:
 
-        visitor = conv.get("visitor") or {}
+        conversation_id = ""
 
-        conversation_id = str(
-            conv.get("id")
-            or visitor.get("active_conversation_id")
-            or ""
-        )
+        # Un error en una conversación no debe tumbar el job
+        # completo: se registra y se sigue con la siguiente.
+        try:
 
-        if not conversation_id:
-            continue
+            visitor = conv.get("visitor") or {}
 
-        # El listado de conversaciones no siempre entrega el
-        # canal en visitor["channel"]. Consultamos el detalle
-        # para leer channel_details.channel / channel_name.
-        detalle = obtener_detalle_conversacion(
-            conversation_id,
-            screenname,
-            salesiq_token,
-        )
-
-        visitor_detalle = detalle.get("visitor") or {}
-
-        canal = (
-            _obtener_canal_visitante(visitor_detalle)
-            or _obtener_canal_visitante(visitor)
-        )
-
-        if "whatsapp" not in canal:
-            resumen["omitidos_no_whatsapp"] += 1
-            continue
-
-        resumen["revisados"] += 1
-
-        tags_actuales = {
-            str(t.get("id"))
-            for t in (detalle.get("tags") or [])
-            if t.get("id")
-        }
-
-        # =================================================
-        # SIEMPRE ANALIZAR LOS INTENTOS DEL CHAT
-        # =================================================
-        # Los tags son solo informativos. Ya no deciden si una
-        # conversación completa se procesa o se omite.
-
-        mensajes = obtener_mensajes_conversacion(
-            conversation_id,
-            screenname,
-            salesiq_token,
-        )
-
-        intentos = _detectar_intentos_cotizacion(
-            mensajes
-        )
-
-        # Si no hubo ningún intento formal de cotización,
-        # conservamos solamente la exclusión informativa de
-        # Postventa. No registramos un "Incompleto" genérico.
-        if not intentos:
-            texto_completo = "\n".join(
-                str(m.get("text") or "")
-                for m in mensajes
+            conversation_id = str(
+                conv.get("id")
+                or visitor.get("active_conversation_id")
+                or ""
             )
 
-            if decidir_resultado(texto_completo) == "POSTVENTA":
-                resumen["postventa_excluidos"] += 1
-
-            time.sleep(PAUSA_ENTRE_LLAMADAS)
-            continue
-
-        visitid = (
-            visitor_detalle.get("visitid")
-            or visitor.get("visitid")
-            or detalle.get("reference_id")
-            or conv.get("reference_id")
-            or ""
-        )
-
-        for intento in intentos:
-
-            resultado = intento.get("resultado")
-
-            if resultado not in (
-                "OK",
-                "Error",
-                "Incompleto",
-            ):
+            if not conversation_id:
                 continue
 
-            inicio_ms = intento.get("inicio_ms")
-
-            try:
-                inicio_ms = int(inicio_ms)
-            except (TypeError, ValueError):
-                continue
-
-            # ---------------------------------------------
-            # NO TOCAR DATOS HISTÓRICOS
-            # ---------------------------------------------
-            if inicio_ms < attempt_tracking_start_ms:
-                continue
-
-            attempt_id = (
-                f"{conversation_id}-{inicio_ms}"
-            )
-
-            # ---------------------------------------------
-            # COMPROBAR SI ESTE INTENTO YA EXISTE
-            # ---------------------------------------------
-            existe = existe_attempt_id_analytics(
-                attempt_id
-            )
-
-            if existe is None:
-                print(
-                    "[cron] No se pudo verificar "
-                    f"Attempt ID: {attempt_id}"
-                )
-                continue
-
-            # ---------------------------------------------
-            # ASEGURAR EL TAG CORRESPONDIENTE
-            # ---------------------------------------------
-            if resultado == "OK":
-                tag_id_resultado = tag_id_ok
-            elif resultado == "Error":
-                tag_id_resultado = tag_id_error
-            else:
-                tag_id_resultado = tag_id_incompleto
-
-            if (
-                tag_id_resultado
-                and tag_id_resultado not in tags_actuales
-            ):
-                if agregar_tag_conversacion(
-                    conversation_id,
-                    tag_id_resultado,
-                    salesiq_token,
-                ):
-                    tags_actuales.add(tag_id_resultado)
-                else:
-                    resumen["fallos_tag"] += 1
-
-            # Si ya existe en Analytics, no volver a insertar.
-            if existe:
-                resumen["ya_registrados_analytics"] += 1
-                continue
-
-            fecha_inicio = _fecha_desde_ms(
-                inicio_ms
-            )
-
-            deal_id = None
-
-            # ---------------------------------------------
-            # RECUPERAR DEAL ID PARA UN OK DE RESPALDO
-            # ---------------------------------------------
-            # Normalmente quotation.py ya registró el OK en
-            # tiempo real. Este bloque actúa como respaldo si
-            # esa escritura falló.
-            if resultado == "OK":
-
-                texto_intento = "\n".join(
-                    str(t or "")
-                    for t in intento.get("mensajes", [])
-                )
-
-                candidatos = extraer_candidatos_telefono(
-                    texto_intento
-                )
-
-                fecha_fin = _fecha_desde_ms(
-                    intento.get("fin_ms")
-                )
-
-                deal_id = buscar_deal_id_por_telefono(
-                    candidatos,
-                    fecha_inicio,
-                    fecha_fin,
-                )
-
-            if _registrar_en_analytics(
+            # El listado de conversaciones no siempre entrega el
+            # canal en visitor["channel"]. Consultamos el detalle
+            # para leer channel_details.channel / channel_name.
+            detalle = obtener_detalle_conversacion(
                 conversation_id,
-                visitid,
-                resultado,
-                deal_id,
-                fecha_inicio,
-                attempt_id,
-            ):
-                resumen["registrados_analytics"] += 1
+                screenname,
+                salesiq_token,
+            ) or {}
 
+            visitor_detalle = detalle.get("visitor") or {}
+
+            canal = (
+                _obtener_canal_visitante(visitor_detalle)
+                or _obtener_canal_visitante(visitor)
+            )
+
+            if "whatsapp" not in canal:
+                resumen["omitidos_no_whatsapp"] += 1
+                time.sleep(PAUSA_ENTRE_LLAMADAS)
+                continue
+
+            resumen["revisados"] += 1
+
+            tags_actuales = {
+                str(t.get("id"))
+                for t in (detalle.get("tags") or [])
+                if isinstance(t, dict) and t.get("id")
+            }
+
+            # =============================================
+            # SIEMPRE ANALIZAR LOS INTENTOS DEL CHAT
+            # =============================================
+            # Los tags son solo informativos. Ya no deciden si
+            # una conversación completa se procesa o se omite.
+
+            mensajes = obtener_mensajes_conversacion(
+                conversation_id,
+                screenname,
+                salesiq_token,
+            ) or []
+
+            intentos = _detectar_intentos_cotizacion(
+                mensajes
+            )
+
+            resumen["intentos_detectados"] += len(intentos)
+
+            # Si no hubo ningún intento formal de cotización,
+            # conservamos solamente la exclusión informativa de
+            # Postventa. No registramos un "Incompleto" genérico.
+            if not intentos:
+
+                resumen["sin_intentos"] += 1
+
+                # Muestra de los primeros mensajes para verificar
+                # en el log que el texto se está leyendo bien.
+                muestra = [
+                    _texto_mensaje(m)[:40]
+                    for m in mensajes[:3]
+                ]
+
+                print(
+                    "[cron] Sin intentos: "
+                    f"conv={conversation_id} "
+                    f"mensajes={len(mensajes)} "
+                    f"muestra={muestra}"
+                )
+
+                texto_completo = "\n".join(
+                    _texto_mensaje(m) for m in mensajes
+                )
+
+                if decidir_resultado(texto_completo) == "POSTVENTA":
+                    resumen["postventa_excluidos"] += 1
+
+                time.sleep(PAUSA_ENTRE_LLAMADAS)
+                continue
+
+            visitid = (
+                visitor_detalle.get("visitid")
+                or visitor.get("visitid")
+                or detalle.get("reference_id")
+                or conv.get("reference_id")
+                or ""
+            )
+
+            for intento in intentos:
+
+                resultado = intento.get("resultado")
+
+                if resultado not in (
+                    "OK",
+                    "Error",
+                    "Incompleto",
+                ):
+                    continue
+
+                inicio_ms = intento.get("inicio_ms")
+
+                try:
+                    inicio_ms = int(inicio_ms)
+                except (TypeError, ValueError):
+                    resumen["omitidos_sin_tiempo"] += 1
+                    print("[cron] Intento sin hora de inicio: ...")
+                    continue          # <- se salta el intento completo
+
+                # -----------------------------------------
+                # NO TOCAR DATOS HISTÓRICOS
+                # -----------------------------------------
+                if inicio_ms < attempt_tracking_start_ms:
+                    resumen["omitidos_historicos"] += 1
+                    print(
+                        "[cron] Intento histórico omitido: "
+                        f"conv={conversation_id} "
+                        f"inicio_ms={inicio_ms} "
+                        f"tracking_start_ms={attempt_tracking_start_ms}"
+                    )
+                    continue
+
+                attempt_id = (
+                    f"{conversation_id}-{inicio_ms}"
+                )
+
+                # -----------------------------------------
+                # COMPROBAR SI ESTE INTENTO YA EXISTE
+                # -----------------------------------------
+                existe = existe_attempt_id_analytics(
+                    attempt_id
+                )
+
+                if existe is None:
+                    resumen["verificacion_fallida"] += 1
+                    print(
+                        "[cron] No se pudo verificar "
+                        f"Attempt ID: {attempt_id}"
+                    )
+                    continue
+
+
+                
+                if dry_run:
+                    resumen["propuestos"].append(
+                        {
+                            "attempt_id": attempt_id,
+                            "visitid": str(visitid or ""),
+                            "resultado": resultado,
+                            "inicio": _fecha_desde_ms(inicio_ms).astimezone(CHILE_TZ).isoformat(),
+                            "ya_existe": bool(existe),
+                        }
+                    )
+                    continue
+                # -----------------------------------------
+                # ASEGURAR EL TAG CORRESPONDIENTE
+                # -----------------------------------------
                 if resultado == "OK":
-                    resumen["ok"] += 1
+                    tag_id_resultado = tag_id_ok
                 elif resultado == "Error":
-                    resumen["error"] += 1
+                    tag_id_resultado = tag_id_error
                 else:
-                    resumen["incompleto"] += 1
+                    tag_id_resultado = tag_id_incompleto
+
+                if (
+                    tag_id_resultado
+                    and tag_id_resultado not in tags_actuales
+                ):
+                    if agregar_tag_conversacion(
+                        conversation_id,
+                        tag_id_resultado,
+                        salesiq_token,
+                    ):
+                        tags_actuales.add(tag_id_resultado)
+                    else:
+                        resumen["fallos_tag"] += 1
+
+                # Si ya existe en Analytics, no volver a insertar.
+                if existe:
+                    resumen["ya_registrados_analytics"] += 1
+                    continue
+
+                fecha_inicio = _fecha_desde_ms(
+                    inicio_ms
+                )
+
+                deal_id = None
+
+                # -----------------------------------------
+                # RECUPERAR DEAL ID PARA UN OK DE RESPALDO
+                # -----------------------------------------
+                # Normalmente quotation.py ya registró el OK en
+                # tiempo real. Este bloque actúa como respaldo si
+                # esa escritura falló.
+                if resultado == "OK":
+
+                    texto_intento = "\n".join(
+                        str(t or "")
+                        for t in intento.get("mensajes", [])
+                    )
+
+                    fecha_fin = _fecha_desde_ms(
+                        intento.get("fin_ms")
+                    )
+
+                    deal_id = buscar_deal_id_por_chat(
+                        texto_intento,
+                        fecha_inicio,
+                        fecha_fin,
+                    )
+
+                    if not deal_id:
+                        resumen["ok_sin_deal_id"] += 1
+                        print(
+                            "[cron] OK sin Deal ID: "
+                            f"attempt_id={attempt_id}"
+                        )
+
+                if _registrar_en_analytics(
+                    conversation_id,
+                    visitid,
+                    resultado,
+                    deal_id,
+                    fecha_inicio,
+                    attempt_id,
+                ):
+                    resumen["registrados_analytics"] += 1
+
+                    if resultado == "OK":
+                        resumen["ok"] += 1
+                    elif resultado == "Error":
+                        resumen["error"] += 1
+                    else:
+                        resumen["incompleto"] += 1
+
+        except Exception as e:
+
+            resumen["errores_conversacion"] += 1
+
+            print(
+                "[cron] ERROR procesando conversación "
+                f"{conversation_id!r}: {e}"
+            )
+            traceback.print_exc()
 
         time.sleep(PAUSA_ENTRE_LLAMADAS)
 
     return resumen
 
+
+# =========================================================
+# RUTA
+# =========================================================
 
 def register_cron_routes(app):
 
@@ -497,6 +708,29 @@ def register_cron_routes(app):
         ):
             return jsonify({"error": "No autorizado"}), 401
 
-        resultado = ejecutar_reconciliacion()
+        dry_run = request.args.get("dry_run", "").lower() in ("1", "true", "si")
+
+        try:
+            horas_desde = max(1, min(int(request.args.get("horas_desde", VENTANA_HORAS)), 24 * 120))
+            horas_hasta = max(0, min(int(request.args.get("horas_hasta", 0)), horas_desde - 1))
+        except ValueError:
+            horas_desde, horas_hasta = VENTANA_HORAS, 0
+
+        try:
+
+            resultado = ejecutar_reconciliacion(
+                horas_desde=horas_desde,
+                horas_hasta=horas_hasta,
+                dry_run=dry_run,
+            )
+        except Exception as e:
+
+            print(f"[cron/reconciliar] ERROR no controlado: {e}")
+            traceback.print_exc()
+
+            return jsonify({
+                "error": "Error no controlado en la reconciliación",
+                "detalle": str(e),
+            }), 500
 
         return jsonify(resultado), 200

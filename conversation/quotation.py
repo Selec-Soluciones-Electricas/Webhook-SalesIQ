@@ -52,11 +52,6 @@ CHILE_TZ = ZoneInfo("America/Santiago")
 
 COTIZACION_OWNERS = [
     {
-        "id": "4358923000090246001",
-        "nombre": "Ivanna Vera",
-        "email": "ivanna@selec.cl",
-    },
-    {
         "id": "4358923000011940001",
         "nombre": "Joaquin Gonzalez",
         "email": "Joaquin@selec.cl",

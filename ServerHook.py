@@ -1,12 +1,31 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+# =========================================================
+# CONFIGURACIÓN (cargar variables ANTES de importar rutas)
+# =========================================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv(os.path.join(BASE_DIR, "credentials"))
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+
+# =========================================================
+# IMPORTS
+# =========================================================
 
 from flask import Flask
 
 from routes.webhook import register_routes
 from routes.cron import register_cron_routes
+from routes.reparacion import register_reparacion_routes
+from routes.excel_routes import excel_bp
 
 from routes.flow_mvp import (
     flow_mvp_bp,
@@ -18,37 +37,12 @@ from formulario_mvp.app import (
 
 from services.zoho_service import get_access_token
 
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None
-
-
-# =========================================================
-# CONFIGURACIÓN
-# =========================================================
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-if load_dotenv:
-    load_dotenv(os.path.join(BASE_DIR, "credentials"))
-    load_dotenv(os.path.join(BASE_DIR, ".env"))
-
 
 # =========================================================
 # APLICACIÓN FLASK
 # =========================================================
 
 app = Flask(__name__)
-
-from routes.flow_mvp import (
-    flow_mvp_bp,
-)
-
-from formulario_mvp.app import (
-    formulario_mvp_bp,
-)
 
 
 # =========================================================
@@ -77,6 +71,12 @@ register_routes(
 
 register_cron_routes(app)
 
+register_reparacion_routes(app)
+
+app.register_blueprint(
+    excel_bp
+)
+
 app.register_blueprint(
     flow_mvp_bp
 )
@@ -84,6 +84,7 @@ app.register_blueprint(
 app.register_blueprint(
     formulario_mvp_bp
 )
+
 
 # =========================================================
 # DEBUG DE RUTAS

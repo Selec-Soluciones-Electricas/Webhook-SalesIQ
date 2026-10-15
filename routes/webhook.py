@@ -11,10 +11,9 @@ from conversation.state_machine import (
     reply_menu_principal,
     es_saludo_inicio,
     es_opcion_cotizacion,
-    es_opcion_postventa,
     normalizar_texto,
     iniciar_cotizacion,
-    iniciar_postventa,
+    iniciar_agente,
 )
 
 from conversation.quotation import (
@@ -256,6 +255,23 @@ def procesar_mensaje(
             payload
         )
     )
+
+    FRASES_AGENTE = {
+        "agente",
+        "contactar con agente",
+        "hablar con agente",
+        "hablar con un agente",
+        "asistente",
+        "sofia",
+    }
+
+    if (
+        session.get("state") != "agente_ia"
+        and normalizar_texto(message_text) in FRASES_AGENTE
+    ):
+        return jsonify(
+            iniciar_agente(session)
+        )
 
     print(
         "=== mensaje extraído ===",

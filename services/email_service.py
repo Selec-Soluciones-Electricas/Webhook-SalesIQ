@@ -263,11 +263,19 @@ def enviar_correo_owner(
 ):
     """
     Envía un correo notificando la creación de un nuevo
-    Deal desde el chatbot de WhatsApp.
+    Negocio generado desde Web o WhatsApp.
+
+    En modo prueba:
+    - Envía únicamente a COTIZACION_TEST_TO.
+    - No envía copias.
+
+    En producción:
+    - Envía al ejecutivo asignado a la cotización.
+    - Envía copia a Luis Hurtado / Gerencia.
     """
 
     # =====================================================
-    # OWNER REAL DEL DEAL
+    # EJECUTIVO ASIGNADO A LA COTIZACIÓN
     # =====================================================
 
     owner_email = str(
@@ -284,7 +292,7 @@ def enviar_correo_owner(
         owner_name = "Ejecutivo Selec"
 
     # =====================================================
-    # MODO PRUEBA / PRODUCCION
+    # MODO PRUEBA / PRODUCCIÓN
     # =====================================================
 
     if COTIZACION_MODO_PRUEBA:
@@ -302,8 +310,6 @@ def enviar_correo_owner(
 
         to_email = COTIZACION_TEST_TO
         to_name = "Ederth"
-
-        # En modo prueba no enviamos copias
         cc_destinatarios = []
 
         print(
@@ -311,7 +317,7 @@ def enviar_correo_owner(
         )
 
         print(
-            "[enviar_correo_owner] Owner real:",
+            "[enviar_correo_owner] Ejecutivo real:",
             owner_name,
             owner_email
         )
@@ -323,20 +329,28 @@ def enviar_correo_owner(
 
     else:
 
-        # En producción debe existir el correo del owner real
         if not owner_email:
 
             print(
                 "[enviar_correo_owner] "
-                "El owner del Deal no tiene correo configurado. "
+                "El ejecutivo asignado no tiene correo configurado. "
                 "No se enviará la notificación."
             )
 
             return None
 
+        # Destinatario principal:
+        # Patricio / ejecutivo asignado
         to_email = owner_email
         to_name = owner_name
-        cc_destinatarios = construir_cc()
+
+        # Copia a Luis Hurtado / Gerencia
+        cc_destinatarios = [
+            build_mail_recipient(
+                "gerencia@selec.cl",
+                "Luis Hurtado"
+            )
+        ]
 
     # =====================================================
     # ACCESS TOKEN
@@ -354,11 +368,12 @@ def enviar_correo_owner(
 
         return None
 
-        deal_name_real = str(
+    # Nombre inicial recibido por la función
+    deal_name_real = str(
         deal_name or ""
     ).strip()
 
-
+    # Intentamos obtener el nombre real guardado en CRM
     try:
 
         response_nombre = requests.get(
@@ -377,7 +392,6 @@ def enviar_correo_owner(
             timeout=15,
         )
 
-
         if response_nombre.status_code == 200:
 
             registros_nombre = (
@@ -386,7 +400,6 @@ def enviar_correo_owner(
                 )
                 or []
             )
-
 
             if registros_nombre:
 
@@ -397,20 +410,15 @@ def enviar_correo_owner(
                     or ""
                 ).strip()
 
-
                 if nombre_crm:
 
-                    deal_name_real = (
-                        nombre_crm
-                    )
-
+                    deal_name_real = nombre_crm
 
                     print(
                         "[enviar_correo_owner] "
                         "Nombre real del Negocio:",
                         deal_name_real,
                     )
-
 
     except Exception as error:
 
@@ -437,11 +445,14 @@ def enviar_correo_owner(
         "Content-Type": "application/json",
     }
 
+    # =====================================================
+    # ORIGEN
+    # =====================================================
+
     origen = str(
         campos.get("origen")
         or ""
     ).strip().lower()
-
 
     if origen == "web":
 
@@ -458,6 +469,9 @@ def enviar_correo_owner(
         origen_asunto = "SELEC"
         origen_texto = "canal de atención de SELEC"
 
+    # =====================================================
+    # ASUNTO Y LINKS
+    # =====================================================
 
     subject = (
         f"Nuevo Negocio asignado desde {origen_asunto}: "
@@ -475,7 +489,6 @@ def enviar_correo_owner(
         access_token,
     )
 
-
     if zoho_one_link:
 
         bloque_zoho_one = f"""
@@ -491,6 +504,9 @@ Abrir Negocio en Zoho One
 
         bloque_zoho_one = ""
 
+    # =====================================================
+    # CONTENIDO
+    # =====================================================
 
     content = f"""
 <p>Hola {to_name},</p>
@@ -569,7 +585,7 @@ Abrir Negocio
 <hr>
 
 <p>
-<b>Owner real del Negocio:</b>
+<b>Ejecutivo asignado:</b>
 {owner_name}
 </p>
 
@@ -607,7 +623,7 @@ Sistema de atención SELEC
     }
 
     # =====================================================
-    # ENVIO
+    # ENVÍO
     # =====================================================
 
     try:

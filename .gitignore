@@ -9,3 +9,9 @@ credentials.*
 .env
 .ps1
 .venv*/
+
+# Archivos locales de pruebas y desarrollo
+conflicto_zoho_completo.txt
+obtener_refresh_token_salesiq.py
+probar_plantilla_whatsapp.py
+ollama_mvp/

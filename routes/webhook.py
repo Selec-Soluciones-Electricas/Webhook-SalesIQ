@@ -9,8 +9,10 @@ from conversation.state_machine import (
     reply_menu_principal,
     es_saludo_inicio,
     es_opcion_cotizacion,
+    es_opcion_postventa,
     normalizar_texto,
     iniciar_cotizacion,
+    iniciar_postventa,
 )
 
 from conversation.quotation import (
@@ -28,6 +30,7 @@ from services.salesiq_service import (
     get_visitor_id,
     get_conversation_id,
     enviar_plantilla_cotizacion_whatsapp,
+    enviar_plantilla_postventa_whatsapp,
 )
 
 from utils.security import (
@@ -344,10 +347,6 @@ def procesar_mensaje(
                 )
             )
 
-            # -------------------------------------------------
-            # PLANTILLA ENVIADA CORRECTAMENTE
-            # -------------------------------------------------
-
             if enviada:
 
                 session["state"] = (
@@ -366,10 +365,6 @@ def procesar_mensaje(
                     )
                 )
 
-            # -------------------------------------------------
-            # FALLBACK SI FALLA LA PLANTILLA
-            # -------------------------------------------------
-
             print(
                 "[procesar_mensaje] "
                 "No se pudo enviar la plantilla. "
@@ -378,6 +373,57 @@ def procesar_mensaje(
 
             return jsonify(
                 iniciar_cotizacion(
+                    session
+                )
+            )
+
+        # =====================================================
+        # POSTVENTA - PLANTILLA WHATSAPP
+        # =====================================================
+
+        if es_opcion_postventa(
+            texto_norm
+        ):
+
+            print(
+                "[procesar_mensaje] "
+                "Servicio postventa detectado. "
+                "Intentando enviar plantilla WhatsApp."
+            )
+
+            enviada = (
+                enviar_plantilla_postventa_whatsapp(
+                    payload
+                )
+            )
+
+            if enviada:
+
+                session["state"] = (
+                    "menu_principal"
+                )
+
+                session["data"] = {}
+
+                return jsonify(
+                    build_reply(
+                        (
+                            "A continuación te enviaremos "
+                            "el acceso para completar tu "
+                            "solicitud de servicio postventa."
+                        )
+                    )
+                )
+
+            print(
+                "[procesar_mensaje] "
+                "No se pudo enviar la plantilla "
+                "de postventa. "
+                "Usando enlace como respaldo."
+            )
+
+            return jsonify(
+                iniciar_postventa(
                     session
                 )
             )

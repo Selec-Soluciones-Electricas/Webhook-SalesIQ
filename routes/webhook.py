@@ -2,6 +2,8 @@ import os
 
 from flask import jsonify, request, send_from_directory
 
+from conversation.agente_ia import manejar_agente
+
 from conversation.state_machine import (
     build_reply,
     elegir_owner_session,
@@ -267,8 +269,9 @@ def procesar_mensaje(
     # REINICIO POR SALUDO
     # =========================================================
 
-    if es_saludo_inicio(
-        message_text
+    if (
+        es_saludo_inicio(message_text)
+        and session.get("state") != "agente_ia"
     ):
 
         print(
@@ -301,6 +304,9 @@ def procesar_mensaje(
     # =========================================================
     # INICIO
     # =========================================================
+
+    if state == "agente_ia":
+        return jsonify(manejar_agente(session, message_text))
 
     if state == "inicio":
 

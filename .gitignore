@@ -8,6 +8,7 @@ credentials.*
 !credentials.example
 .env
 .ps1
+.venv*/
 
 # Archivos locales de pruebas y desarrollo
 conflicto_zoho_completo.txt

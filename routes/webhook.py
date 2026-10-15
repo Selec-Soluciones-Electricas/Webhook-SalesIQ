@@ -2,6 +2,8 @@ import os
 
 from flask import jsonify, request, send_from_directory
 
+from conversation.agente_ia import manejar_agente
+
 from conversation.state_machine import (
     build_reply,
     elegir_owner_session,
@@ -9,10 +11,9 @@ from conversation.state_machine import (
     reply_menu_principal,
     es_saludo_inicio,
     es_opcion_cotizacion,
-    es_opcion_postventa,
     normalizar_texto,
     iniciar_cotizacion,
-    iniciar_postventa,
+    iniciar_agente,
 )
 
 from conversation.quotation import (
@@ -255,6 +256,23 @@ def procesar_mensaje(
         )
     )
 
+    FRASES_AGENTE = {
+        "agente",
+        "contactar con agente",
+        "hablar con agente",
+        "hablar con un agente",
+        "asistente",
+        "sofia",
+    }
+
+    if (
+        session.get("state") != "agente_ia"
+        and normalizar_texto(message_text) in FRASES_AGENTE
+    ):
+        return jsonify(
+            iniciar_agente(session)
+        )
+
     print(
         "=== mensaje extraído ===",
         repr(
@@ -270,8 +288,9 @@ def procesar_mensaje(
     # REINICIO POR SALUDO
     # =========================================================
 
-    if es_saludo_inicio(
-        message_text
+    if (
+        es_saludo_inicio(message_text)
+        and session.get("state") != "agente_ia"
     ):
 
         print(
@@ -304,6 +323,9 @@ def procesar_mensaje(
     # =========================================================
     # INICIO
     # =========================================================
+
+    if state == "agente_ia":
+        return jsonify(manejar_agente(session, message_text))
 
     if state == "inicio":
 

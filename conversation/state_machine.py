@@ -146,6 +146,7 @@ def reply_menu_principal() -> dict:
             "options": [
                 "Solicitud cotización",
                 "Servicio postventa",
+                "Contactar con agente",
             ],
         },
     )
@@ -261,6 +262,9 @@ def manejar_menu_principal(
         return iniciar_postventa(
             session
         )
+
+    if es_opcion_agente(texto_norm):
+        return iniciar_agente(session)
 
     return derivar_a_operador(
         session
@@ -380,6 +384,30 @@ def derivar_a_operador(
             "options": [
                 "Solicitud cotización",
                 "Servicio postventa",
+                "Contactar con agente",
             ],
         },
+    )
+
+
+# =========================================================
+# OPCIÓN AGENTE IA
+# =========================================================
+
+def es_opcion_agente(texto_norm: str) -> bool:
+    return texto_norm == "3" or "agente" in texto_norm
+
+
+def iniciar_agente(session: dict) -> dict:
+    """
+    No se limpia session["data"]: ahí están owner_asignado,
+    conversation_id y num_chat, que el agente usa al registrar en Zoho.
+    """
+    session["state"] = "agente_ia"
+    session["agente"] = {"historial": [], "registros": {}}
+
+    return build_reply(
+        "Hola, soy Sofía, asistente virtual de SELEC. "
+        "¿En qué le puedo ayudar?\n\n"
+        "Si desea volver a las opciones, escriba \"menú\"."
     )

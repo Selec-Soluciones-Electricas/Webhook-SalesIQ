@@ -1,5 +1,9 @@
 import os
+import json
+import re
 import requests
+
+from services.zoho_service import get_salesiq_access_token
 
 
 # =========================================================
@@ -504,3 +508,280 @@ def obtener_transcripcion_completa(
         for m in mensajes
         if m.get("text")
     )
+
+# =========================================================
+# SALESIQ - ENVIAR PLANTILLA WHATSAPP COTIZACIÓN
+# =========================================================
+
+def enviar_plantilla_cotizacion_whatsapp(
+    payload: dict
+) -> bool:
+    """
+    Envía automáticamente la plantilla aprobada
+    'solicitud_cotizacion' al visitante de WhatsApp.
+
+    Devuelve True si SalesIQ acepta el envío.
+    Devuelve False si ocurre cualquier problema.
+    """
+
+    screenname = os.environ.get(
+        "SALESIQ_SCREENNAME"
+    )
+
+    if not screenname:
+
+        print(
+            "[plantilla_cotizacion] "
+            "Falta SALESIQ_SCREENNAME."
+        )
+
+        return False
+
+
+    # -----------------------------------------------------
+    # ACCESS TOKEN SALESIQ
+    # -----------------------------------------------------
+
+    access_token = (
+        get_salesiq_access_token()
+    )
+
+    if not access_token:
+
+        print(
+            "[plantilla_cotizacion] "
+            "No fue posible obtener access token."
+        )
+
+        return False
+
+
+    # -----------------------------------------------------
+    # DATOS DEL PAYLOAD DE WHATSAPP
+    # -----------------------------------------------------
+
+    visitor = (
+        payload.get("visitor")
+        or {}
+    )
+
+    request_data = (
+        payload.get("request")
+        or {}
+    )
+
+
+    app_id = request_data.get(
+        "app_id"
+    )
+
+    department_id = visitor.get(
+        "department_id"
+    )
+
+    phone_raw = str(
+        visitor.get("phone")
+        or ""
+    ).strip()
+
+
+    if not app_id:
+
+        print(
+            "[plantilla_cotizacion] "
+            "Falta app_id."
+        )
+
+        return False
+
+
+    if not department_id:
+
+        print(
+            "[plantilla_cotizacion] "
+            "Falta department_id."
+        )
+
+        return False
+
+
+    if not phone_raw:
+
+        print(
+            "[plantilla_cotizacion] "
+            "Falta teléfono del visitante."
+        )
+
+        return False
+
+
+    # -----------------------------------------------------
+    # NORMALIZAR TELÉFONO A E.164
+    # -----------------------------------------------------
+
+    phone_digits = re.sub(
+        r"\D",
+        "",
+        phone_raw
+    )
+
+    if not phone_digits:
+
+        print(
+            "[plantilla_cotizacion] "
+            "Teléfono inválido."
+        )
+
+        return False
+
+
+    phone_number = (
+        "+"
+        + phone_digits
+    )
+
+
+    # -----------------------------------------------------
+    # NOMBRE DEL VISITANTE
+    # -----------------------------------------------------
+
+    first_name = str(
+        visitor.get("first_name")
+        or visitor.get("name")
+        or "Cliente"
+    ).strip()
+
+    last_name = str(
+        visitor.get("last_name")
+        or ""
+    ).strip()
+
+
+    # -----------------------------------------------------
+    # PLANTILLA APROBADA
+    # -----------------------------------------------------
+
+    template_id = (
+        "44332000000586063"
+    )
+
+
+    # -----------------------------------------------------
+    # ENDPOINT SALESIQ
+    # -----------------------------------------------------
+
+    url = (
+        f"https://salesiq.zoho.com/api/v2/"
+        f"{screenname}/proactivemessages"
+    )
+
+
+    users = {
+        "people": [
+            {
+                "phone_number":
+                    phone_number,
+
+                "first_name":
+                    first_name,
+
+                "last_name":
+                    last_name,
+            }
+        ]
+    }
+
+
+    # -----------------------------------------------------
+    # MULTIPART/FORM-DATA
+    # -----------------------------------------------------
+
+    multipart = {
+        "app_id": (
+            None,
+            str(app_id),
+        ),
+
+        "department_id": (
+            None,
+            str(department_id),
+        ),
+
+        "users": (
+            None,
+            json.dumps(
+                users,
+                ensure_ascii=False,
+            ),
+        ),
+
+        "channel": (
+            None,
+            "whatsapp",
+        ),
+
+        "template_id": (
+            None,
+            template_id,
+        ),
+
+        "title": (
+            None,
+            "Solicitud cotización",
+        ),
+    }
+
+
+    headers = {
+        "Authorization":
+            f"Zoho-oauthtoken {access_token}"
+    }
+
+
+    # -----------------------------------------------------
+    # ENVIAR
+    # -----------------------------------------------------
+
+    try:
+
+        response = requests.post(
+            url,
+            headers=headers,
+            files=multipart,
+            timeout=20,
+        )
+
+
+        print(
+            "[plantilla_cotizacion] "
+            f"status={response.status_code}"
+        )
+
+
+        if response.status_code == 200:
+
+            print(
+                "[plantilla_cotizacion] "
+                "Plantilla enviada correctamente."
+            )
+
+            return True
+
+
+        print(
+            "[plantilla_cotizacion] "
+            f"Error SalesIQ: "
+            f"{response.text[:500]}"
+        )
+
+        return False
+
+
+    except Exception as e:
+
+        print(
+            "[plantilla_cotizacion] "
+            f"ERROR: {e}"
+        )
+
+        return False

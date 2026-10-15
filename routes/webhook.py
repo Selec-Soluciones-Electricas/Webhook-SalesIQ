@@ -8,6 +8,9 @@ from conversation.state_machine import (
     manejar_menu_principal,
     reply_menu_principal,
     es_saludo_inicio,
+    es_opcion_cotizacion,
+    normalizar_texto,
+    iniciar_cotizacion,
 )
 
 from conversation.quotation import (
@@ -24,6 +27,7 @@ from services.salesiq_service import (
     extraer_mensaje,
     get_visitor_id,
     get_conversation_id,
+    enviar_plantilla_cotizacion_whatsapp,
 )
 
 from utils.security import (
@@ -83,7 +87,10 @@ def register_routes(app, sessions, access_token):
     # SALESIQ WEBHOOK
     # =========================================================
 
-    @app.route("/salesiq-webhook", methods=["GET", "POST"])
+    @app.route(
+        "/salesiq-webhook",
+        methods=["GET", "POST"]
+    )
     def salesiq_webhook():
 
         if request.method == "GET":
@@ -113,10 +120,15 @@ def register_routes(app, sessions, access_token):
             payload
         )
 
-        print("=== SalesIQ payload (safe) ===")
-        print(scrub_payload(payload))
+        print(
+            "=== SalesIQ payload (safe) ==="
+        )
+        print(
+            scrub_payload(payload)
+        )
 
         if handler == "trigger":
+
             return procesar_trigger(
                 session,
                 payload,
@@ -124,6 +136,7 @@ def register_routes(app, sessions, access_token):
             )
 
         if handler == "message":
+
             return procesar_mensaje(
                 session,
                 payload
@@ -140,46 +153,74 @@ def register_routes(app, sessions, access_token):
 # FUNCIONES AUXILIARES
 # =========================================================
 
-def actualizar_num_chat(session, payload):
+def actualizar_num_chat(
+    session,
+    payload
+):
     """
     Guarda el identificador de la conversación
     o visita actual dentro de la sesión.
     """
 
-    visitor = payload.get("visitor") or {}
+    visitor = (
+        payload.get("visitor")
+        or {}
+    )
 
-    visitid = visitor.get("visitid")
+    visitid = visitor.get(
+        "visitid"
+    )
 
     conversation_id = str(
-        visitor.get("active_conversation_id") or ""
+        visitor.get(
+            "active_conversation_id"
+        )
+        or ""
     ).strip()
 
     if visitid:
-        session["data"]["num_chat"] = f"#{visitid}"
+
+        session["data"][
+            "num_chat"
+        ] = f"#{visitid}"
 
     elif conversation_id:
-        session["data"]["num_chat"] = conversation_id
+
+        session["data"][
+            "num_chat"
+        ] = conversation_id
 
     # -----------------------------------------------------
-    # ID real de la conversación (independiente del num_chat
-    # visible). Se necesita para llamar a la API de tags de
-    # SalesIQ desde finalizar_cotizacion().
+    # ID real de la conversación.
     # -----------------------------------------------------
 
     if conversation_id:
-        session["data"]["conversation_id"] = conversation_id
+
+        session["data"][
+            "conversation_id"
+        ] = conversation_id
 
 
-def procesar_trigger(session, payload, access_token):
+def procesar_trigger(
+    session,
+    payload,
+    access_token
+):
     """
     Procesa el evento trigger enviado por SalesIQ.
     """
 
-    session["state"] = "menu_principal"
+    session["state"] = (
+        "menu_principal"
+    )
 
-    owner = elegir_owner_session(session)
+    owner = elegir_owner_session(
+        session
+    )
 
-    if not session.get("primer_correo_enviado"):
+    if not session.get(
+        "primer_correo_enviado"
+    ):
 
         enviar_correo_primer_contacto(
             owner,
@@ -187,20 +228,29 @@ def procesar_trigger(session, payload, access_token):
             access_token,
         )
 
-        session["primer_correo_enviado"] = True
+        session[
+            "primer_correo_enviado"
+        ] = True
 
     return jsonify(
         reply_menu_principal()
     )
 
 
-def procesar_mensaje(session, payload):
+def procesar_mensaje(
+    session,
+    payload
+):
     """
     Procesa un mensaje recibido desde SalesIQ
     según el estado actual de la conversación.
     """
 
-    message_text = extraer_mensaje(payload)
+    message_text = (
+        extraer_mensaje(
+            payload
+        )
+    )
 
     print(
         "=== mensaje extraído ===",
@@ -216,26 +266,28 @@ def procesar_mensaje(session, payload):
     # =========================================================
     # REINICIO POR SALUDO
     # =========================================================
-    #
-    # El frontend de pruebas utiliza un visitor_id fijo. Si una
-    # sesión anterior quedó a mitad de una cotización, un nuevo
-    # "hola" no debe interpretarse como datos de empresa.
-    #
-    # El saludo tiene prioridad sobre cualquier estado anterior.
-    # =========================================================
 
-    if es_saludo_inicio(message_text):
+    if es_saludo_inicio(
+        message_text
+    ):
 
         print(
-            "[procesar_mensaje] Saludo detectado. "
+            "[procesar_mensaje] "
+            "Saludo detectado. "
             "Reiniciando sesión."
         )
 
         session.clear()
-        session["state"] = "menu_principal"
+
+        session["state"] = (
+            "menu_principal"
+        )
+
         session["data"] = {}
 
-        elegir_owner_session(session)
+        elegir_owner_session(
+            session
+        )
 
         return jsonify(
             reply_menu_principal()
@@ -252,7 +304,9 @@ def procesar_mensaje(session, payload):
 
     if state == "inicio":
 
-        session["state"] = "menu_principal"
+        session["state"] = (
+            "menu_principal"
+        )
 
         return jsonify(
             reply_menu_principal()
@@ -263,6 +317,74 @@ def procesar_mensaje(session, payload):
     # =========================================================
 
     if state == "menu_principal":
+
+        texto_norm = (
+            normalizar_texto(
+                message_text
+            )
+        )
+
+        # =====================================================
+        # COTIZACIÓN - PLANTILLA WHATSAPP
+        # =====================================================
+
+        if es_opcion_cotizacion(
+            texto_norm
+        ):
+
+            print(
+                "[procesar_mensaje] "
+                "Solicitud cotización detectada. "
+                "Intentando enviar plantilla WhatsApp."
+            )
+
+            enviada = (
+                enviar_plantilla_cotizacion_whatsapp(
+                    payload
+                )
+            )
+
+            # -------------------------------------------------
+            # PLANTILLA ENVIADA CORRECTAMENTE
+            # -------------------------------------------------
+
+            if enviada:
+
+                session["state"] = (
+                    "menu_principal"
+                )
+
+                session["data"] = {}
+
+                return jsonify(
+                    build_reply(
+                        (
+                            "A continuación te enviaremos "
+                            "el acceso para completar tu "
+                            "solicitud de cotización."
+                        )
+                    )
+                )
+
+            # -------------------------------------------------
+            # FALLBACK SI FALLA LA PLANTILLA
+            # -------------------------------------------------
+
+            print(
+                "[procesar_mensaje] "
+                "No se pudo enviar la plantilla. "
+                "Usando enlace como respaldo."
+            )
+
+            return jsonify(
+                iniciar_cotizacion(
+                    session
+                )
+            )
+
+        # =====================================================
+        # RESTO DEL MENÚ
+        # =====================================================
 
         return jsonify(
             manejar_menu_principal(
@@ -294,7 +416,9 @@ def procesar_mensaje(session, payload):
     # DATOS DE EMPRESA - COTIZACION
     # =========================================================
 
-    if state == "cotizacion_empresa_bloque":
+    if state == (
+        "cotizacion_empresa_bloque"
+    ):
 
         return jsonify(
             manejar_flujo_cotizacion_empresa_bloque(
@@ -307,9 +431,13 @@ def procesar_mensaje(session, payload):
     # PRODUCTO - COTIZACION
     # =========================================================
 
-    if state == "cotizacion_producto_bloque":
+    if state == (
+        "cotizacion_producto_bloque"
+    ):
 
-        session["state"] = "cotizacion_bloque"
+        session["state"] = (
+            "cotizacion_bloque"
+        )
 
         return jsonify(
             manejar_flujo_cotizacion_bloque(
@@ -322,7 +450,9 @@ def procesar_mensaje(session, payload):
     # COTIZACION
     # =========================================================
 
-    if state == "cotizacion_bloque":
+    if state == (
+        "cotizacion_bloque"
+    ):
 
         return jsonify(
             manejar_flujo_cotizacion_bloque(
@@ -335,7 +465,9 @@ def procesar_mensaje(session, payload):
     # POSTVENTA
     # =========================================================
 
-    if state == "postventa_bloque":
+    if state == (
+        "postventa_bloque"
+    ):
 
         return jsonify(
             manejar_flujo_postventa_bloque(
@@ -348,7 +480,9 @@ def procesar_mensaje(session, payload):
     # ESTADO DESCONOCIDO
     # =========================================================
 
-    session["state"] = "menu_principal"
+    session["state"] = (
+        "menu_principal"
+    )
 
     return jsonify(
         reply_menu_principal()

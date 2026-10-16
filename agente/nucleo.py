@@ -55,13 +55,57 @@ def responder(historial: list[dict], canal: str, contexto: dict | None = None) -
             return texto or RESPUESTA_FALLO, acciones
 
         resultados = []
+
         for uso in usos:
-            resultado = ejecutar(uso.name, uso.input, canal, contexto)
-            acciones.append({"herramienta": uso.name, "entrada": uso.input, "resultado": resultado})
+
+            resultado = ejecutar(
+                uso.name,
+                uso.input,
+                canal,
+                contexto,
+            )
+
+            acciones.append({
+                "herramienta": uso.name,
+                "entrada": uso.input,
+                "resultado": resultado,
+            })
+
+            # =================================================
+            # DERIVACIONES A FORMULARIOS
+            # =================================================
+            # Si la plantilla fue enviada correctamente,
+            # terminamos aquí. No necesitamos volver a pedirle
+            # otra respuesta al modelo.
+            # =================================================
+
+            if (
+                resultado.get("ok")
+                and uso.name == "derivar_cotizacion"
+            ):
+                return (
+                    "Para continuar con su solicitud de cotización, "
+                    "complete el formulario que le acabamos de enviar.",
+                    acciones,
+                )
+
+            if (
+                resultado.get("ok")
+                and uso.name == "derivar_postventa"
+            ):
+                return (
+                    "Para continuar con su solicitud de servicio postventa, "
+                    "complete el formulario que le acabamos de enviar.",
+                    acciones,
+                )
+
             resultados.append({
                 "type": "tool_result",
                 "tool_use_id": uso.id,
-                "content": json.dumps(resultado, ensure_ascii=False),
+                "content": json.dumps(
+                    resultado,
+                    ensure_ascii=False,
+                ),
             })
 
         mensajes += [

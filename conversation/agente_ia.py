@@ -20,7 +20,11 @@ def log(mensaje: str) -> None:
     print(f"[agente_ia] {mensaje}", flush=True)
 
 
-def manejar_agente(session: dict, message_text: str) -> dict:
+def manejar_agente(
+    session: dict,
+    message_text: str,
+    payload: dict | None = None,
+) -> dict:
 
     data = session.get("data", {})
     chat = data.get("num_chat") or "sin-id"
@@ -43,6 +47,7 @@ def manejar_agente(session: dict, message_text: str) -> dict:
         "conversation_id": data.get("conversation_id"),
         "num_chat": data.get("num_chat"),
         "registros": estado["registros"],
+        "payload": payload or {},
     }
 
     inicio = time.time()

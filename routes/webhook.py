@@ -11,8 +11,10 @@ from conversation.state_machine import (
     reply_menu_principal,
     es_saludo_inicio,
     es_opcion_cotizacion,
+    es_opcion_postventa,
     normalizar_texto,
     iniciar_cotizacion,
+    iniciar_postventa,
     iniciar_agente,
 )
 
@@ -325,7 +327,13 @@ def procesar_mensaje(
     # =========================================================
 
     if state == "agente_ia":
-        return jsonify(manejar_agente(session, message_text))
+        return jsonify(
+            manejar_agente(
+                session,
+                message_text,
+                payload,
+            )
+        )
 
     if state == "inicio":
 

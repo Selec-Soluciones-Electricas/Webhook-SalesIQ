@@ -1,7 +1,26 @@
+import os
 import re
 import unicodedata
 
 from services.zoho_service import normalizar_owner
+
+# =========================================================
+# AGENTE IA - INTERRUPTOR
+# =========================================================
+
+def agente_ia_habilitado() -> bool:
+    """
+    Permite activar o desactivar temporalmente a Sofía
+    sin eliminar su código.
+    """
+
+    return (
+        os.environ.get(
+            "AGENTE_IA_HABILITADO",
+            "false",
+        ).strip().lower()
+        == "true"
+    )
 
 
 # =========================================================
@@ -131,9 +150,18 @@ def reply_menu_principal() -> dict:
     """
     Respuesta inicial del menú principal.
 
-    En WhatsApp, SalesIQ mostrará estas dos opciones
-    como botones mediante un input de tipo "select".
+    Sofía solo aparece cuando AGENTE_IA_HABILITADO=true.
     """
+
+    opciones = [
+        "Solicitud cotización",
+        "Servicio postventa",
+    ]
+
+    if agente_ia_habilitado():
+        opciones.append(
+            "Contactar con agente"
+        )
 
     return build_reply(
         (
@@ -143,11 +171,7 @@ def reply_menu_principal() -> dict:
         ),
         input_card={
             "type": "select",
-            "options": [
-                "Solicitud cotización",
-                "Servicio postventa",
-                "Contactar con agente",
-            ],
+            "options": opciones,
         },
     )
 

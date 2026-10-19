@@ -16,6 +16,7 @@ from conversation.state_machine import (
     iniciar_cotizacion,
     iniciar_postventa,
     iniciar_agente,
+    agente_ia_habilitado,
 )
 
 from conversation.quotation import (
@@ -268,7 +269,8 @@ def procesar_mensaje(
     }
 
     if (
-        session.get("state") != "agente_ia"
+        agente_ia_habilitado()
+        and session.get("state") != "agente_ia"
         and normalizar_texto(message_text) in FRASES_AGENTE
     ):
         return jsonify(
@@ -327,12 +329,21 @@ def procesar_mensaje(
     # =========================================================
 
     if state == "agente_ia":
-        return jsonify(
-            manejar_agente(
-                session,
-                message_text,
-                payload,
+
+        if agente_ia_habilitado():
+            return jsonify(
+                manejar_agente(
+                    session,
+                    message_text,
+                    payload,
+                )
             )
+
+        session["state"] = "menu_principal"
+        session.pop("agente", None)
+
+        return jsonify(
+            reply_menu_principal()
         )
 
     if state == "inicio":

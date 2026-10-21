@@ -22,6 +22,9 @@ Variables de entorno:
                         system@wherex.com          correo exacto
                         senegocia.com              dominio completo
                         *codelco*@ansmtp.ariba.com patrón con *
+  CORREO_REENVIOS_DE  dominios internos cuyos reenvíos se revisan (por defecto selec.cl).
+                      Si un colega reenvía una notificación, el "De" del correo es el
+                      colega; en ese caso se busca el "De:" original dentro del cuerpo.
 """
 
 import json
@@ -66,6 +69,19 @@ def log(mensaje: str) -> None:
 
 def _lista_env(nombre: str) -> list[str]:
     return [v.strip().lower() for v in os.getenv(nombre, "").split(",") if v.strip()]
+
+
+PATRON_DE_ORIGINAL = re.compile(r"^[\s>*]*(?:De|From)\s*:\s*\**\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+PATRON_CORREO = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def remitente_original_reenviado(cuerpo: str) -> str:
+    """Busca en un reenvío la línea 'De: ... <correo>' de un remitente permitido."""
+    for linea in PATRON_DE_ORIGINAL.findall(cuerpo or ""):
+        for correo in PATRON_CORREO.findall(linea):
+            if remitente_permitido(correo):
+                return correo.lower()
+    return ""
 
 
 def remitente_permitido(correo: str) -> bool:
@@ -132,13 +148,26 @@ def listar_pendientes(buzon: str, horas: int) -> list[dict]:
         },
     )
 
+    internos = _lista_env("CORREO_REENVIOS_DE") or ["selec.cl"]
+
     pendientes = []
     for m in datos.get("value", []):
-        remitente = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "")
-        if not remitente_permitido(remitente):
-            continue
+        remitente = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower()
         if PATRON_AUTORESPUESTA.search(m.get("subject") or ""):
             continue
+
+        if not remitente_permitido(remitente):
+            # ¿Es un reenvío de un colega? Se busca el "De:" original en el cuerpo.
+            if remitente.split("@")[-1] not in internos:
+                continue
+            cuerpo = leer_cuerpo(buzon, m["id"])
+            original = remitente_original_reenviado(cuerpo)
+            if not original:
+                continue
+            m["cuerpo"] = cuerpo
+            m["reenviado_por"] = remitente
+            remitente = original
+
         m["remitente"] = remitente
         m["buzon"] = buzon
         m["internetMessageId"] = m.get("internetMessageId") or m["id"]
@@ -330,10 +359,12 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": p["base64"]}, "title": p["nombre"]}
         for p in pdfs
     ]
+    reenvio = f"Reenviado por: {m['reenviado_por']} (colega de SELEC)\n" if m.get("reenviado_por") else ""
     contenido.append({
         "type": "text",
         "text": (
             f"De: {m['remitente']}\n"
+            f"{reenvio}"
             f"Para (buzón SELEC): {m['buzon']}\n"
             f"Recibido: {m.get('receivedDateTime', '')}\n"
             f"Asunto: {m.get('subject') or ''}\n\n"
@@ -358,7 +389,7 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
 
 def procesar_correo(m: dict, dry_run: bool) -> dict:
     asunto = m.get("subject") or ""
-    cuerpo = leer_cuerpo(m["buzon"], m["id"])
+    cuerpo = m.get("cuerpo") or leer_cuerpo(m["buzon"], m["id"])
     pdfs = leer_pdfs(m["buzon"], m["id"]) if m.get("hasAttachments") else []
     analisis = analizar(m, cuerpo, pdfs)
 

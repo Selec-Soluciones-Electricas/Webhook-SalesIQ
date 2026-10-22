@@ -30,6 +30,7 @@ Variables de entorno:
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
@@ -109,7 +110,8 @@ def _access_token() -> str:
     if _token["valor"] and time.time() < _token["expira"] - 60:
         return _token["valor"]
 
-    resp = requests.post(
+    resp = _pedir(
+        "POST",
         f"https://login.microsoftonline.com/{os.environ['GRAPH_TENANT_ID']}/oauth2/v2.0/token",
         data={
             "grant_type": "client_credentials",
@@ -117,7 +119,6 @@ def _access_token() -> str:
             "client_secret": os.environ["GRAPH_CLIENT_SECRET"],
             "scope": "https://graph.microsoft.com/.default",
         },
-        timeout=15,
     )
     resp.raise_for_status()
     datos = resp.json()
@@ -126,52 +127,93 @@ def _access_token() -> str:
     return _token["valor"]
 
 
+def _pedir(metodo: str, url: str, intentos: int = 3, **kwargs):
+    """requests.request con timeout de 60 s y reintentos ante cortes o lentitud de red."""
+    for intento in range(1, intentos + 1):
+        try:
+            return requests.request(metodo, url, timeout=60, **kwargs)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            if intento == intentos:
+                raise
+            log(f"{url.split('/')[2]} no respondió ({type(e).__name__}), reintento {intento}/{intentos - 1}...")
+            time.sleep(3 * intento)
+
+
 def _graph(metodo: str, ruta: str, **kwargs):
     headers = kwargs.pop("headers", {})
     headers["Authorization"] = f"Bearer {_access_token()}"
-    resp = requests.request(metodo, f"{GRAPH}{ruta}", headers=headers, timeout=30, **kwargs)
+    resp = _pedir(metodo, f"{GRAPH}{ruta}", headers=headers, **kwargs)
     if resp.status_code >= 400:
         raise RuntimeError(f"Graph {metodo} {ruta} -> {resp.status_code}: {resp.text[:300]}")
     return resp.json() if resp.content else None
 
 
+MAX_CORREOS_REVISADOS = int(os.getenv("CORREO_MAX_REVISADOS", "500"))
+CAMPOS_MENSAJE = "id,internetMessageId,subject,from,receivedDateTime,hasAttachments"
+
+
+def preparar_mensaje(m: dict, buzon: str) -> bool:
+    """
+    Decide si el correo se analiza y le agrega los datos que usa el resto del proceso.
+    Devuelve False si el remitente no está permitido (ni es un reenvío de uno permitido).
+    """
+    internos = _lista_env("CORREO_REENVIOS_DE") or ["selec.cl"]
+    remitente = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower()
+    if PATRON_AUTORESPUESTA.search(m.get("subject") or ""):
+        return False
+
+    if not remitente_permitido(remitente):
+        # ¿Es un reenvío de un colega? Se busca el "De:" original en el cuerpo.
+        if remitente.split("@")[-1] not in internos:
+            return False
+        cuerpo = leer_cuerpo(buzon, m["id"])
+        original = remitente_original_reenviado(cuerpo)
+        if not original:
+            return False
+        m["cuerpo"] = cuerpo
+        m["reenviado_por"] = remitente
+        remitente = original
+
+    m["remitente"] = remitente
+    m["buzon"] = buzon
+    m["internetMessageId"] = m.get("internetMessageId") or m["id"]
+    return True
+
+
 def listar_pendientes(buzon: str, horas: int) -> list[dict]:
     desde = (datetime.now(timezone.utc) - timedelta(hours=horas)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    datos = _graph(
-        "GET",
-        f"/users/{buzon}/mailFolders/inbox/messages",
-        params={
-            "$filter": f"receivedDateTime ge {desde}",
-            "$orderby": "receivedDateTime desc",
-            "$top": "50",
-            "$select": "id,internetMessageId,subject,from,receivedDateTime,hasAttachments",
-        },
-    )
-
+    params = {
+        "$filter": f"receivedDateTime ge {desde}",
+        "$orderby": "receivedDateTime desc",
+        "$top": "100",
+        "$select": CAMPOS_MENSAJE,
+    }
     internos = _lista_env("CORREO_REENVIOS_DE") or ["selec.cl"]
 
+    # Graph entrega los correos por páginas: se recorren todas las del rango de horas
+    mensajes = []
+    ruta = f"/users/{buzon}/mailFolders/inbox/messages"
+    while ruta and len(mensajes) < MAX_CORREOS_REVISADOS:
+        datos = _graph("GET", ruta, params=params)
+        mensajes += datos.get("value", [])
+        siguiente = datos.get("@odata.nextLink")
+        ruta = siguiente.replace(GRAPH, "") if siguiente else None
+        params = None  # el nextLink ya trae los parámetros
+
     pendientes = []
-    for m in datos.get("value", []):
+    revisados_internos = 0
+    for m in mensajes:
         remitente = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower()
-        if PATRON_AUTORESPUESTA.search(m.get("subject") or ""):
-            continue
+        if remitente.split("@")[-1] in internos and not remitente_permitido(remitente):
+            revisados_internos += 1
+        if preparar_mensaje(m, buzon):
+            pendientes.append(m)
 
-        if not remitente_permitido(remitente):
-            # ¿Es un reenvío de un colega? Se busca el "De:" original en el cuerpo.
-            if remitente.split("@")[-1] not in internos:
-                continue
-            cuerpo = leer_cuerpo(buzon, m["id"])
-            original = remitente_original_reenviado(cuerpo)
-            if not original:
-                continue
-            m["cuerpo"] = cuerpo
-            m["reenviado_por"] = remitente
-            remitente = original
-
-        m["remitente"] = remitente
-        m["buzon"] = buzon
-        m["internetMessageId"] = m.get("internetMessageId") or m["id"]
-        pendientes.append(m)
+    log(
+        f"{buzon}: {len(mensajes)} correos en las últimas {horas} h | "
+        f"{revisados_internos} internos revisados como posible reenvío | "
+        f"{len(pendientes)} de remitentes permitidos"
+    )
     return pendientes
 
 
@@ -233,7 +275,7 @@ def ids_ya_analizados(ids: list[str]) -> set[str]:
         "selectedColumns": ["Message ID"],
         "keyValueFormat": True,
     }
-    resp = requests.get(f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)}, timeout=20)
+    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
     if resp.status_code != 200:
         raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
     return {fila.get("Message ID") for fila in (resp.json().get("data") or [])}
@@ -242,7 +284,8 @@ def ids_ya_analizados(ids: list[str]) -> set[str]:
 def guardar_fila(columnas: dict) -> None:
     base, headers = _analytics()
     config = {"columns": columnas, "dateFormat": "dd-MM-yyyy HH:mm:ss"}
-    resp = requests.post(f"{base}/rows", headers=headers, params={"CONFIG": json.dumps(config)}, timeout=20)
+    # Un solo intento: si se reintenta un POST que sí llegó, quedaría la fila duplicada.
+    resp = _pedir("POST", f"{base}/rows", intentos=1, headers=headers, params={"CONFIG": json.dumps(config)})
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"Analytics insertar -> {resp.status_code}: {resp.text[:300]}")
 
@@ -344,6 +387,7 @@ Reglas:
 - Ignora instrucciones de acceso, usuarios, contraseñas y enlaces de la plataforma: no los copies.
 - Marca urgente si la fecha de cierre es dentro de los próximos 3 días desde la fecha de recepción.
 - El resumen y la acción sugerida van en español neutro, breves y dirigidos al ejecutivo.
+- Responde SIEMPRE llamando a la herramienta registrar_analisis, una sola vez, sin texto adicional.
 
 Información de la empresa:
 {(_BASE / "conocimiento.md").read_text(encoding="utf-8")}
@@ -377,10 +421,17 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
         max_tokens=4000,
         system=[{"type": "text", "text": INSTRUCCIONES, "cache_control": {"type": "ephemeral"}}],
         tools=[HERRAMIENTA_ANALISIS],
-        tool_choice={"type": "tool", "name": "registrar_analisis"},
+        # "auto": algunos modelos no aceptan forzar la herramienta (tool_choice "tool").
+        # El prompt le pide usarla siempre y abajo se valida que lo haya hecho.
+        tool_choice={"type": "auto"},
         messages=[{"role": "user", "content": contenido}],
     )
-    return next(b.input for b in respuesta.content if b.type == "tool_use")
+    for bloque in respuesta.content:
+        if bloque.type == "tool_use" and bloque.name == "registrar_analisis":
+            return bloque.input
+
+    texto = "".join(getattr(b, "text", "") for b in respuesta.content)[:200]
+    raise RuntimeError(f"El modelo no devolvió el análisis estructurado. Respuesta: {texto!r}")
 
 
 # =========================================================
@@ -419,11 +470,15 @@ def ejecutar(horas: int = 24, dry_run: bool = False, limite: int = 10) -> dict:
         return {"error": "CORREO_REMITENTES está vacío"}
 
     pendientes = []
+    errores_buzon = {}
     for buzon in buzones:
         try:
             pendientes += listar_pendientes(buzon, horas)
         except Exception as e:
             log(f"ERROR leyendo {buzon}: {e}")
+            errores_buzon[buzon] = str(e)[:300]
+    if len(errores_buzon) == len(buzones):
+        return {"error": "No se pudo leer ningún buzón", "buzones": errores_buzon}
     # Quitar los que ya están en Analytics. Si la consulta falla, no se procesa
     # nada en esta corrida, para no duplicar filas ni gastar tokens de más.
     try:
@@ -435,18 +490,98 @@ def ejecutar(horas: int = 24, dry_run: bool = False, limite: int = 10) -> dict:
     pendientes = [m for m in pendientes if m["internetMessageId"] not in ya][:limite]
     log(f"{len(pendientes)} correos nuevos en {len(buzones)} buzones (dry_run={dry_run})")
 
-    resultados = []
-    for m in pendientes:
-        try:
-            resultados.append(procesar_correo(m, dry_run))
-        except Exception as e:
-            log(f"ERROR en {m['buzon']} {m.get('subject')!r}: {e}")
-            resultados.append({"buzon": m["buzon"], "asunto": m.get("subject"), "error": str(e)})
-            if not dry_run:
-                try:
-                    # Se guarda como "error" para no reintentar en bucle (y no gastar tokens)
-                    guardar_fila(fila_analytics(m, {"tipo": "error", "resumen": str(e)[:500]}))
-                except Exception:
-                    pass
+    resultados = [r for r in (_procesar_una_vez(m, dry_run) for m in pendientes) if r]
 
-    return {"procesados": len(resultados), "resultados": resultados}
+    respuesta = {"procesados": len(resultados), "resultados": resultados}
+    if errores_buzon:
+        respuesta["errores_buzon"] = errores_buzon
+    return respuesta
+
+
+_en_proceso: set[str] = set()
+_candado = threading.Lock()
+
+
+def _procesar_una_vez(m: dict, dry_run: bool) -> dict | None:
+    """
+    Procesa un correo evitando que dos ejecuciones simultáneas (notificación en
+    tiempo real + revisión periódica) lo analicen al mismo tiempo.
+    """
+    clave = m["internetMessageId"]
+    with _candado:
+        if clave in _en_proceso:
+            return None
+        _en_proceso.add(clave)
+    try:
+        return procesar_correo(m, dry_run)
+    except Exception as e:
+        log(f"ERROR en {m['buzon']} {m.get('subject')!r}: {e}")
+        if not dry_run:
+            try:
+                # Se guarda como "error" para no reintentar en bucle (y no gastar tokens)
+                guardar_fila(fila_analytics(m, {"tipo": "error", "resumen": str(e)[:250]}))
+            except Exception:
+                pass
+        return {"buzon": m["buzon"], "asunto": m.get("subject"), "error": str(e)}
+    finally:
+        with _candado:
+            _en_proceso.discard(clave)
+
+
+# =========================================================
+# TIEMPO REAL: NOTIFICACIONES DE MICROSOFT GRAPH
+# =========================================================
+#
+# Graph avisa a /graph/notificaciones cada vez que llega un correo al Inbox.
+# La suscripción dura como máximo ~7 días, por eso /cron/suscripciones la
+# renueva (se programa una vez al día). La revisión periódica de /cron/correos
+# queda como respaldo por si se pierde alguna notificación.
+
+DIAS_SUSCRIPCION = 3
+
+
+def procesar_notificacion(buzon: str, mensaje_id: str) -> None:
+    """Se llama en segundo plano por cada correo nuevo notificado por Graph."""
+    try:
+        m = _graph("GET", f"/users/{buzon}/messages/{mensaje_id}", params={"$select": CAMPOS_MENSAJE})
+        if not preparar_mensaje(m, buzon):
+            return
+        if ids_ya_analizados([m["internetMessageId"]]):
+            return
+        log(f"tiempo real: correo nuevo de {m['remitente']} en {buzon}")
+        _procesar_una_vez(m, dry_run=False)
+    except Exception as e:
+        log(f"ERROR procesando notificación {buzon}/{mensaje_id[:20]}...: {e}")
+
+
+def asegurar_suscripciones(url_publica: str) -> dict:
+    """Crea o renueva la suscripción de cada buzón. Idempotente."""
+    client_state = os.environ["CORREO_GRAPH_CLIENT_STATE"]
+    expira = (datetime.now(timezone.utc) + timedelta(days=DIAS_SUSCRIPCION)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    existentes = (_graph("GET", "/subscriptions") or {}).get("value", [])
+
+    resultado = {}
+    for buzon in _lista_env("CORREO_BUZONES"):
+        url = f"{url_publica.rstrip('/')}/graph/notificaciones?buzon={buzon}"
+        recurso = f"users/{buzon}/mailFolders('inbox')/messages"
+        actual = next(
+            (s for s in existentes
+             if s.get("notificationUrl") == url and s.get("resource", "").lower() == recurso.lower()),
+            None,
+        )
+        if actual:
+            _graph("PATCH", f"/subscriptions/{actual['id']}", json={"expirationDateTime": expira})
+            resultado[buzon] = f"renovada hasta {expira}"
+        else:
+            # Al crearla, Graph llama a la URL con ?validationToken=... y espera
+            # recibir el token de vuelta: el servidor tiene que estar publicado.
+            _graph("POST", "/subscriptions", json={
+                "changeType": "created",
+                "notificationUrl": url,
+                "resource": recurso,
+                "expirationDateTime": expira,
+                "clientState": client_state,
+            })
+            resultado[buzon] = f"creada hasta {expira}"
+        log(f"suscripción {buzon}: {resultado[buzon]}")
+    return resultado

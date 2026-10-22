@@ -6,3 +6,4 @@ openpyxl
 pillow
 anthropic
 tzdata
+gunicorn

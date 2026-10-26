@@ -15,8 +15,8 @@ Variables de entorno:
       (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ)
   CREATOR_OWNER=selecspa  CREATOR_APP=selec
   CREATOR_FORM_LICITACION=Licitaci_n  CREATOR_REPORT_LICITACION=Licitaci_n_Report
-  CREATOR_REPORT_CLIENTES        nombre de enlace del reporte de Clientes
-  CREATOR_CLIENTE_POR_DEFINIR_ID ID del cliente "Por Definir" en Creator
+  CREATOR_REPORT_CLIENTES=Clientes_Report
+  CREATOR_CLIENTE_POR_DEFINIR_ID (opcional) ID del cliente "Por Definir"; si no está, se busca por nombre
   CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM
   LICITACION_ASIGNADO=Joaquin Gonzalez
   GEN_ID=4710567000001934003
@@ -149,14 +149,31 @@ def buscar_cliente(empresa):
     palabra = next((w for w in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{3,}", empresa or "")
                     if not re.fullmatch(SUFIJOS, w.lower())), "")
     if clave and palabra:
-        status, datos = _creator("GET", f"report/{_env('CREATOR_REPORT_CLIENTES')}",
+        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_CLIENTES', 'Clientes_Report')}",
                                  params={"criteria": f'(Nombre_de_Cuenta.contains("{_esc(palabra)}"))'})
         if status == 200:
             for f in datos.get("data") or []:
                 existente = _normalizar(f.get("Nombre_de_Cuenta") or "")
                 if existente and (existente == clave or existente in clave or clave in existente):
                     return f["ID"], f.get("Nombre_de_Cuenta")
-    return _env("CREATOR_CLIENTE_POR_DEFINIR_ID"), "Por Definir"
+    return cliente_por_definir(), "Por Definir"
+
+
+_por_definir = {"id": None}
+
+
+def cliente_por_definir():
+    """ID del cliente "Por Definir": de la variable o buscándolo una vez por nombre."""
+    if os.getenv("CREATOR_CLIENTE_POR_DEFINIR_ID"):
+        return os.environ["CREATOR_CLIENTE_POR_DEFINIR_ID"]
+    if not _por_definir["id"]:
+        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_CLIENTES', 'Clientes_Report')}",
+                                 params={"criteria": '(Nombre_de_Cuenta == "Por Definir")'})
+        filas = (datos.get("data") or []) if status == 200 else []
+        if not filas:
+            raise RuntimeError('No se encontró el cliente "Por Definir" en Creator')
+        _por_definir["id"] = filas[0]["ID"]
+    return _por_definir["id"]
 
 
 # =========================================================

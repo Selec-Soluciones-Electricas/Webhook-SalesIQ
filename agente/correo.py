@@ -8,6 +8,8 @@ esté en la lista permitida:
   3. Guarda el resultado en la tabla "Correos Analizados" de Zoho Analytics.
      Esa tabla también es la memoria: un correo que ya está ahí no se
      vuelve a analizar.
+  4. Si CREAR_LICITACIONES=on, crea la Licitación en Zoho Creator
+     (ver agente/licitaciones.py).
 
 Solo lee: requiere el permiso Mail.Read. No modifica, responde ni borra correos.
 
@@ -363,6 +365,8 @@ HERRAMIENTA_ANALISIS = {
                         "codigo": {"type": "string", "description": "SKU o código del comprador"},
                         "descripcion": {"type": "string"},
                         "marca_modelo": {"type": "string"},
+                        "marca": {"type": "string", "description": "Solo la marca/fabricante, si aparece"},
+                        "numero_parte": {"type": "string", "description": "Número de parte o modelo del fabricante (no el SKU del comprador), si aparece"},
                         "cantidad": {"type": "string"},
                         "unidad": {"type": "string"},
                     },
@@ -372,8 +376,14 @@ HERRAMIENTA_ANALISIS = {
             "resumen": {"type": "string", "description": "2 o 3 frases para el ejecutivo"},
             "accion_sugerida": {"type": "string", "description": "Qué debería hacer el ejecutivo, en una frase"},
             "urgente": {"type": "boolean"},
+            "relevante_selec": {
+                "type": "boolean",
+                "description": "true si los productos corresponden al rubro de SELEC según la información de la empresa",
+            },
+            "motivo_relevancia": {"type": "string", "description": "Una frase: por qué sí o no es del rubro"},
         },
-        "required": ["tipo", "id_proceso", "empresa_compradora", "items", "resumen", "accion_sugerida", "urgente"],
+        "required": ["tipo", "id_proceso", "empresa_compradora", "items", "resumen", "accion_sugerida", "urgente",
+                     "relevante_selec"],
     },
 }
 
@@ -386,6 +396,7 @@ Reglas:
 - Si el correo trae un solo producto en la descripción o en los comentarios, inclúyelo igual en items.
 - Ignora instrucciones de acceso, usuarios, contraseñas y enlaces de la plataforma: no los copies.
 - Marca urgente si la fecha de cierre es dentro de los próximos 3 días desde la fecha de recepción.
+- relevante_selec: true solo si la mayoría de los productos pertenecen al rubro de SELEC (ver información de la empresa). Artículos de aseo, oficina, alimentos, vestuario o servicios ajenos al rubro: false.
 - El resumen y la acción sugerida van en español neutro, breves y dirigidos al ejecutivo.
 - Responde SIEMPRE llamando a la herramienta registrar_analisis, una sola vez, sin texto adicional.
 
@@ -444,8 +455,17 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
     pdfs = leer_pdfs(m["buzon"], m["id"]) if m.get("hasAttachments") else []
     analisis = analizar(m, cuerpo, pdfs)
 
+    licitacion = None
     if not dry_run:
         guardar_fila(fila_analytics(m, analisis))
+        # Crear la Licitación en Zoho Creator (no detiene el proceso si falla)
+        if os.getenv("CREAR_LICITACIONES", "off").lower() == "on":
+            try:
+                from agente.licitaciones import crear_licitacion
+                licitacion = crear_licitacion(m, analisis)
+            except Exception as e:
+                log(f"ERROR creando licitación en Creator: {e}")
+                licitacion = {"error": str(e)[:300]}
 
     log(
         f"{m['buzon']} <- {m['remitente']} | {analisis['tipo']} | "
@@ -459,6 +479,7 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
         "asunto": asunto,
         "recibido": m.get("receivedDateTime"),
         "analisis": analisis,
+        "licitacion": licitacion,
     }
 
 

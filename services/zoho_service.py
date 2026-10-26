@@ -539,6 +539,7 @@ def normalizar_nombre_empresa(
 def obtener_o_crear_account(
     campos: dict,
     owner: dict = None,
+    proteger_busqueda: bool = False,
 ):
 
     access_token = get_access_token()
@@ -756,6 +757,14 @@ def obtener_o_crear_account(
                             account_id
                         )
 
+                if proteger_busqueda:
+                    print(
+                        "[RETELL] Zoho respondio HTTP 200, "
+                        "pero no entrego una empresa con ID valido. "
+                        "Se bloquea la creacion para evitar duplicados."
+                    )
+                    return None
+
             elif resp.status_code == 204:
 
                 print(
@@ -772,6 +781,13 @@ def obtener_o_crear_account(
                     f"HTTP {resp.status_code}."
                 )
 
+                if proteger_busqueda:
+                    print(
+                        "[RETELL] Error consultando la empresa. "
+                        "No se intentara crear una empresa nueva."
+                    )
+                    return None
+
         except Exception as e:
 
             print(
@@ -779,6 +795,14 @@ def obtener_o_crear_account(
                 "ERROR buscando Account por RUT:",
                 e,
             )
+
+            if proteger_busqueda:
+                print(
+                    "[RETELL] Fallo la busqueda por RUT. "
+                    "No se intentara crear una empresa nueva."
+                )
+                return None
+
 
     # =====================================================
     # SI NO EXISTE RUT EN ZOHO:
@@ -1014,6 +1038,7 @@ def obtener_o_crear_contact(
     campos: dict,
     account_id: str = None,
     owner: dict = None,
+    proteger_empresa: bool = False,
 ):
 
     access_token = get_access_token()
@@ -1180,7 +1205,6 @@ def obtener_o_crear_contact(
                             "Account_Name"
                         )
                     )
-
                     acc_actual_id = ""
 
                     if isinstance(
@@ -1195,7 +1219,20 @@ def obtener_o_crear_contact(
                             or ""
                         ).strip()
 
+                    # Proteccion para contactos de Retell
+                    if proteger_empresa and account_id:
+
+                        if acc_actual_id != str(account_id).strip():
+
+                            print(
+                                "[RETELL] El contacto pertenece "
+                                "a otra empresa o no tiene una asociada."
+                            )
+
+                            return None
+
                     needs_update = False
+
 
                     update_data = {
                         "id": contact_id
@@ -1220,28 +1257,34 @@ def obtener_o_crear_contact(
                             "Actualizando Account_Name "
                             "del Contact existente."
                         )
+                    if (
+                          not proteger_empresa
+                          and not str(
+                              actual.get("Cargo")
+                              or ""
+                          ).strip()
+                      ):
 
-                    if not str(
-                        actual.get("Cargo")
-                        or ""
-                    ).strip():
+                          update_data[
+                              "Cargo"
+                          ] = "Cliente Web"
 
-                        update_data[
-                            "Cargo"
-                        ] = "Cliente Web"
+                          needs_update = True
 
-                        needs_update = True
+                    if (
+                          not proteger_empresa
+                          and not str(
+                              actual.get("Lead_Source")
+                              or ""
+                          ).strip()
+                      ):
 
-                    if not str(
-                        actual.get("Lead_Source")
-                        or ""
-                    ).strip():
+                          update_data[
+                              "Lead_Source"
+                          ] = "Chat Pag Web"
 
-                        update_data[
-                            "Lead_Source"
-                        ] = "Chat Pag Web"
+                          needs_update = True
 
-                        needs_update = True
 
                     if (
                         telefono
@@ -1304,6 +1347,13 @@ def obtener_o_crear_contact(
                     )
 
                 return contact_id
+        # Proteccion de busqueda para Retell
+        if proteger_empresa and resp.status_code != 204:
+            print(
+                "[RETELL] La busqueda del contacto no entrego "
+                "un resultado valido. Se bloquea la creacion."
+            )
+            return None
 
     except Exception as e:
 
@@ -1313,9 +1363,17 @@ def obtener_o_crear_contact(
             e,
         )
 
+        if proteger_empresa:
+            print(
+                "[RETELL] Fallo la busqueda del contacto. "
+                "No se intentara crear uno nuevo."
+            )
+            return None
+
     # =====================================================
     # CREAR CONTACT
     # =====================================================
+
 
     contact_data = {
         "First_Name": first_name,
@@ -1324,6 +1382,14 @@ def obtener_o_crear_contact(
         "Lead_Source": "Chat Pag Web",
         "Email": correo,
     }
+
+    # Clasificacion de contactos provenientes de Retell
+    origen = str(campos.get("origen") or "").strip().lower()
+
+    if origen == "retell":
+        contact_data["Lead_Source"] = "Llamada entrante"
+        contact_data.pop("Cargo", None)
+
 
     if telefono:
 
@@ -2477,21 +2543,24 @@ def crear_deal_en_zoho(
 
 
     if origen == "web":
-
         tipo_negocio = "Web"
         fuente_posible_cliente = "Chat Pag Web"
-
 
     elif origen == "whatsapp":
 
         tipo_negocio = "WhatsApp"
         fuente_posible_cliente = "Chat Whatsapp"
 
+    elif origen == "retell":
+
+        tipo_negocio = "Llamada telefónica"
+        fuente_posible_cliente = "Llamada entrante"
 
     else:
 
         tipo_negocio = "Web /WSP"
         fuente_posible_cliente = "Chat Whatsapp"
+
 
 
     # =====================================================
@@ -2531,6 +2600,44 @@ def crear_deal_en_zoho(
         "Cantidad_de_productos":
             cantidad_productos_solicitados,
     }
+
+    # =====================================================
+    # IDENTIFICADOR DE LLAMADA RETELL
+    # =====================================================
+    if origen == "retell":
+
+        retell_call_id = campos.get("retell_call_id")
+
+        if (
+            not isinstance(retell_call_id, str)
+            or not retell_call_id.strip()
+        ):
+            print(
+                "[crear_deal_en_zoho] "
+                "ERROR: falta retell_call_id"
+            )
+            return None, None
+
+        retell_call_id = retell_call_id.strip()
+
+        if len(retell_call_id) > 255:
+            print(
+                "[crear_deal_en_zoho] "
+                "ERROR: retell_call_id demasiado largo"
+            )
+            return None, None
+
+        deal_data["Retell_Call_ID"] = retell_call_id
+
+        # Exigir empresa y contacto reales para Retell
+        if not account_id or not contact_id:
+            print(
+                "[crear_deal_en_zoho] "
+                "ERROR: Retell requiere Account y Contact validos"
+            )
+            return None, None
+
+
 
     # =====================================================
     # PROPIETARIO DEL TRATO

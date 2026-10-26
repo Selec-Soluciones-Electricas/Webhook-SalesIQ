@@ -287,7 +287,10 @@ def manejar_menu_principal(
             session
         )
 
-    if es_opcion_agente(texto_norm):
+    if (
+        agente_ia_habilitado()
+        and es_opcion_agente(texto_norm)
+    ):
         return iniciar_agente(session)
 
     return derivar_a_operador(

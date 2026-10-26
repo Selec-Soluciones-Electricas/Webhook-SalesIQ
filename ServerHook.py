@@ -26,6 +26,7 @@ from routes.webhook import register_routes
 from routes.cron import register_cron_routes
 from routes.reparacion import register_reparacion_routes
 from routes.excel_routes import excel_bp
+from routes.retell_webhook import retell_bp
 
 from routes.flow_mvp import (
     flow_mvp_bp,
@@ -75,6 +76,14 @@ register_reparacion_routes(app)
 
 app.register_blueprint(
     excel_bp
+)
+
+# =========================================================
+# RETELL AI - AGENTE TELEFONICO SELEC
+# =========================================================
+
+app.register_blueprint(
+    retell_bp
 )
 
 app.register_blueprint(

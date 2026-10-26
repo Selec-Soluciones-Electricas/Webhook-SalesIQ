@@ -433,6 +433,7 @@ def procesar_pendientes_sofia(
 
     candidatas = []
     revisiones_detectadas = []
+    postventas_detectadas = []
 
     # Revisar primero las llamadas mas antiguas.
     for llamada in reversed(llamadas):
@@ -466,6 +467,17 @@ def procesar_pendientes_sofia(
                 ),
                 "faltantes": faltantes.copy(),
             })
+
+
+        elif (
+            estado == "otra_solicitud"
+            and clasificacion.get("tipo") == "postventa"
+        ):
+            postventas_detectadas.append({
+                "call_id": llamada.get("call_id"),
+                "tipo": "postventa",
+            })
+
 
 
     # Seleccionar llamadas segun el modo de ejecucion
@@ -583,6 +595,12 @@ def procesar_pendientes_sofia(
                     revisiones_detectadas
                 ),
                 "revisiones_detectadas": revisiones_detectadas,
+
+                "total_postventas_detectadas": len(
+                    postventas_detectadas
+                ),
+                "postventas_detectadas": postventas_detectadas,
+
             }
 
         seleccionadas = resumen_barrido["seleccionadas"]
@@ -723,7 +741,14 @@ def procesar_pendientes_sofia(
             revisiones_detectadas
         ),
         "revisiones_detectadas": revisiones_detectadas,
+
+        "total_postventas_detectadas": len(
+            postventas_detectadas
+        ),
+        "postventas_detectadas": postventas_detectadas,
+
         "resultados": resultados,
+
     }
 
 

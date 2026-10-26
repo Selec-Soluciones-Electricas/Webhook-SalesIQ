@@ -142,6 +142,65 @@ def main():
     )
 
     print(
+        "Solicitudes de postventa:",
+        resultado.get("total_postventas_detectadas", 0),
+    )
+
+
+    # Mostrar llamadas que requieren seguimiento humano.
+    for postventa in resultado.get(
+        "postventas_detectadas", []
+    ):
+        print(
+            "[POSTVENTA] Call ID:",
+            postventa.get("call_id"),
+        )
+
+    for revision in resultado.get(
+        "revisiones_detectadas", []
+    ):
+        print(
+            "[REVISION] Call ID:",
+            revision.get("call_id"),
+            "| Motivo:",
+            revision.get("motivo", "sin_motivo"),
+            "| Faltantes:",
+            revision.get("faltantes", []),
+        )
+
+    # Preparar seguimiento humano sin enviar notificaciones.
+    from services.retell_seguimiento import (
+        preparar_seguimiento_humano,
+    )
+
+    seguimiento = preparar_seguimiento_humano(resultado)
+
+    print(
+        "Seguimiento humano preparado:",
+        seguimiento["total_pendientes"],
+        "| Postventas:",
+        seguimiento["total_postventas"],
+        "| Revisiones:",
+        seguimiento["total_revisiones"],
+    )
+
+
+    # Preparar borradores de correo sin enviarlos.
+    from services.retell_seguimiento import (
+        preparar_borradores_notificacion,
+    )
+
+    borradores = preparar_borradores_notificacion(
+        seguimiento
+    )
+
+    print(
+        "Borradores de correo preparados:",
+        borradores["total_borradores"],
+    )
+
+
+    print(
         "Resumen:",
         resultado.get("resumen_registros", {}),
     )

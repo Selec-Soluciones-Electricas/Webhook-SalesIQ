@@ -7,7 +7,7 @@ Reglas (definidas con el equipo):
   - Cliente: el que coincida en Creator; si no, el cliente "Por Definir".
   - Contacto CRM: siempre el contacto "Por Definir".
   - Lugar de entrega: la ciudad del correo si está en la lista; si no, Santiago.
-  - Asignado a / Propietario: Joaquin Gonzalez.  Cantidad: 1.  Productos: GENERICO.
+  - Asignado a / Propietario: Luis Hurtado.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
 Variables de entorno:
@@ -20,7 +20,7 @@ Variables de entorno:
   CREATOR_CLIENTE_POR_DEFINIR_ID (opcional) ID del cliente "Por Definir"; si no está, se busca por nombre
   CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM
   LUGAR_ENTREGA_DEFECTO=Santiago
-  LICITACION_ASIGNADO=Joaquin Gonzalez
+  LICITACION_ASIGNADO=Luis Hurtado
   GEN_ID=4710567000001934003
 """
 

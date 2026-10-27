@@ -266,7 +266,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     if cliente_nombre == "Por Definir":
         avisos += f"\n⚠ Cliente '{empresa}' no encontrado en Creator: asignado a 'Por Definir'."
 
-    asignado = os.getenv("LICITACION_ASIGNADO", "Joaquin Gonzalez")
+    asignado = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
     plataforma = analisis.get("plataforma") or ""
     notas = (
         f"Creada automáticamente desde correo de {plataforma or m.get('remitente')} ({m.get('remitente')}).\n"

@@ -10,13 +10,13 @@ Reglas (definidas con el equipo):
   - Numero de Licitacion: el número del ID de proceso (LIC-4674 → 4674). Si no existe en el
     formulario de números, se crea.
   - Notas: solo los productos solicitados, uno por línea.
-  - Asignado a / Propietario: Joaquin Gonzalez.  Cantidad: 1.  Productos: GENERICO.
+  - Asignado a / Propietario: Luis Hurtado.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
 Variables de entorno:
   CREAR_LICITACIONES=on
   CREATOR_CLIENT_ID, CREATOR_CLIENT_SECRET, CREATOR_REFRESH_TOKEN
-      (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ)
+      (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ, ZohoCreator.meta.form.READ)
   CREATOR_OWNER=selecspa  CREATOR_APP=selec
   CREATOR_FORM_LICITACION=Licitaci_n  CREATOR_REPORT_LICITACION=Licitaci_n_Report
   CREATOR_REPORT_CLIENTES=Clientes_Report
@@ -29,7 +29,8 @@ Variables de entorno:
   CREATOR_CAMPO_NUMERO_LIC (opcional) se detecta leyendo un registro del reporte
   CREATOR_LOOKUP_NUMERO_LIC      (opcional) link name del lookup en Licitación; si no está,
       se busca por la etiqueta "Numero de Licitacion".
-  LICITACION_ASIGNADO=Joaquin Gonzalez
+  LICITACION_ASIGNADO=Luis Hurtado
+  LUGAR_ENTREGA_DEFECTO=Santiago
   GEN_ID=4710567000001934003
 """
 
@@ -239,9 +240,19 @@ def campo_lookup_numero():
     """Link name del lookup "Numero de Licitacion" en el formulario Licitación."""
     if os.getenv("CREATOR_LOOKUP_NUMERO_LIC"):
         return os.environ["CREATOR_LOOKUP_NUMERO_LIC"]
-    for campo in campos_licitacion():
-        if _normalizar(campo.get("display_label")) == "numerodelicitacion":
+    campos = campos_licitacion()
+    # La API de metadatos devuelve la etiqueta como "display_name" (según versión, "display_label")
+    for campo in campos:
+        etiqueta = campo.get("display_name") or campo.get("display_label") or ""
+        if _normalizar(etiqueta) == "numerodelicitacion":
             return campo.get("link_name")
+    # Respaldo: por el link name (ej. Numero_de_Licitacion, N_mero_de_Licitaci_n)
+    for campo in campos:
+        nombre = _normalizar(campo.get("link_name"))
+        if nombre.startswith("n") and "licit" in nombre and "mero" in nombre:
+            return campo.get("link_name")
+    log("campos de Licitación: " + ", ".join(
+        f"{c.get('link_name')}={c.get('display_name') or c.get('display_label')}" for c in campos))
     return None
 
 
@@ -368,7 +379,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         avisos.append(f"lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
                       f"se puso '{lugar}'")
 
-    asignado = os.getenv("LICITACION_ASIGNADO", "Joaquin Gonzalez")
+    asignado = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
     plataforma = analisis.get("plataforma") or ""
     portal = _portal(plataforma, m.get("remitente", ""))
 

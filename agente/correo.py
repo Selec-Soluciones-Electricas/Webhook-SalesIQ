@@ -268,22 +268,30 @@ def _analytics():
     return f"{ANALYTICS_API}/workspaces/{workspace}/views/{vista}", headers
 
 
+LOTE_CONSULTA = 10  # IDs por consulta: la lista va en la URL y con muchos IDs Analytics responde 414
+
+
 def ids_ya_analizados(ids: list[str]) -> set[str]:
-    """Consulta cuáles de estos Message ID ya están en la tabla."""
+    """Consulta cuáles de estos Message ID ya están en la tabla (en lotes pequeños)."""
+    ids = list(dict.fromkeys(i for i in ids if i))
     if not ids:
         return set()
     base, headers = _analytics()
-    lista = ",".join("'" + i.replace("'", "''") + "'" for i in ids)
-    config = {
-        "responseFormat": "json",
-        "criteria": f"\"Message ID\" in ({lista})",
-        "selectedColumns": ["Message ID"],
-        "keyValueFormat": True,
-    }
-    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
-    if resp.status_code != 200:
-        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
-    return {fila.get("Message ID") for fila in (resp.json().get("data") or [])}
+    encontrados = set()
+    for inicio in range(0, len(ids), LOTE_CONSULTA):
+        lote = ids[inicio:inicio + LOTE_CONSULTA]
+        lista = ",".join("'" + i.replace("'", "''") + "'" for i in lote)
+        config = {
+            "responseFormat": "json",
+            "criteria": f"\"Message ID\" in ({lista})",
+            "selectedColumns": ["Message ID"],
+            "keyValueFormat": True,
+        }
+        resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+        if resp.status_code != 200:
+            raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+        encontrados |= {fila.get("Message ID") for fila in (resp.json().get("data") or [])}
+    return encontrados
 
 
 def guardar_fila(columnas: dict) -> None:

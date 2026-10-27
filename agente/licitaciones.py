@@ -5,30 +5,41 @@ Reglas (definidas con el equipo):
   - Solo invitaciones / solicitudes de cotización, del rubro de SELEC y vigentes.
   - Una sola licitación por ID de proceso (va en el Nombre de Trato: "LIC-9643 - Empresa").
   - Cliente: el que coincida en Creator; si no, el cliente "Por Definir".
-  - Contacto CRM: siempre el contacto "Por Definir".
-  - Lugar de entrega: la ciudad del correo si está en la lista; si no, Santiago.
-  - Asignado a / Propietario: Luis Hurtado.  Cantidad: 1.  Productos: GENERICO.
+  - Contacto CRM: el contacto del portal si está configurado (ej. Wherex → "Cliente Wherex");
+    si no, el contacto "Por Definir".
+  - Numero de Licitacion: el número del ID de proceso (LIC-4674 → 4674). Si no existe en el
+    formulario de números, se crea.
+  - Notas: solo los productos solicitados, uno por línea.
+  - Asignado a / Propietario: Joaquin Gonzalez.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
 Variables de entorno:
   CREAR_LICITACIONES=on
   CREATOR_CLIENT_ID, CREATOR_CLIENT_SECRET, CREATOR_REFRESH_TOKEN
-      (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ, ZohoCreator.meta.form.READ)
+      (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ)
   CREATOR_OWNER=selecspa  CREATOR_APP=selec
   CREATOR_FORM_LICITACION=Licitaci_n  CREATOR_REPORT_LICITACION=Licitaci_n_Report
   CREATOR_REPORT_CLIENTES=Clientes_Report
   CREATOR_CLIENTE_POR_DEFINIR_ID (opcional) ID del cliente "Por Definir"; si no está, se busca por nombre
   CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM
-  LUGAR_ENTREGA_DEFECTO=Santiago
-  LICITACION_ASIGNADO=Luis Hurtado
+  CRM_CONTACTO_WHEREX_ID         (opcional) ID del contacto "Cliente Wherex" en Zoho CRM.
+      Sirve para cualquier portal: CRM_CONTACTO_SENEGOCIA_ID, CRM_CONTACTO_CODELCO_ID, etc.
+  CREATOR_REPORT_NUMERO_LIC=Numeros_Licitaciones_report  (por defecto) reporte de los números
+  CREATOR_FORM_NUMERO_LIC  (opcional) se deduce del reporte: Numeros_Licitaciones
+  CREATOR_CAMPO_NUMERO_LIC (opcional) se detecta leyendo un registro del reporte
+  CREATOR_LOOKUP_NUMERO_LIC      (opcional) link name del lookup en Licitación; si no está,
+      se busca por la etiqueta "Numero de Licitacion".
+  LICITACION_ASIGNADO=Joaquin Gonzalez
   GEN_ID=4710567000001934003
 """
 
+import html
 import os
 import re
 import time
 import unicodedata
 from datetime import datetime, timedelta
+
 
 from agente.correo import CHILE_TZ, _pedir, log
 
@@ -127,29 +138,32 @@ def _fecha_creator(fecha_txt):
 
 
 def _texto_fecha(dt):
-    """datetime -> '27-Oct-2026 16:00' (formato de la app)."""
     return f"{dt.day:02d}-{MESES[dt.month - 1]}-{dt.year} {dt.hour:02d}:{dt.minute:02d}"
 
 
-_lugares = {"lista": None}
+_campos = {"lista": None}
 
 
-def opciones_lugar_entrega():
-    """Opciones del desplegable Lugar_de_entrega, leídas una vez de la API de metadatos."""
-    if _lugares["lista"] is None:
+def campos_licitacion():
+    """Campos del formulario Licitación (API de metadatos), leídos una sola vez."""
+    if _campos["lista"] is None:
         url = (f"https://www.zohoapis.com/creator/v2.1/meta/"
                f"{os.getenv('CREATOR_OWNER', 'selecspa')}/{os.getenv('CREATOR_APP', 'selec')}"
                f"/form/{os.getenv('CREATOR_FORM_LICITACION', 'Licitaci_n')}/fields")
         resp = _pedir("GET", url, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"})
-        opciones = []
         if resp.status_code == 200:
-            for campo in resp.json().get("fields", []):
-                if campo.get("link_name") == "Lugar_de_entrega":
-                    opciones = [c.get("value") for c in campo.get("choices") or [] if c.get("value")]
+            _campos["lista"] = resp.json().get("fields", [])
         else:
-            log(f"No se pudieron leer las opciones de Lugar de entrega: {resp.status_code}")
-        _lugares["lista"] = opciones
-    return _lugares["lista"]
+            log(f"No se pudieron leer los campos de Licitación: {resp.status_code} {resp.text[:200]}")
+            return []
+    return _campos["lista"]
+
+
+def opciones_lugar_entrega():
+    for campo in campos_licitacion():
+        if campo.get("link_name") == "Lugar_de_entrega":
+            return [c.get("value") for c in campo.get("choices") or [] if c.get("value")]
+    return []
 
 
 def elegir_lugar(lugar_correo):
@@ -212,6 +226,94 @@ def cliente_por_definir():
 
 
 # =========================================================
+# CONTACTO, NÚMERO DE LICITACIÓN Y NOTAS
+# =========================================================
+
+def contacto_crm(portal):
+    """Contacto del portal (CRM_CONTACTO_WHEREX_ID, ...) o, si no hay, el contacto "Por Definir"."""
+    clave = re.sub(r"[^A-Z0-9]", "_", (portal or "").upper())
+    return os.getenv(f"CRM_CONTACTO_{clave}_ID") or _env("CRM_CONTACTO_POR_DEFINIR_ID")
+
+
+def campo_lookup_numero():
+    """Link name del lookup "Numero de Licitacion" en el formulario Licitación."""
+    if os.getenv("CREATOR_LOOKUP_NUMERO_LIC"):
+        return os.environ["CREATOR_LOOKUP_NUMERO_LIC"]
+    for campo in campos_licitacion():
+        if _normalizar(campo.get("display_label")) == "numerodelicitacion":
+            return campo.get("link_name")
+    return None
+
+
+_numeros = {"campo": None}
+
+
+def config_numeros():
+    """(formulario, reporte, campo) donde se guardan los números de licitación."""
+    report = os.getenv("CREATOR_REPORT_NUMERO_LIC", "Numeros_Licitaciones_report")
+    form = os.getenv("CREATOR_FORM_NUMERO_LIC") or re.sub(r"_[Rr]eport$", "", report)
+    campo = os.getenv("CREATOR_CAMPO_NUMERO_LIC") or _numeros["campo"]
+    if not campo:
+        # El formulario tiene un solo campo: se toma el nombre desde un registro existente
+        status, datos = _creator("GET", f"report/{report}")
+        filas = (datos.get("data") or []) if status == 200 else []
+        if filas:
+            campo = next((k for k in filas[0] if k != "ID"), None)
+        if not campo:
+            raise RuntimeError(f"no se pudo detectar el campo del reporte {report}: {str(datos)[:200]}")
+        _numeros["campo"] = campo
+        log(f"campo de números de licitación detectado: {form}.{campo}")
+    return form, report, campo
+
+
+def numero_licitacion(id_proceso):
+    """
+    Devuelve (campo_lookup, ID del registro con el número) o (None, motivo).
+    LIC-4674 -> 4674. Si el número no existe en Numeros_Licitaciones, se crea.
+    """
+    lookup = campo_lookup_numero()
+    if not lookup:
+        return None, "no se encontró el campo 'Numero de Licitacion' en el formulario"
+
+    encontrado = re.search(r"\d+", id_proceso or "")
+    if not encontrado:
+        return None, f"el ID '{id_proceso}' no tiene número"
+    numero = encontrado.group()
+
+    form, report, campo = config_numeros()
+
+    # El campo puede ser numérico o de texto: se prueba con y sin comillas
+    for criterio in (f"({campo} == {numero})", f'({campo} == "{numero}")'):
+        status, datos = _creator("GET", f"report/{report}", params={"criteria": criterio})
+        if status == 200 and datos.get("data"):
+            return lookup, datos["data"][0]["ID"]
+
+    status, resp = _creator("POST", f"form/{form}", json={"data": {campo: numero}})
+    if status in (200, 201) and resp.get("code") == 3000:
+        log(f"número de licitación {numero} creado en {form}")
+        return lookup, (resp.get("data") or {}).get("ID")
+    return None, f"no se pudo crear el número {numero}: {str(resp)[:300]}"
+
+
+def notas_productos(items):
+    """Productos solicitados, uno por línea (el campo Notas es texto enriquecido: salto = <br>)."""
+    lineas = []
+    for i, it in enumerate(items or [], 1):
+        partes = [it.get("descripcion") or "Sin descripción"]
+        if it.get("marca"):
+            partes.append(f"Marca: {it['marca']}")
+        if it.get("numero_parte"):
+            partes.append(f"N° parte: {it['numero_parte']}")
+        if it.get("codigo"):
+            partes.append(f"SKU: {it['codigo']}")
+        cantidad = " ".join(x for x in (it.get("cantidad"), it.get("unidad")) if x)
+        if cantidad:
+            partes.append(f"Cantidad: {cantidad}")
+        lineas.append(html.escape(f"{i}. " + " | ".join(partes)))
+    return os.getenv("NOTAS_SALTO_LINEA", "<br>").join(lineas)
+
+
+# =========================================================
 # CREACIÓN
 # =========================================================
 
@@ -238,10 +340,12 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     empresa = (analisis.get("empresa_compradora") or "").strip()
     cliente_id, cliente_nombre = buscar_cliente(empresa)
 
-    avisos = ""
+    avisos = []
+    if cliente_nombre == "Por Definir":
+        avisos.append(f"cliente '{empresa}' no encontrado en Creator: se asignó 'Por Definir'")
     if not cierre:
         cierre = (ahora + timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
-        avisos += "\n⚠ El correo no indica fecha de cierre: se puso una provisoria (+3 días). Verificar en la plataforma."
+        avisos.append("el correo no indica fecha de cierre: se puso una provisoria (+3 días)")
 
     productos = []
     for it in analisis.get("items") or []:
@@ -261,41 +365,46 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
 
     lugar, lugar_defecto = elegir_lugar(analisis.get("lugar_entrega"))
     if lugar_defecto:
-        avisos += (f"\n⚠ Lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
-                   f"se puso '{lugar}'. Verificar.")
-    if cliente_nombre == "Por Definir":
-        avisos += f"\n⚠ Cliente '{empresa}' no encontrado en Creator: asignado a 'Por Definir'."
+        avisos.append(f"lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
+                      f"se puso '{lugar}'")
 
-    asignado = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
+    asignado = os.getenv("LICITACION_ASIGNADO", "Joaquin Gonzalez")
     plataforma = analisis.get("plataforma") or ""
-    notas = (
-        f"Creada automáticamente desde correo de {plataforma or m.get('remitente')} ({m.get('remitente')}).\n"
-        f"Proceso: {id_proceso} | Comprador: {empresa or 'no indicado'} | Cierre: {analisis.get('fecha_cierre') or 'no indicado'}\n\n"
-        f"{analisis.get('resumen', '')}\n\nAcción sugerida: {analisis.get('accion_sugerida', '')}"
-        f"{avisos}"
-    )
+    portal = _portal(plataforma, m.get("remitente", ""))
 
     datos = {
         "Propietario_de_negocio": asignado,
         "Asignado_a": asignado,
-        "Portal": _portal(plataforma, m.get("remitente", "")),
+        "Portal": portal,
         "Nombre_de_Trato": f"{id_proceso} - {empresa or 'Comprador por definir'}"[:250],
         "Clientes": cliente_id,
-        "Contactos_CRM": _env("CRM_CONTACTO_POR_DEFINIR_ID"),
+        "Contactos_CRM": contacto_crm(portal),
         "fecha_limite_oferta": _texto_fecha(cierre),
         "Fase": "Pendiente por cotizar",
         "Probabilidad": 10,
         "Importe": 1,
         "Fuente_de_Posible_cliente": "Portales",
         "Lugar_de_entrega": lugar,
-        "Notas": notas[:5000],
+        "Notas": notas_productos(analisis.get("items"))[:5000],
         "Listado_de_productos": productos,
     }
+
+    # Numero de Licitacion: si falla, la licitación se crea igual y queda el aviso en el log
+    try:
+        lookup, valor = numero_licitacion(id_proceso)
+        if lookup:
+            datos[lookup] = valor
+        else:
+            avisos.append(f"Numero de Licitacion sin asignar: {valor}")
+    except Exception as e:
+        avisos.append(f"Numero de Licitacion sin asignar: {e}")
 
     status, resp = _creator("POST", f"form/{os.getenv('CREATOR_FORM_LICITACION', 'Licitaci_n')}",
                             json={"data": datos})
     if status in (200, 201) and resp.get("code") == 3000:
         lic_id = (resp.get("data") or {}).get("ID")
         log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre})")
-        return {"creada": True, "id": lic_id, "cliente": cliente_nombre}
+        for aviso in avisos:
+            log(f"⚠ {id_proceso}: {aviso}")
+        return {"creada": True, "id": lic_id, "cliente": cliente_nombre, "avisos": avisos}
     raise RuntimeError(f"Creator {status}: {str(resp)[:400]}")

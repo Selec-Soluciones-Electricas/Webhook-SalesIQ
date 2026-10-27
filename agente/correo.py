@@ -5,11 +5,11 @@ Revisa uno o más buzones y, por cada correo nuevo cuyo remitente ("De")
 esté en la lista permitida:
   1. Lee el cuerpo y los PDF adjuntos.
   2. Claude lo analiza y devuelve datos estructurados.
-  3. Guarda el resultado en la tabla "Correos Analizados" de Zoho Analytics.
+  3. Si CREAR_LICITACIONES=on, crea la Licitación en Zoho Creator
+     (ver agente/licitaciones.py).
+  4. Guarda el resultado en la tabla "Correos Analizados" de Zoho Analytics.
      Esa tabla también es la memoria: un correo que ya está ahí no se
      vuelve a analizar.
-  4. Si CREAR_LICITACIONES=on, crea la Licitación en Zoho Creator
-     (ver agente/licitaciones.py).
 
 Solo lee: requiere el permiso Mail.Read. No modifica, responde ni borra correos.
 
@@ -27,6 +27,9 @@ Variables de entorno:
   CORREO_REENVIOS_DE  dominios internos cuyos reenvíos se revisan (por defecto selec.cl).
                       Si un colega reenvía una notificación, el "De" del correo es el
                       colega; en ese caso se busca el "De:" original dentro del cuerpo.
+  ANALYTICS_COLUMNA_LICITACION=on   (opcional) guarda en Analytics las columnas
+                      "Del Rubro", "Motivo Rubro" y "Licitacion Creator".
+                      Activar solo después de crear esas columnas en la tabla.
 """
 
 import json
@@ -310,8 +313,21 @@ def _texto_items(items: list[dict]) -> str:
     return "\n".join(lineas)
 
 
-def fila_analytics(m: dict, analisis: dict) -> dict:
-    return {
+def texto_licitacion(lic) -> str:
+    """Resultado legible de la creación de la licitación, para Analytics y los logs."""
+    if not lic:
+        return ""
+    if lic.get("creada"):
+        return f"Creada (ID {lic.get('id')}, cliente {lic.get('cliente')})"
+    if lic.get("omitida"):
+        return f"Omitida: {lic['omitida']}"[:500]
+    if lic.get("error"):
+        return f"Error: {lic['error']}"[:500]
+    return str(lic)[:500]
+
+
+def fila_analytics(m: dict, analisis: dict, licitacion: dict | None = None) -> dict:
+    fila = {
         "Message ID": m["internetMessageId"],
         "Recibido": _fecha_chile(m.get("receivedDateTime")),
         "Remitente": m["remitente"],
@@ -326,6 +342,13 @@ def fila_analytics(m: dict, analisis: dict) -> dict:
         "Accion Sugerida": (analisis.get("accion_sugerida") or "")[:1000],
         "Urgente": "Sí" if analisis.get("urgente") else "No",
     }
+    # Columnas opcionales: activar cuando existan en la tabla de Analytics
+    if os.getenv("ANALYTICS_COLUMNA_LICITACION", "off").lower() == "on":
+        relevante = analisis.get("relevante_selec")
+        fila["Del Rubro"] = "" if relevante is None else ("Sí" if relevante else "No")
+        fila["Motivo Rubro"] = (analisis.get("motivo_relevancia") or "")[:500]
+        fila["Licitacion Creator"] = texto_licitacion(licitacion)
+    return fila
 
 
 # =========================================================
@@ -357,6 +380,7 @@ HERRAMIENTA_ANALISIS = {
             "categoria": {"type": "string"},
             "fecha_inicio": {"type": "string", "description": "DD-MM-AAAA HH:MM, si existe"},
             "fecha_cierre": {"type": "string", "description": "DD-MM-AAAA HH:MM, si existe"},
+            "lugar_entrega": {"type": "string", "description": "Ciudad o comuna de entrega/despacho, si aparece (ej. Puerto Montt)"},
             "items": {
                 "type": "array",
                 "items": {
@@ -457,8 +481,9 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
 
     licitacion = None
     if not dry_run:
-        guardar_fila(fila_analytics(m, analisis))
-        # Crear la Licitación en Zoho Creator (no detiene el proceso si falla)
+        # 1) Crear la Licitación en Zoho Creator (no detiene el proceso si falla).
+        #    Va antes de guardar en Analytics para registrar el resultado en la misma fila.
+        #    No hay riesgo de duplicar: crear_licitacion revisa si ya existe por ID de proceso.
         if os.getenv("CREAR_LICITACIONES", "off").lower() == "on":
             try:
                 from agente.licitaciones import crear_licitacion
@@ -466,6 +491,9 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
             except Exception as e:
                 log(f"ERROR creando licitación en Creator: {e}")
                 licitacion = {"error": str(e)[:300]}
+            log(f"licitación {analisis.get('id_proceso', '')}: {texto_licitacion(licitacion)}")
+        # 2) Guardar en Analytics
+        guardar_fila(fila_analytics(m, analisis, licitacion))
 
     log(
         f"{m['buzon']} <- {m['remitente']} | {analisis['tipo']} | "

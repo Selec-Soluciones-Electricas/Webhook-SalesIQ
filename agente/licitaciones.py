@@ -6,18 +6,20 @@ Reglas (definidas con el equipo):
   - Una sola licitación por ID de proceso (va en el Nombre de Trato: "LIC-9643 - Empresa").
   - Cliente: el que coincida en Creator; si no, el cliente "Por Definir".
   - Contacto CRM: siempre el contacto "Por Definir".
+  - Lugar de entrega: la ciudad del correo si está en la lista; si no, Santiago.
   - Asignado a / Propietario: Joaquin Gonzalez.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
 Variables de entorno:
   CREAR_LICITACIONES=on
   CREATOR_CLIENT_ID, CREATOR_CLIENT_SECRET, CREATOR_REFRESH_TOKEN
-      (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ)
+      (scopes: ZohoCreator.form.CREATE, ZohoCreator.report.READ, ZohoCreator.meta.form.READ)
   CREATOR_OWNER=selecspa  CREATOR_APP=selec
   CREATOR_FORM_LICITACION=Licitaci_n  CREATOR_REPORT_LICITACION=Licitaci_n_Report
   CREATOR_REPORT_CLIENTES=Clientes_Report
   CREATOR_CLIENTE_POR_DEFINIR_ID (opcional) ID del cliente "Por Definir"; si no está, se busca por nombre
   CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM
+  LUGAR_ENTREGA_DEFECTO=Santiago
   LICITACION_ASIGNADO=Joaquin Gonzalez
   GEN_ID=4710567000001934003
 """
@@ -129,6 +131,39 @@ def _texto_fecha(dt):
     return f"{dt.day:02d}-{MESES[dt.month - 1]}-{dt.year} {dt.hour:02d}:{dt.minute:02d}"
 
 
+_lugares = {"lista": None}
+
+
+def opciones_lugar_entrega():
+    """Opciones del desplegable Lugar_de_entrega, leídas una vez de la API de metadatos."""
+    if _lugares["lista"] is None:
+        url = (f"https://www.zohoapis.com/creator/v2.1/meta/"
+               f"{os.getenv('CREATOR_OWNER', 'selecspa')}/{os.getenv('CREATOR_APP', 'selec')}"
+               f"/form/{os.getenv('CREATOR_FORM_LICITACION', 'Licitaci_n')}/fields")
+        resp = _pedir("GET", url, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"})
+        opciones = []
+        if resp.status_code == 200:
+            for campo in resp.json().get("fields", []):
+                if campo.get("link_name") == "Lugar_de_entrega":
+                    opciones = [c.get("value") for c in campo.get("choices") or [] if c.get("value")]
+        else:
+            log(f"No se pudieron leer las opciones de Lugar de entrega: {resp.status_code}")
+        _lugares["lista"] = opciones
+    return _lugares["lista"]
+
+
+def elegir_lugar(lugar_correo):
+    """Devuelve (opción válida, ¿se usó el valor por defecto?)."""
+    defecto = os.getenv("LUGAR_ENTREGA_DEFECTO", "Santiago")
+    buscado = _normalizar(lugar_correo)
+    if buscado:
+        for opcion in opciones_lugar_entrega():
+            normal = _normalizar(opcion)
+            if normal and (normal == buscado or normal in buscado or buscado in normal):
+                return opcion, False
+    return defecto, True
+
+
 # =========================================================
 # BÚSQUEDAS
 # =========================================================
@@ -203,10 +238,10 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     empresa = (analisis.get("empresa_compradora") or "").strip()
     cliente_id, cliente_nombre = buscar_cliente(empresa)
 
-    nota_fecha = ""
+    avisos = ""
     if not cierre:
         cierre = (ahora + timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
-        nota_fecha = "\n⚠ El correo no indica fecha de cierre: se puso una provisoria (+3 días). Verificar en la plataforma."
+        avisos += "\n⚠ El correo no indica fecha de cierre: se puso una provisoria (+3 días). Verificar en la plataforma."
 
     productos = []
     for it in analisis.get("items") or []:
@@ -224,14 +259,20 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     if not productos:
         return {"omitida": "sin productos"}
 
+    lugar, lugar_defecto = elegir_lugar(analisis.get("lugar_entrega"))
+    if lugar_defecto:
+        avisos += (f"\n⚠ Lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
+                   f"se puso '{lugar}'. Verificar.")
+    if cliente_nombre == "Por Definir":
+        avisos += f"\n⚠ Cliente '{empresa}' no encontrado en Creator: asignado a 'Por Definir'."
+
     asignado = os.getenv("LICITACION_ASIGNADO", "Joaquin Gonzalez")
     plataforma = analisis.get("plataforma") or ""
     notas = (
         f"Creada automáticamente desde correo de {plataforma or m.get('remitente')} ({m.get('remitente')}).\n"
         f"Proceso: {id_proceso} | Comprador: {empresa or 'no indicado'} | Cierre: {analisis.get('fecha_cierre') or 'no indicado'}\n\n"
         f"{analisis.get('resumen', '')}\n\nAcción sugerida: {analisis.get('accion_sugerida', '')}"
-        f"{nota_fecha}"
-        + ("" if cliente_nombre != "Por Definir" else f"\n⚠ Cliente '{empresa}' no encontrado en Creator: asignado a 'Por Definir'.")
+        f"{avisos}"
     )
 
     datos = {
@@ -246,6 +287,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Probabilidad": 10,
         "Importe": 1,
         "Fuente_de_Posible_cliente": "Portales",
+        "Lugar_de_entrega": lugar,
         "Notas": notas[:5000],
         "Listado_de_productos": productos,
     }

@@ -7,8 +7,9 @@ Reglas (definidas con el equipo):
   - Cliente: el que coincida en Creator; si no, el cliente "Por Definir".
   - Contacto CRM: el contacto del portal si está configurado (ej. Wherex → "Cliente Wherex");
     si no, el contacto "Por Definir".
-  - Numero de Licitacion: el número del ID de proceso (LIC-4674 → 4674). Si no existe en el
-    formulario de números, se crea.
+  - Numero de Licitacion: Wherex/Senegocia → número del ID de proceso (LIC-4674 → 4674).
+    Codelco (SAP Ariba) → número del evento (6001102591_SA01_... → 6001102591), no el Doc.
+    Si no existe en el formulario de números, se crea.
   - Notas: solo los productos solicitados, uno por línea.
   - Asignado a / Propietario: Luis Hurtado.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
@@ -277,19 +278,37 @@ def config_numeros():
     return form, report, campo
 
 
-def numero_licitacion(id_proceso):
+PATRON_EVENTO_ARIBA = re.compile(r"(?<!\d)(\d{8,})_[A-Za-z]{2}\d{2}")
+
+
+def extraer_numero(id_proceso, portal="", textos=()):
+    """
+    Número que va en "Numero de Licitacion".
+      Codelco (SAP Ariba): número del evento, ej. "6001102591_SA01_SUM MTTO..." -> 6001102591
+                           (el id_proceso suele ser el Doc2453266452, que no sirve aquí).
+      Otros portales:      dígitos del ID de proceso, ej. LIC-4674 -> 4674.
+    """
+    if portal == "Codelco":
+        for texto in textos:
+            encontrado = PATRON_EVENTO_ARIBA.search(texto or "")
+            if encontrado:
+                return encontrado.group(1)
+    encontrado = re.search(r"\d+", id_proceso or "")
+    return encontrado.group() if encontrado else None
+
+
+def numero_licitacion(id_proceso, portal="", textos=()):
     """
     Devuelve (campo_lookup, ID del registro con el número) o (None, motivo).
-    LIC-4674 -> 4674. Si el número no existe en Numeros_Licitaciones, se crea.
+    Si el número no existe en Numeros_Licitaciones, se crea.
     """
     lookup = campo_lookup_numero()
     if not lookup:
         return None, "no se encontró el campo 'Numero de Licitacion' en el formulario"
 
-    encontrado = re.search(r"\d+", id_proceso or "")
-    if not encontrado:
+    numero = extraer_numero(id_proceso, portal, textos)
+    if not numero:
         return None, f"el ID '{id_proceso}' no tiene número"
-    numero = encontrado.group()
 
     form, report, campo = config_numeros()
 
@@ -402,7 +421,10 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
 
     # Numero de Licitacion: si falla, la licitación se crea igual y queda el aviso en el log
     try:
-        lookup, valor = numero_licitacion(id_proceso)
+        lookup, valor = numero_licitacion(
+            id_proceso, portal,
+            (analisis.get("nombre_proceso"), m.get("subject"), id_proceso),
+        )
         if lookup:
             datos[lookup] = valor
         else:

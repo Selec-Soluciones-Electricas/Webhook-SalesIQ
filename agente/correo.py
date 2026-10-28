@@ -30,6 +30,8 @@ Variables de entorno:
   ANALYTICS_COLUMNA_LICITACION=on   (opcional) guarda en Analytics las columnas
                       "Del Rubro", "Motivo Rubro" y "Licitacion Creator".
                       Activar solo después de crear esas columnas en la tabla.
+  CORREO_MODELO_RUBRO (opcional) modelo para rellenar "Del Rubro" en filas antiguas
+                      (por defecto claude-haiku-5-5)
 """
 
 import html
@@ -616,6 +618,132 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
 
     texto = "".join(getattr(b, "text", "") for b in respuesta.content)[:200]
     raise RuntimeError(f"El modelo no devolvió el análisis estructurado. Respuesta: {texto!r}")
+
+
+# =========================================================
+# RELLENAR "Del Rubro" EN FILAS ANTIGUAS (barato)
+# =========================================================
+#
+# Las filas guardadas antes de crear las columnas "Del Rubro" / "Motivo Rubro"
+# quedaron vacías. En vez de volver a leer cada correo y sus PDF, se usan los
+# datos que ya están en Analytics (empresa, proceso, ítems) y se clasifican
+# 20 filas por llamada con un modelo pequeño. Se usa desde /cron/correos/rubro.
+
+MODELO_RUBRO = os.getenv("CORREO_MODELO_RUBRO", "claude-haiku-5-5")
+LOTE_RUBRO = 20
+
+HERRAMIENTA_RUBRO = {
+    "name": "registrar_rubro",
+    "description": "Registra si cada proceso es del rubro de SELEC.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "resultados": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "n": {"type": "integer", "description": "Número del proceso (#n)"},
+                        "relevante_selec": {"type": "boolean"},
+                        "motivo_relevancia": {"type": "string", "description": "Una frase: por qué sí o no"},
+                    },
+                    "required": ["n", "relevante_selec", "motivo_relevancia"],
+                },
+            }
+        },
+        "required": ["resultados"],
+    },
+}
+
+INSTRUCCIONES_RUBRO = f"""Clasificas procesos de compra para SELEC. Para cada proceso (#n) decide si es del rubro de SELEC.
+relevante_selec: true solo si la mayoría de los productos pertenecen al rubro de SELEC (ver información de la empresa). Artículos de aseo, oficina, alimentos, vestuario o servicios ajenos al rubro: false.
+motivo_relevancia: una frase breve en español neutro.
+Responde llamando a registrar_rubro una sola vez, con un resultado por cada proceso.
+
+Información de la empresa:
+{(_BASE / "conocimiento.md").read_text(encoding="utf-8")}
+"""
+
+
+def _clasificar_rubro(filas: list[dict]) -> dict[int, dict]:
+    global _cliente_ia
+    if _cliente_ia is None:
+        _cliente_ia = Anthropic(timeout=120, max_retries=2)
+    texto = "\n\n".join(
+        f"#{i}\nEmpresa: {f.get('Empresa Compradora') or ''}\n"
+        f"Proceso: {f.get('Nombre Proceso') or ''}\n"
+        f"Ítems:\n{(f.get('Items') or '')[:1500]}"
+        for i, f in enumerate(filas)
+    )
+    respuesta = _cliente_ia.messages.create(
+        model=MODELO_RUBRO,
+        max_tokens=4000,
+        system=[{"type": "text", "text": INSTRUCCIONES_RUBRO, "cache_control": {"type": "ephemeral"}}],
+        tools=[HERRAMIENTA_RUBRO],
+        tool_choice={"type": "auto"},
+        messages=[{"role": "user", "content": texto}],
+    )
+    for bloque in respuesta.content:
+        if bloque.type == "tool_use" and bloque.name == "registrar_rubro":
+            return {r["n"]: r for r in bloque.input.get("resultados", []) if isinstance(r.get("n"), int)}
+    raise RuntimeError("El modelo no devolvió la clasificación de rubro")
+
+
+def rellenar_rubro(aplicar: bool = False, limite: int = 40) -> dict:
+    """
+    aplicar=False: clasifica hasta 'limite' filas y muestra el resultado, sin escribir.
+    aplicar=True:  clasifica y guarda "Del Rubro" / "Motivo Rubro" en Analytics.
+    Ejecutar varias veces hasta que "pendientes" llegue a 0.
+    """
+    base, headers = _analytics()
+    columnas = ["Message ID", "Tipo", "Empresa Compradora", "Nombre Proceso", "Items", "Del Rubro"]
+    config = {"responseFormat": "json", "selectedColumns": columnas, "keyValueFormat": True}
+    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+
+    sin_rubro = [f for f in (resp.json().get("data") or [])
+                 if not (f.get("Del Rubro") or "").strip() and f.get("Message ID")]
+    clasificables = [f for f in sin_rubro if (f.get("Items") or "").strip() and f.get("Tipo") != "error"]
+    lote_total = clasificables[:limite]
+
+    resultado = {"modo": "aplicado" if aplicar else "simulación (agrega ?aplicar=1 para guardar)",
+                 "pendientes_antes": len(clasificables),
+                 "sin_items (no se clasifican)": len(sin_rubro) - len(clasificables),
+                 "si": 0, "no": 0, "errores": [], "ejemplos": []}
+
+    for inicio in range(0, len(lote_total), LOTE_RUBRO):
+        lote = lote_total[inicio:inicio + LOTE_RUBRO]
+        try:
+            clasificados = _clasificar_rubro(lote)
+        except Exception as e:
+            resultado["errores"].append(f"lote {inicio}: {str(e)[:200]}")
+            continue
+        for i, fila in enumerate(lote):
+            r = clasificados.get(i)
+            if not r:
+                resultado["errores"].append(f"sin respuesta para {fila.get('Nombre Proceso')!r}")
+                continue
+            del_rubro = "Sí" if r.get("relevante_selec") else "No"
+            motivo = (r.get("motivo_relevancia") or "")[:500]
+            resultado["si" if del_rubro == "Sí" else "no"] += 1
+            if len(resultado["ejemplos"]) < 10:
+                resultado["ejemplos"].append(f"{del_rubro} | {fila.get('Empresa Compradora')} | {motivo}")
+            if not aplicar:
+                continue
+            id_msg = fila["Message ID"].replace("'", "''")
+            cambio = {"columns": {"Del Rubro": del_rubro, "Motivo Rubro": motivo},
+                      "criteria": f"\"Message ID\" = '{id_msg}'"}
+            r_put = _pedir("PUT", f"{base}/rows", intentos=1, headers=headers,
+                           params={"CONFIG": json.dumps(cambio)})
+            if r_put.status_code != 200:
+                resultado["errores"].append(f"Analytics {r_put.status_code}: {r_put.text[:150]}")
+
+    resultado["pendientes_despues"] = (len(clasificables) - (resultado["si"] + resultado["no"])
+                                       if aplicar else len(clasificables))
+    log(f"rubro: {resultado['si']} sí, {resultado['no']} no, {len(resultado['errores'])} errores "
+        f"(aplicar={aplicar})")
+    return resultado
 
 
 # =========================================================

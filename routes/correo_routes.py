@@ -62,6 +62,28 @@ def register_correo_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------------------------------
+    # Rellenar "Del Rubro" / "Motivo Rubro" en filas antiguas
+    #   sin parámetros  -> simulación (clasifica, no guarda)
+    #   ?aplicar=1      -> guarda;  ?limite=40 filas por llamada (máx. 60)
+    # -----------------------------------------------------
+    @app.route("/cron/correos/rubro", methods=["POST"])
+    def rellenar_rubro_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        aplicar = request.args.get("aplicar", "").lower() in ("1", "true", "si")
+        try:
+            limite = max(1, min(int(request.args.get("limite", 40 if aplicar else 10)), 60))
+        except ValueError:
+            limite = 10
+        try:
+            from agente.correo import rellenar_rubro
+            return jsonify(rellenar_rubro(aplicar=aplicar, limite=limite))
+        except Exception as e:
+            print(f"[cron/correos/rubro] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
     # Crear / renovar la suscripción de Graph (1 vez al día)
     # -----------------------------------------------------
     @app.route("/cron/suscripciones", methods=["GET", "POST"])

@@ -5,11 +5,11 @@ import traceback
 
 from flask import Response, jsonify, request
 
+from utils.security import cron_autorizado
+
 
 def _secreto_valido() -> bool:
-    esperado = os.environ.get("CRON_SECRET")
-    recibido = request.headers.get("X-Cron-Secret") or request.args.get("secret") or ""
-    return bool(esperado) and hmac.compare_digest(recibido, esperado)
+    return cron_autorizado()
 
 
 def _agente_activo() -> bool:
@@ -40,6 +40,24 @@ def register_correo_routes(app):
             return jsonify(ejecutar(horas=horas, dry_run=dry_run, limite=limite))
         except Exception as e:
             print(f"[cron/correos] ERROR no controlado: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
+    # Corrección masiva de la columna Plataforma en Analytics
+    #   sin parámetros  -> simulación (solo cuenta filas)
+    #   ?aplicar=1      -> actualiza
+    # -----------------------------------------------------
+    @app.route("/cron/correos/plataformas", methods=["POST"])
+    def corregir_plataformas_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        aplicar = request.args.get("aplicar", "").lower() in ("1", "true", "si")
+        try:
+            from agente.correo import corregir_plataformas
+            return jsonify(corregir_plataformas(aplicar=aplicar))
+        except Exception as e:
+            print(f"[cron/correos/plataformas] ERROR: {e}", flush=True)
             traceback.print_exc()
             return jsonify({"error": str(e)}), 500
 

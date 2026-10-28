@@ -450,6 +450,57 @@ def fila_analytics(m: dict, analisis: dict, licitacion: dict | None = None) -> d
 
 
 # =========================================================
+# CORRECCIÓN MASIVA DE "Plataforma" (según el remitente)
+# =========================================================
+#
+# Recalcula la columna Plataforma de las filas ya guardadas a partir del
+# Remitente, con la misma regla que normalizar_plataforma(). Se usa una vez
+# desde /cron/correos/plataformas. Requiere el scope ZohoAnalytics.data.update.
+
+_CRITERIO_CODELCO = "(\"Remitente\" like '%ariba%' or \"Remitente\" like '%codelco%')"
+REGLAS_PLATAFORMA = (
+    ("Wherex", "(\"Remitente\" like '%wherex%')"),
+    ("Senegocia", "(\"Remitente\" like '%senegocia%')"),
+    ("Codelco", _CRITERIO_CODELCO),
+)
+
+
+def _contar_filas(base: str, headers: dict, criterio: str) -> int:
+    config = {"responseFormat": "json", "criteria": criterio,
+              "selectedColumns": ["Message ID"], "keyValueFormat": True}
+    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+    return len(resp.json().get("data") or [])
+
+
+def corregir_plataformas(aplicar: bool = False) -> dict:
+    """
+    aplicar=False: solo cuenta cuántas filas quedarían en cada plataforma (no cambia nada).
+    aplicar=True:  actualiza la columna Plataforma en Analytics.
+    """
+    base, headers = _analytics()
+    resultado = {"modo": "aplicado" if aplicar else "simulación (agrega ?aplicar=1 para actualizar)"}
+
+    for nombre, criterio in REGLAS_PLATAFORMA:
+        if not aplicar:
+            resultado[nombre] = f"{_contar_filas(base, headers, criterio)} filas"
+            continue
+        config = {"columns": {"Plataforma": nombre}, "criteria": criterio}
+        resp = _pedir("PUT", f"{base}/rows", intentos=1, headers=headers,
+                      params={"CONFIG": json.dumps(config)})
+        if resp.status_code != 200:
+            raise RuntimeError(f"Analytics actualizar {nombre} -> {resp.status_code}: {resp.text[:300]}")
+        resultado[nombre] = (resp.json() or {}).get("data", resp.json())
+        log(f"plataforma corregida a {nombre}: {resultado[nombre]}")
+
+    # Filas cuyo remitente no calza con ninguna regla: se informan, no se tocan
+    sin_regla = "not (" + " or ".join(c for _, c in REGLAS_PLATAFORMA) + ")"
+    resultado["sin_regla (no se modifican)"] = f"{_contar_filas(base, headers, sin_regla)} filas"
+    return resultado
+
+
+# =========================================================
 # ANÁLISIS CON CLAUDE
 # =========================================================
 

@@ -10,7 +10,8 @@ Reglas (definidas con el equipo):
   - Numero de Licitacion: Wherex/Senegocia → número del ID de proceso (LIC-4674 → 4674).
     Codelco (SAP Ariba) → número del evento (6001102591_SA01_... → 6001102591), no el Doc.
     Si no existe en el formulario de números, se crea.
-  - Notas: solo los productos solicitados, uno por línea.
+  - Notas: los productos solicitados, uno por línea, y al final el link que abre el proceso
+    en la plataforma (el botón "Más detalles aquí" / "Click Here" del correo).
   - Asignado a / Propietario: Luis Hurtado.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
@@ -325,8 +326,11 @@ def numero_licitacion(id_proceso, portal="", textos=()):
     return None, f"no se pudo crear el número {numero}: {str(resp)[:300]}"
 
 
-def notas_productos(items):
-    """Productos solicitados, uno por línea (el campo Notas es texto enriquecido: salto = <br>)."""
+def notas_productos(items, link=""):
+    """
+    Productos solicitados, uno por línea, y al final el link del proceso.
+    El campo Notas es texto enriquecido: salto = <br>, link = <a>.
+    """
     lineas = []
     for i, it in enumerate(items or [], 1):
         partes = [it.get("descripcion") or "Sin descripción"]
@@ -340,7 +344,12 @@ def notas_productos(items):
         if cantidad:
             partes.append(f"Cantidad: {cantidad}")
         lineas.append(html.escape(f"{i}. " + " | ".join(partes)))
-    return os.getenv("NOTAS_SALTO_LINEA", "<br>").join(lineas)
+    salto = os.getenv("NOTAS_SALTO_LINEA", "<br>")
+    texto = salto.join(lineas)
+    if link:
+        url = html.escape(link, quote=True)
+        texto += f'{salto}{salto}Link del proceso: <a href="{url}" target="_blank">{url}</a>'
+    return texto
 
 
 # =========================================================
@@ -394,6 +403,8 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         return {"omitida": "sin productos"}
 
     lugar, lugar_defecto = elegir_lugar(analisis.get("lugar_entrega"))
+    if not m.get("link_proceso"):
+        avisos.append("no se encontró el link del proceso en el correo")
     if lugar_defecto:
         avisos.append(f"lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
                       f"se puso '{lugar}'")
@@ -415,7 +426,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Importe": 1,
         "Fuente_de_Posible_cliente": "Portales",
         "Lugar_de_entrega": lugar,
-        "Notas": notas_productos(analisis.get("items"))[:5000],
+        "Notas": notas_productos(analisis.get("items"), m.get("link_proceso", "")),
         "Listado_de_productos": productos,
     }
 

@@ -32,6 +32,7 @@ Variables de entorno:
                       Activar solo después de crear esas columnas en la tabla.
 """
 
+import html
 import json
 import os
 import re
@@ -39,7 +40,9 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import requests
@@ -230,6 +233,80 @@ def leer_cuerpo(buzon: str, mensaje_id: str) -> str:
         headers={"Prefer": 'outlook.body-content-type="text"'},
     )
     return (datos.get("body") or {}).get("content", "")[:20000]
+
+
+# =========================================================
+# LINK DEL PROCESO (botón "Más detalles aquí", "Click Here", etc.)
+# =========================================================
+
+# Texto del botón o enlace que abre el proceso en la plataforma
+TEXTO_BOTON = re.compile(
+    r"m[aá]s detalles|ver detalle|ver (la )?licitaci|ver (el )?proceso|ver (el )?evento|click here|"
+    r"haga clic|haz clic|ingresar a la licitaci|participar|acceder al",
+    re.IGNORECASE,
+)
+# Enlaces que nunca son el del proceso
+EXCLUIR_LINK = re.compile(
+    r"password|contrase|unsubscribe|desuscrib|wherexpay|wherex-pay|/pay\b|facebook|linkedin|twitter|"
+    r"instagram|youtube|mailto:|\.(png|jpe?g|gif|svg)(\?|$)|privacy|policy|support|contact|help",
+    re.IGNORECASE,
+)
+# Si ningún botón coincide por texto: enlaces que parecen del proceso
+LINK_PLATAFORMA = re.compile(r"purchase-bids|wherex\.com/secured|ariba\.com|senegocia", re.IGNORECASE)
+
+
+class _Enlaces(HTMLParser):
+    """Junta (href, texto) de cada <a> del correo."""
+
+    def __init__(self):
+        super().__init__()
+        self.enlaces, self._href, self._texto = [], None, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._href, self._texto = dict(attrs).get("href"), []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._texto.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._href:
+            self.enlaces.append((self._href.strip(), " ".join("".join(self._texto).split())))
+            self._href = None
+
+
+def desenvolver_link(url: str) -> str:
+    """Quita el rastreo del enlace y deja la URL real de la plataforma."""
+    url = html.unescape(url or "").strip()
+    # Rastreo de Amazon SES (Wherex): .../L0/https:%2F%2Fsystem.wherex.com%2F.../1/...
+    envuelto = re.search(r"/L0/(https?(?::|%3A)[^/]+)", url, re.IGNORECASE)
+    if envuelto:
+        return unquote(envuelto.group(1))
+    # Vínculos seguros de Outlook
+    if "safelinks.protection.outlook.com" in url:
+        destino = parse_qs(urlparse(url).query).get("url")
+        if destino:
+            return destino[0]
+    return url
+
+
+def link_proceso(buzon: str, mensaje_id: str) -> str:
+    """URL del botón que abre el proceso en la plataforma, o "" si no se encuentra."""
+    datos = _graph("GET", f"/users/{buzon}/messages/{mensaje_id}", params={"$select": "body"})
+    lector = _Enlaces()
+    lector.feed((datos.get("body") or {}).get("content", ""))
+
+    candidatos = [(desenvolver_link(href), texto) for href, texto in lector.enlaces
+                  if href.lower().startswith("http")]
+    candidatos = [(url, texto) for url, texto in candidatos if not EXCLUIR_LINK.search(url)]
+    for url, texto in candidatos:
+        if TEXTO_BOTON.search(texto):
+            return url
+    for url, _ in candidatos:
+        if LINK_PLATAFORMA.search(url):
+            return url
+    return ""
 
 
 def leer_pdfs(buzon: str, mensaje_id: str) -> list[dict]:
@@ -486,6 +563,11 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
     cuerpo = m.get("cuerpo") or leer_cuerpo(m["buzon"], m["id"])
     pdfs = leer_pdfs(m["buzon"], m["id"]) if m.get("hasAttachments") else []
     analisis = analizar(m, cuerpo, pdfs)
+    try:
+        m["link_proceso"] = link_proceso(m["buzon"], m["id"])
+    except Exception as e:
+        log(f"no se pudo leer el link del proceso: {e}")
+        m["link_proceso"] = ""
 
     licitacion = None
     if not dry_run:
@@ -515,6 +597,7 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
         "asunto": asunto,
         "recibido": m.get("receivedDateTime"),
         "analisis": analisis,
+        "link_proceso": m.get("link_proceso", ""),
         "licitacion": licitacion,
     }
 

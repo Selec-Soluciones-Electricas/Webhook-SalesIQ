@@ -188,42 +188,40 @@ def elegir_lugar(lugar_correo):
 def licitacion_existente(id_proceso):
     """
     ID de la licitación que ya tiene este ID de proceso en el Nombre de Trato, o None.
+
+    El reporte Licitaci_n_Report no devuelve el campo Nombre_de_Trato por la API,
+    así que la coincidencia exacta se resuelve en el criterio: el ID seguido de un
+    espacio o un guion ("LIC-4681 - Walmart..."), para no confundir LIC-4681 con LIC-46810.
+
     Si Creator responde con error, se lanza la excepción: es mejor no crear (y avisar)
     que crear una licitación duplicada por no haber podido revisar.
     """
+    id_esc = _esc(id_proceso)
+    criterio = (f'(Nombre_de_Trato.contains("{id_esc} ") || Nombre_de_Trato.contains("{id_esc}-")'
+                f' || Nombre_de_Trato == "{id_esc}")')
     status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
-                             params={"criteria": f'(Nombre_de_Trato.contains("{_esc(id_proceso)}"))'})
+                             params={"criteria": criterio})
     if datos.get("code") in (3100, 9280):  # "No records found": no hay coincidencias
         return None
     if status != 200 or datos.get("code") not in (None, 3000):
         raise RuntimeError(f"no se pudo revisar duplicados en Creator ({status}): {str(datos)[:300]}")
     for f in datos.get("data") or []:
-        # contains puede traer "LIC-96430": se exige el ID completo seguido de un separador
-        if re.search(rf"(^|\s){re.escape(id_proceso)}(\s|$|-)", f.get("Nombre_de_Trato") or ""):
+        nombre = f.get("Nombre_de_Trato")
+        # Si el reporte llegara a incluir el campo, se valida además el ID completo
+        if nombre is None or re.search(rf"(^|\s){re.escape(id_proceso)}(\s|$|-)", nombre):
             return f.get("ID")
     return None
 
 
 def diagnostico_busqueda(id_proceso):
-    """Respuesta cruda de Creator al buscar un ID de proceso (para revisar el control de duplicados)."""
+    """Resultado de la búsqueda de duplicados para un ID de proceso (para revisar el control)."""
     reporte = os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')
-    numero = re.sub(r"\D", "", id_proceso or "")
-    salida = {"reporte": reporte}
-    for nombre, criterio in (("contiene_id", f'(Nombre_de_Trato.contains("{_esc(id_proceso)}"))'),
-                             ("contiene_numero", f'(Nombre_de_Trato.contains("{numero}"))')):
-        status, datos = _creator("GET", f"report/{reporte}", params={"criteria": criterio})
-        salida[nombre] = {
-            "status": status, "code": datos.get("code"),
-            "mensaje": datos.get("message") or datos.get("error"),
-            "encontrados": [f.get("Nombre_de_Trato") for f in (datos.get("data") or [])][:5],
-        }
-    status, datos = _creator("GET", f"report/{reporte}", params={"max_records": 200})
-    salida["ultimos_registros"] = {
-        "status": status, "code": datos.get("code"),
-        "nombres": [f.get("Nombre_de_Trato") for f in (datos.get("data") or [])][:10],
-        "campos": sorted((datos.get("data") or [{}])[0].keys())[:60],
-    }
-    return salida
+    try:
+        encontrado = licitacion_existente(id_proceso)
+        return {"reporte": reporte, "id_proceso": id_proceso,
+                "existe": bool(encontrado), "id_licitacion": encontrado}
+    except Exception as e:
+        return {"reporte": reporte, "id_proceso": id_proceso, "error": str(e)[:400]}
 
 
 def buscar_cliente(empresa):

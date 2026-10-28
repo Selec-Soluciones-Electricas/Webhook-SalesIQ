@@ -86,6 +86,7 @@ def register_correo_routes(app):
     # -----------------------------------------------------
     # Completar "Licitacion Creator" en filas "Sin dato" buscando en Creator
     #   sin parámetros  -> simulación;  ?aplicar=1 -> guarda;  ?limite=40 (máx. 60)
+    #   ?id=LIC-4681    -> diagnóstico: respuesta cruda de Creator para ese ID
     # -----------------------------------------------------
     @app.route("/cron/correos/verificar-creator", methods=["POST"])
     def verificar_creator_endpoint():
@@ -97,6 +98,10 @@ def register_correo_routes(app):
         except ValueError:
             limite = 40
         try:
+            if request.args.get("id"):
+                # Diagnóstico: respuesta cruda de Creator para un ID de proceso
+                from agente.licitaciones import diagnostico_busqueda
+                return jsonify(diagnostico_busqueda(request.args["id"]))
             from agente.correo import verificar_en_creator
             return jsonify(verificar_en_creator(aplicar=aplicar, limite=limite))
         except Exception as e:

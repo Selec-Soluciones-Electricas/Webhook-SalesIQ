@@ -193,7 +193,7 @@ def licitacion_existente(id_proceso):
     """
     status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
                              params={"criteria": f'(Nombre_de_Trato.contains("{_esc(id_proceso)}"))'})
-    if datos.get("code") == 3100:  # "No Data Available": no hay coincidencias
+    if datos.get("code") in (3100, 9280):  # "No records found": no hay coincidencias
         return None
     if status != 200 or datos.get("code") not in (None, 3000):
         raise RuntimeError(f"no se pudo revisar duplicados en Creator ({status}): {str(datos)[:300]}")
@@ -202,6 +202,28 @@ def licitacion_existente(id_proceso):
         if re.search(rf"(^|\s){re.escape(id_proceso)}(\s|$|-)", f.get("Nombre_de_Trato") or ""):
             return f.get("ID")
     return None
+
+
+def diagnostico_busqueda(id_proceso):
+    """Respuesta cruda de Creator al buscar un ID de proceso (para revisar el control de duplicados)."""
+    reporte = os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')
+    numero = re.sub(r"\D", "", id_proceso or "")
+    salida = {"reporte": reporte}
+    for nombre, criterio in (("contiene_id", f'(Nombre_de_Trato.contains("{_esc(id_proceso)}"))'),
+                             ("contiene_numero", f'(Nombre_de_Trato.contains("{numero}"))')):
+        status, datos = _creator("GET", f"report/{reporte}", params={"criteria": criterio})
+        salida[nombre] = {
+            "status": status, "code": datos.get("code"),
+            "mensaje": datos.get("message") or datos.get("error"),
+            "encontrados": [f.get("Nombre_de_Trato") for f in (datos.get("data") or [])][:5],
+        }
+    status, datos = _creator("GET", f"report/{reporte}", params={"max_records": 200})
+    salida["ultimos_registros"] = {
+        "status": status, "code": datos.get("code"),
+        "nombres": [f.get("Nombre_de_Trato") for f in (datos.get("data") or [])][:10],
+        "campos": sorted((datos.get("data") or [{}])[0].keys())[:60],
+    }
+    return salida
 
 
 def buscar_cliente(empresa):

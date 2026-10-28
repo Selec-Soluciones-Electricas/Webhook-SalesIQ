@@ -186,13 +186,21 @@ def elegir_lugar(lugar_correo):
 # =========================================================
 
 def licitacion_existente(id_proceso):
+    """
+    ID de la licitación que ya tiene este ID de proceso en el Nombre de Trato, o None.
+    Si Creator responde con error, se lanza la excepción: es mejor no crear (y avisar)
+    que crear una licitación duplicada por no haber podido revisar.
+    """
     status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
                              params={"criteria": f'(Nombre_de_Trato.contains("{_esc(id_proceso)}"))'})
-    if status == 200:
-        for f in datos.get("data") or []:
-            # contains puede traer "LIC-96430": se exige el ID completo seguido de un separador
-            if re.search(rf"(^|\s){re.escape(id_proceso)}(\s|$|-)", f.get("Nombre_de_Trato") or ""):
-                return f.get("ID")
+    if datos.get("code") == 3100:  # "No Data Available": no hay coincidencias
+        return None
+    if status != 200 or datos.get("code") not in (None, 3000):
+        raise RuntimeError(f"no se pudo revisar duplicados en Creator ({status}): {str(datos)[:300]}")
+    for f in datos.get("data") or []:
+        # contains puede traer "LIC-96430": se exige el ID completo seguido de un separador
+        if re.search(rf"(^|\s){re.escape(id_proceso)}(\s|$|-)", f.get("Nombre_de_Trato") or ""):
+            return f.get("ID")
     return None
 
 

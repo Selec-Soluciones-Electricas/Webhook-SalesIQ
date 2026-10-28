@@ -149,10 +149,20 @@ def _pedir(metodo: str, url: str, intentos: int = 3, **kwargs):
             time.sleep(3 * intento)
 
 
+REINTENTAR_GRAPH = (429, 500, 502, 503, 504)
+
+
 def _graph(metodo: str, ruta: str, **kwargs):
     headers = kwargs.pop("headers", {})
     headers["Authorization"] = f"Bearer {_access_token()}"
-    resp = _pedir(metodo, f"{GRAPH}{ruta}", headers=headers, **kwargs)
+    # Graph a veces responde 504/503/429 por unos segundos: se reintenta antes de fallar
+    for intento in range(1, 4):
+        resp = _pedir(metodo, f"{GRAPH}{ruta}", headers=headers, **kwargs)
+        if resp.status_code not in REINTENTAR_GRAPH or intento == 3:
+            break
+        espera = int(resp.headers.get("Retry-After", 0) or 0) or 3 * intento
+        log(f"Graph respondió {resp.status_code}, reintento {intento}/2 en {espera} s...")
+        time.sleep(min(espera, 20))
     if resp.status_code >= 400:
         raise RuntimeError(f"Graph {metodo} {ruta} -> {resp.status_code}: {resp.text[:300]}")
     return resp.json() if resp.content else None
@@ -216,8 +226,13 @@ def listar_pendientes(buzon: str, horas: int) -> list[dict]:
         remitente = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower()
         if remitente.split("@")[-1] in internos and not remitente_permitido(remitente):
             revisados_internos += 1
-        if preparar_mensaje(m, buzon):
-            pendientes.append(m)
+        try:
+            if preparar_mensaje(m, buzon):
+                pendientes.append(m)
+        except Exception as e:
+            # Un correo que no se pudo leer no debe detener la revisión del buzón:
+            # se reintenta en la próxima corrida.
+            log(f"no se pudo revisar {m.get('subject')!r}: {str(e)[:200]}")
 
     log(
         f"{buzon}: {len(mensajes)} correos en las últimas {horas} h | "
@@ -742,6 +757,65 @@ def rellenar_rubro(aplicar: bool = False, limite: int = 40) -> dict:
     resultado["pendientes_despues"] = (len(clasificables) - (resultado["si"] + resultado["no"])
                                        if aplicar else len(clasificables))
     log(f"rubro: {resultado['si']} sí, {resultado['no']} no, {len(resultado['errores'])} errores "
+        f"(aplicar={aplicar})")
+    return resultado
+
+
+# =========================================================
+# VERIFICAR EN CREATOR LAS FILAS "Sin dato" (sin tokens)
+# =========================================================
+#
+# Filas procesadas antes de registrar el resultado: son invitaciones del rubro
+# con "Licitacion Creator" vacío. Se busca el ID de proceso en Creator (igual
+# que el control de duplicados) y se completa la columna. No usa Claude.
+# Se usa desde /cron/correos/verificar-creator.
+
+def verificar_en_creator(aplicar: bool = False, limite: int = 40) -> dict:
+    from agente.licitaciones import TIPOS_QUE_CREAN, licitacion_existente
+
+    base, headers = _analytics()
+    columnas = ["Message ID", "Tipo", "ID Proceso", "Empresa Compradora", "Del Rubro", "Licitacion Creator"]
+    config = {"responseFormat": "json", "selectedColumns": columnas, "keyValueFormat": True}
+    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+
+    candidatas = [
+        f for f in (resp.json().get("data") or [])
+        if not (f.get("Licitacion Creator") or "").strip()
+        and (f.get("ID Proceso") or "").strip()
+        and f.get("Tipo") in TIPOS_QUE_CREAN
+        and (f.get("Del Rubro") or "").strip() == "Sí"
+    ]
+    resultado = {"modo": "aplicado" if aplicar else "simulación (agrega ?aplicar=1 para guardar)",
+                 "pendientes_antes": len(candidatas), "existen_en_creator": 0, "no_existen": 0,
+                 "errores": [], "detalle": []}
+
+    for fila in candidatas[:limite]:
+        id_proceso = fila["ID Proceso"].strip()
+        try:
+            lic_id = licitacion_existente(id_proceso)
+        except Exception as e:
+            resultado["errores"].append(f"{id_proceso}: {str(e)[:150]}")
+            continue
+        if lic_id:
+            resultado["existen_en_creator"] += 1
+            texto = f"Creada (verificada en Creator, ID {lic_id})"
+        else:
+            resultado["no_existen"] += 1
+            texto = "Omitida: no creada (correo procesado antes de registrar el resultado)"
+        resultado["detalle"].append(f"{id_proceso} | {fila.get('Empresa Compradora')} | {texto}")
+        if not aplicar:
+            continue
+        id_msg = fila["Message ID"].replace("'", "''")
+        cambio = {"columns": {"Licitacion Creator": texto}, "criteria": f"\"Message ID\" = '{id_msg}'"}
+        r_put = _pedir("PUT", f"{base}/rows", intentos=1, headers=headers, params={"CONFIG": json.dumps(cambio)})
+        if r_put.status_code != 200:
+            resultado["errores"].append(f"Analytics {r_put.status_code}: {r_put.text[:150]}")
+
+    resultado["pendientes_despues"] = (len(candidatas) - resultado["existen_en_creator"] - resultado["no_existen"]
+                                       if aplicar else len(candidatas))
+    log(f"verificar Creator: {resultado['existen_en_creator']} existen, {resultado['no_existen']} no existen "
         f"(aplicar={aplicar})")
     return resultado
 

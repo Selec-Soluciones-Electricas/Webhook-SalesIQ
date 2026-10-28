@@ -84,6 +84,27 @@ def register_correo_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------------------------------
+    # Completar "Licitacion Creator" en filas "Sin dato" buscando en Creator
+    #   sin parámetros  -> simulación;  ?aplicar=1 -> guarda;  ?limite=40 (máx. 60)
+    # -----------------------------------------------------
+    @app.route("/cron/correos/verificar-creator", methods=["POST"])
+    def verificar_creator_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        aplicar = request.args.get("aplicar", "").lower() in ("1", "true", "si")
+        try:
+            limite = max(1, min(int(request.args.get("limite", 40)), 60))
+        except ValueError:
+            limite = 40
+        try:
+            from agente.correo import verificar_en_creator
+            return jsonify(verificar_en_creator(aplicar=aplicar, limite=limite))
+        except Exception as e:
+            print(f"[cron/correos/verificar-creator] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
     # Crear / renovar la suscripción de Graph (1 vez al día)
     # -----------------------------------------------------
     @app.route("/cron/suscripciones", methods=["GET", "POST"])

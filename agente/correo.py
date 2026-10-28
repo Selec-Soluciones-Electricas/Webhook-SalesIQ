@@ -411,12 +411,25 @@ def texto_licitacion(lic) -> str:
     return str(lic)[:500]
 
 
+# Nombre de la plataforma tal como se quiere ver en Analytics (igual que el Portal en Creator)
+PLATAFORMAS = (("ariba", "Codelco"), ("codelco", "Codelco"), ("wherex", "Wherex"), ("senegocia", "Senegocia"))
+
+
+def normalizar_plataforma(plataforma: str, remitente: str = "") -> str:
+    """'SAP Ariba (Portal de Negocios Codelco)' -> 'Codelco', 'wherex' -> 'Wherex', etc."""
+    texto = f"{plataforma} {remitente}".lower()
+    for clave, nombre in PLATAFORMAS:
+        if clave in texto:
+            return nombre
+    return plataforma or ""
+
+
 def fila_analytics(m: dict, analisis: dict, licitacion: dict | None = None) -> dict:
     fila = {
         "Message ID": m["internetMessageId"],
         "Recibido": _fecha_chile(m.get("receivedDateTime")),
         "Remitente": m["remitente"],
-        "Plataforma": analisis.get("plataforma", ""),
+        "Plataforma": normalizar_plataforma(analisis.get("plataforma", ""), m.get("remitente", "")),
         "Tipo": analisis.get("tipo", ""),
         "ID Proceso": analisis.get("id_proceso", ""),
         "Empresa Compradora": analisis.get("empresa_compradora", ""),

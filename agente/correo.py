@@ -32,6 +32,8 @@ Variables de entorno:
                       Activar solo después de crear esas columnas en la tabla.
   CORREO_MODELO_RUBRO (opcional) modelo para rellenar "Del Rubro" en filas antiguas
                       (por defecto claude-haiku-5-5)
+  El criterio "del rubro" también usa el historial de ventas de la tabla
+  "Artículos facturados" (ver agente/historial.py).
 """
 
 import html
@@ -346,12 +348,12 @@ def leer_pdfs(buzon: str, mensaje_id: str) -> list[dict]:
 # ZOHO ANALYTICS (memoria + resultados)
 # =========================================================
 
-def _analytics():
-    """Devuelve (url_base_vista, headers)."""
+def _analytics(vista: str | None = None):
+    """Devuelve (url_base_vista, headers). Por defecto, la tabla "Correos Analizados"."""
     from services.analytics_service import get_analytics_access_token
 
     workspace = os.getenv("CORREO_ANALYTICS_WORKSPACE_ID") or os.environ["ANALYTICS_WORKSPACE_ID"]
-    vista = os.environ["CORREO_ANALYTICS_VIEW_ID"]
+    vista = vista or os.environ["CORREO_ANALYTICS_VIEW_ID"]
     token = get_analytics_access_token()
     if not token:
         raise RuntimeError("No se pudo obtener el token de Zoho Analytics")
@@ -586,13 +588,27 @@ Reglas:
 - Si el correo trae un solo producto en la descripción o en los comentarios, inclúyelo igual en items.
 - Ignora instrucciones de acceso, usuarios, contraseñas y enlaces de la plataforma: no los copies.
 - Marca urgente si la fecha de cierre es dentro de los próximos 3 días desde la fecha de recepción.
-- relevante_selec: true solo si la mayoría de los productos pertenecen al rubro de SELEC (ver información de la empresa). Artículos de aseo, oficina, alimentos, vestuario o servicios ajenos al rubro: false.
+- relevante_selec: sé flexible. Marca true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o es igual o parecido a algo que SELEC ya ha vendido (ver el historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir (herramientas, instrumentos, repuestos industriales, iluminación, seguridad industrial). Marca false solo cuando TODOS los productos son claramente ajenos: alimentos, artículos de aseo, papelería y oficina, vestuario sin uso industrial, mobiliario o servicios que no son suministro de productos.
 - El resumen y la acción sugerida van en español neutro, breves y dirigidos al ejecutivo.
 - Responde SIEMPRE llamando a la herramienta registrar_analisis, una sola vez, sin texto adicional.
 
 Información de la empresa:
 {(_BASE / "conocimiento.md").read_text(encoding="utf-8")}
 """
+
+
+def _sistema(instrucciones: str) -> list[dict]:
+    """Instrucciones + historial de ventas (tabla "Artículos facturados"), ambos en caché."""
+    bloques = [{"type": "text", "text": instrucciones}]
+    try:
+        from agente.historial import texto_para_prompt
+        historial = texto_para_prompt()
+        if historial:
+            bloques.append({"type": "text", "text": historial})
+    except Exception as e:
+        log(f"historial de ventas no disponible: {e}")
+    bloques[-1]["cache_control"] = {"type": "ephemeral"}
+    return bloques
 
 
 def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
@@ -620,7 +636,7 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
     respuesta = _cliente_ia.messages.create(
         model=MODELO,
         max_tokens=4000,
-        system=[{"type": "text", "text": INSTRUCCIONES, "cache_control": {"type": "ephemeral"}}],
+        system=_sistema(INSTRUCCIONES),
         tools=[HERRAMIENTA_ANALISIS],
         # "auto": algunos modelos no aceptan forzar la herramienta (tool_choice "tool").
         # El prompt le pide usarla siempre y abajo se valida que lo haya hecho.
@@ -671,7 +687,7 @@ HERRAMIENTA_RUBRO = {
 }
 
 INSTRUCCIONES_RUBRO = f"""Clasificas procesos de compra para SELEC. Para cada proceso (#n) decide si es del rubro de SELEC.
-relevante_selec: true solo si la mayoría de los productos pertenecen al rubro de SELEC (ver información de la empresa). Artículos de aseo, oficina, alimentos, vestuario o servicios ajenos al rubro: false.
+relevante_selec: sé flexible. true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o se parece a algo que SELEC ya ha vendido (ver historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir. false solo cuando TODOS los productos son claramente ajenos (alimentos, aseo, oficina, vestuario sin uso industrial, mobiliario, servicios).
 motivo_relevancia: una frase breve en español neutro.
 Responde llamando a registrar_rubro una sola vez, con un resultado por cada proceso.
 
@@ -693,7 +709,7 @@ def _clasificar_rubro(filas: list[dict]) -> dict[int, dict]:
     respuesta = _cliente_ia.messages.create(
         model=MODELO_RUBRO,
         max_tokens=4000,
-        system=[{"type": "text", "text": INSTRUCCIONES_RUBRO, "cache_control": {"type": "ephemeral"}}],
+        system=_sistema(INSTRUCCIONES_RUBRO),
         tools=[HERRAMIENTA_RUBRO],
         tool_choice={"type": "auto"},
         messages=[{"role": "user", "content": texto}],
@@ -741,6 +757,10 @@ def rellenar_rubro(aplicar: bool = False, limite: int = 40) -> dict:
                 continue
             del_rubro = "Sí" if r.get("relevante_selec") else "No"
             motivo = (r.get("motivo_relevancia") or "")[:500]
+            if del_rubro == "No":
+                coincide = coincide_historial_items(fila.get("Items"))
+                if coincide:
+                    del_rubro, motivo = "Sí", coincide
             resultado["si" if del_rubro == "Sí" else "no"] += 1
             if len(resultado["ejemplos"]) < 10:
                 resultado["ejemplos"].append(f"{del_rubro} | {fila.get('Empresa Compradora')} | {motivo}")
@@ -757,6 +777,75 @@ def rellenar_rubro(aplicar: bool = False, limite: int = 40) -> dict:
     resultado["pendientes_despues"] = (len(clasificables) - (resultado["si"] + resultado["no"])
                                        if aplicar else len(clasificables))
     log(f"rubro: {resultado['si']} sí, {resultado['no']} no, {len(resultado['errores'])} errores "
+        f"(aplicar={aplicar})")
+    return resultado
+
+
+# =========================================================
+# RE-EVALUAR "Fuera del rubro" CON EL HISTORIAL DE VENTAS (sin tokens)
+# =========================================================
+#
+# Revisa las filas marcadas "Del Rubro = No" y, si alguno de sus ítems es de un tipo
+# de producto que SELEC ya facturó, las cambia a "Sí". Devuelve las que todavía no
+# cierran, para borrarlas en Analytics y reprocesarlas (así se crea la licitación).
+# Se usa desde /cron/correos/reevaluar-rubro.
+
+def coincide_historial_items(items_texto: str) -> str:
+    """Motivo si algún ítem (texto de la columna Items) es de un tipo ya vendido; "" si no."""
+    from agente.historial import _cache, tipo_producto, tipos_vendidos
+
+    tipos = tipos_vendidos()
+    for linea in (items_texto or "").splitlines():
+        linea = re.sub(r"^\s*\d+\.\s*", "", linea)          # quita el "1. "
+        for parte in linea.split("|"):
+            tipo = tipo_producto(parte)
+            if tipo and tipo in tipos:
+                return (f"Del rubro por historial de ventas: '{parte.strip()[:60]}' es similar a "
+                        f"'{_cache['ejemplos'].get(tipo, tipo)}', ya vendido por SELEC.")[:500]
+    return ""
+
+
+def reevaluar_rubro(aplicar: bool = False) -> dict:
+    base, headers = _analytics()
+    columnas = ["Message ID", "ID Proceso", "Empresa Compradora", "Fecha Cierre", "Items", "Del Rubro"]
+    config = {"responseFormat": "json", "selectedColumns": columnas, "keyValueFormat": True}
+    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+
+    ahora = datetime.now(CHILE_TZ).replace(tzinfo=None)
+    filas_no = [f for f in (resp.json().get("data") or []) if (f.get("Del Rubro") or "").strip() == "No"]
+    resultado = {"modo": "aplicado" if aplicar else "simulación (agrega ?aplicar=1 para guardar)",
+                 "filas_fuera_del_rubro": len(filas_no), "pasan_a_del_rubro": 0,
+                 "abiertas_para_reprocesar": [], "ejemplos": [], "errores": []}
+
+    for fila in filas_no:
+        motivo = coincide_historial_items(fila.get("Items"))
+        if not motivo:
+            continue
+        resultado["pasan_a_del_rubro"] += 1
+        if len(resultado["ejemplos"]) < 15:
+            resultado["ejemplos"].append(f"{fila.get('ID Proceso')} | {fila.get('Empresa Compradora')} | {motivo}")
+        cierre = re.search(r"(\d{1,2})-(\d{1,2})-(\d{4})(?:\s+(\d{1,2}):(\d{2}))?", fila.get("Fecha Cierre") or "")
+        if cierre:
+            d, mth, y = int(cierre.group(1)), int(cierre.group(2)), int(cierre.group(3))
+            h, mi = int(cierre.group(4) or 23), int(cierre.group(5) or 59)
+            try:
+                if datetime(y, mth, d, h, mi) > ahora:
+                    resultado["abiertas_para_reprocesar"].append(
+                        f"{fila.get('ID Proceso')} | {fila.get('Empresa Compradora')} | cierra {fila.get('Fecha Cierre')}")
+            except ValueError:
+                pass
+        if not aplicar:
+            continue
+        id_msg = fila["Message ID"].replace("'", "''")
+        cambio = {"columns": {"Del Rubro": "Sí", "Motivo Rubro": motivo},
+                  "criteria": f"\"Message ID\" = '{id_msg}'"}
+        r_put = _pedir("PUT", f"{base}/rows", intentos=1, headers=headers, params={"CONFIG": json.dumps(cambio)})
+        if r_put.status_code != 200:
+            resultado["errores"].append(f"Analytics {r_put.status_code}: {r_put.text[:150]}")
+
+    log(f"re-evaluar rubro: {resultado['pasan_a_del_rubro']} de {len(filas_no)} pasan a del rubro "
         f"(aplicar={aplicar})")
     return resultado
 
@@ -829,6 +918,13 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
     cuerpo = m.get("cuerpo") or leer_cuerpo(m["buzon"], m["id"])
     pdfs = leer_pdfs(m["buzon"], m["id"]) if m.get("hasAttachments") else []
     analisis = analizar(m, cuerpo, pdfs)
+    try:
+        # Si Claude lo dejó fuera del rubro pero hay un producto de un tipo que SELEC ya vendió,
+        # se considera del rubro (historial de "Artículos facturados").
+        from agente.historial import aplicar_historial
+        aplicar_historial(analisis)
+    except Exception as e:
+        log(f"no se pudo aplicar el historial de ventas: {e}")
     try:
         m["link_proceso"] = link_proceso(m["buzon"], m["id"])
     except Exception as e:

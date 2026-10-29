@@ -84,9 +84,41 @@ def register_correo_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------------------------------
+    # Historial de ventas (Artículos facturados): qué se leyó
+    # -----------------------------------------------------
+    @app.route("/cron/correos/historial", methods=["POST"])
+    def historial_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        try:
+            from agente.historial import resumen
+            return jsonify(resumen())
+        except Exception as e:
+            print(f"[cron/correos/historial] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
+    # Re-evaluar las filas "Del Rubro = No" con el historial de ventas
+    #   sin parámetros  -> simulación;  ?aplicar=1 -> guarda
+    # -----------------------------------------------------
+    @app.route("/cron/correos/reevaluar-rubro", methods=["POST"])
+    def reevaluar_rubro_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        aplicar = request.args.get("aplicar", "").lower() in ("1", "true", "si")
+        try:
+            from agente.correo import reevaluar_rubro
+            return jsonify(reevaluar_rubro(aplicar=aplicar))
+        except Exception as e:
+            print(f"[cron/correos/reevaluar-rubro] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
     # Completar "Licitacion Creator" en filas "Sin dato" buscando en Creator
     #   sin parámetros  -> simulación;  ?aplicar=1 -> guarda;  ?limite=40 (máx. 60)
-    #   ?id=LIC-4681    -> diagnóstico: respuesta cruda de Creator para ese ID
+    #   ?id=LIC-4681    -> diagnóstico: búsqueda de ese ID en Creator
     # -----------------------------------------------------
     @app.route("/cron/correos/verificar-creator", methods=["POST"])
     def verificar_creator_endpoint():

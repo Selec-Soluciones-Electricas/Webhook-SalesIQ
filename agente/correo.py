@@ -792,14 +792,13 @@ def rellenar_rubro(aplicar: bool = False, limite: int = 40) -> dict:
 
 def coincide_historial_items(items_texto: str) -> str:
     """Motivo si algún ítem (texto de la columna Items) es de un tipo ya vendido; "" si no."""
-    from agente.historial import _cache, tipo_producto, tipos_vendidos
+    from agente.historial import _cache, tipo_si_coincide
 
-    tipos = tipos_vendidos()
     for linea in (items_texto or "").splitlines():
         linea = re.sub(r"^\s*\d+\.\s*", "", linea)          # quita el "1. "
         for parte in linea.split("|"):
-            tipo = tipo_producto(parte)
-            if tipo and tipo in tipos:
+            tipo = tipo_si_coincide(parte)
+            if tipo:
                 return (f"Del rubro por historial de ventas: '{parte.strip()[:60]}' es similar a "
                         f"'{_cache['ejemplos'].get(tipo, tipo)}', ya vendido por SELEC.")[:500]
     return ""

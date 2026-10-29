@@ -17,6 +17,9 @@ Variables de entorno (opcionales):
                                  si no está, se prueban los nombres habituales
   HISTORIAL_HORAS_CACHE          cada cuántas horas se vuelve a leer la tabla (por defecto 12)
   HISTORIAL_MAX_TIPOS            cuántos tipos se le muestran a Claude (por defecto 250)
+  HISTORIAL_MIN_VENTAS           veces que se tiene que haber vendido un tipo para contar (por defecto 3);
+                                 evita que una compra aislada (ej. una silla) abra todo un rubro
+  HISTORIAL_EXCLUIR              tipos que nunca cuentan, separados por coma (se suman a los de abajo)
 """
 
 import json
@@ -40,7 +43,20 @@ NO_SIGNIFICATIVAS = {
     "envio", "flete", "fletes", "servicio", "servicios", "despacho", "otros", "varios", "producto",
     "articulo", "item", "sku", "codigo", "ref", "cotizacion", "repuesto", "repuestos", "pieza", "piezas",
     "material", "materiales", "insumo", "insumos", "accesorio", "accesorios", "equipo", "equipos",
+    "soporte", "jgo", "parte", "partes", "elemento", "elementos", "conjunto", "suministro",
 }
+
+# Tipos que aunque aparezcan facturados no son del rubro (compras puntuales, mobiliario, etc.)
+TIPOS_EXCLUIDOS = {
+    "silla", "mesa", "escritorio", "mueble", "sillon", "estante", "repisa", "colchon", "cama",
+    "alimento", "cafe", "agua", "bebida", "galleta", "papel", "cuaderno", "lapiz", "archivador",
+    "uniforme", "polera", "pantalon", "chaqueta", "zapato", "zapatilla",
+}
+# Si el ítem es un servicio, no se compara con el historial
+PATRON_SERVICIO = re.compile(
+    r"\b(mantencion|mantenimiento|servicio|instalacion|reparacion|arriendo|capacitacion|asesoria|"
+    r"calibracion|soporte tecnico|mano de obra)\b"
+)
 
 _cache = {"tipos": None, "ejemplos": {}, "columna": None, "filas": 0, "hasta": 0.0, "error": None}
 
@@ -123,6 +139,21 @@ def tipos_vendidos() -> Counter:
     return _cache["tipos"]
 
 
+def tipos_validos() -> set[str]:
+    """Tipos que cuentan como "ya vendidos": con al menos HISTORIAL_MIN_VENTAS ventas y no excluidos."""
+    minimo = int(os.getenv("HISTORIAL_MIN_VENTAS", "3"))
+    excluir = TIPOS_EXCLUIDOS | {t.strip().lower() for t in os.getenv("HISTORIAL_EXCLUIR", "").split(",") if t.strip()}
+    return {t for t, n in tipos_vendidos().items() if n >= minimo and t not in excluir}
+
+
+def tipo_si_coincide(texto: str) -> str | None:
+    """Tipo del producto si ya se vendió (y no es un servicio); None si no."""
+    if PATRON_SERVICIO.search(_normalizar(texto)):
+        return None
+    tipo = tipo_producto(texto)
+    return tipo if tipo and tipo in tipos_validos() else None
+
+
 # =========================================================
 # USO EN EL ANÁLISIS
 # =========================================================
@@ -130,10 +161,12 @@ def tipos_vendidos() -> Counter:
 def texto_para_prompt() -> str:
     """Bloque para el prompt de Claude con los tipos de producto más vendidos."""
     tipos = tipos_vendidos()
-    if not tipos:
+    validos = tipos_validos()
+    if not validos:
         return ""
     maximo = int(os.getenv("HISTORIAL_MAX_TIPOS", "250"))
-    lineas = [f"- {tipo} (ej. {_cache['ejemplos'].get(tipo, '')})" for tipo, _ in tipos.most_common(maximo)]
+    lineas = [f"- {tipo} (ej. {_cache['ejemplos'].get(tipo, '')})"
+              for tipo, _ in tipos.most_common() if tipo in validos][:maximo]
     return ("Historial de ventas de SELEC: tipos de producto que SELEC ya ha vendido y facturado "
             "(si un producto solicitado es de uno de estos tipos, o muy parecido, es del rubro):\n"
             + "\n".join(lineas))
@@ -141,12 +174,11 @@ def texto_para_prompt() -> str:
 
 def coincidencias(items: list[dict]) -> list[tuple[str, str]]:
     """(descripción del ítem, ejemplo vendido) para los ítems cuyo tipo ya se vendió."""
-    tipos = tipos_vendidos()
     encontrados = []
     for it in items or []:
         texto = it.get("descripcion") or it.get("marca_modelo") or ""
-        tipo = tipo_producto(texto)
-        if tipo and tipo in tipos:
+        tipo = tipo_si_coincide(texto)
+        if tipo:
             encontrados.append((texto[:80], _cache["ejemplos"].get(tipo, tipo)))
     return encontrados
 
@@ -173,6 +205,7 @@ def resumen() -> dict:
         "columna": _cache["columna"],
         "articulos_leidos": _cache["filas"],
         "tipos_distintos": len(tipos),
+        "tipos_que_cuentan": len(tipos_validos()),
         "error": _cache["error"],
         "top_50": [f"{t} ({n}) ej. {_cache['ejemplos'].get(t, '')}" for t, n in tipos.most_common(50)],
     }

@@ -7,3 +7,4 @@ pillow
 anthropic
 tzdata
 retell-sdk
+gunicorn

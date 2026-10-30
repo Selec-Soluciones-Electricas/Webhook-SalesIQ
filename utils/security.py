@@ -1,5 +1,9 @@
 import re
 
+import hmac
+import os
+
+from flask import request
 
 
 # Función para enmascarar valores sensibles, mostrando solo los primeros y últimos caracteres según lo especificado, y reemplazando el resto con asteriscos. Esto es útil para proteger la privacidad de los datos del cliente en los logs o en cualquier salida que pueda ser visible, manteniendo solo una referencia útil para identificación.
@@ -55,3 +59,44 @@ def safe_owner_for_log(owner: dict) -> str:
     if not owner:
         return "(sin owner)"
     return f"{owner.get('nombre', 'N/A')} ({mask_value(owner.get('id', ''), 2, 2)})"
+
+
+def _env_activo(nombre: str) -> bool:
+    return os.getenv(nombre, "off").strip().lower() in ("on", "1", "true", "si")
+
+
+def _comparar(recibido: str, esperado: str) -> bool:
+    return bool(esperado) and hmac.compare_digest(
+        (recibido or "").encode("utf-8"), esperado.encode("utf-8")
+    )
+
+
+def cron_autorizado() -> bool:
+    """
+    Rutas /cron/*: el secreto va en el header X-Cron-Secret.
+    En local se puede permitir ?secret= con CRON_SECRET_EN_URL=on
+    (en producción NO, porque la URL queda en logs e historiales).
+    """
+    esperado = os.getenv("CRON_SECRET", "")
+    recibido = request.headers.get("X-Cron-Secret", "")
+    if not recibido and _env_activo("CRON_SECRET_EN_URL"):
+        recibido = request.args.get("secret", "")
+    return _comparar(recibido, esperado)
+
+
+def token_autorizado(nombre_env: str, header: str = "X-Api-Token") -> bool:
+    """
+    Valida un token compartido, enviado en un header o en ?token=.
+    El parámetro en la URL existe porque SalesIQ y algunas integraciones de
+    Zoho no permiten agregar headers; el log de accesos se configura para no
+    registrar la query string (ver gunicorn.conf.py).
+
+    Si la variable no está definida se deja pasar con una advertencia, para no
+    cortar el servicio mientras se configura. Definirla en producción.
+    """
+    esperado = os.getenv(nombre_env, "")
+    if not esperado:
+        print(f"[seguridad] ADVERTENCIA: {nombre_env} no está definido; {request.path} está sin protección", flush=True)
+        return True
+    recibido = request.headers.get(header, "") or request.args.get("token", "")
+    return _comparar(recibido, esperado)

@@ -27,7 +27,9 @@ from routes.cron import register_cron_routes
 from routes.reparacion import register_reparacion_routes
 from routes.excel_routes import excel_bp
 from routes.retell_webhook import retell_bp
-
+from routes.correo_routes import register_correo_routes
+from services.zoho_service import get_access_token
+from utils.sesiones import SesionesConExpiracion
 from routes.flow_mvp import (
     flow_mvp_bp,
 )
@@ -69,6 +71,7 @@ register_routes(
     sessions,
     access_token,
 )
+register_correo_routes(app)
 
 register_cron_routes(app)
 

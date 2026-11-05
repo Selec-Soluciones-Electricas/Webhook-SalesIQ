@@ -508,17 +508,50 @@ Abrir Negocio en Zoho One
     # CONTENIDO
     # =====================================================
 
+    from html import escape as escapar_html
+
+    productos = campos.get("productos")
+
+    # Compatibilidad con cotizaciones anteriores
+    if not isinstance(productos, list) or not productos:
+        productos = [{
+            "numero_parte": campos.get("num_parte"),
+            "descripcion": campos.get("descripcion"),
+            "marca": campos.get("marca"),
+            "cantidad": campos.get("cantidad"),
+        }]
+
+    bloques_productos = []
+
+    for indice, producto in enumerate(productos, start=1):
+
+        if not isinstance(producto, dict):
+            continue
+
+        def valor_producto(clave, defecto):
+            valor = str(producto.get(clave) or "").strip()
+            return escapar_html(valor or defecto)
+
+        bloques_productos.append(
+            f"<p><b>Producto {indice}</b><br>"
+            f"<b>Número de parte:</b> "
+            f"{valor_producto('numero_parte', '(no informado)')}<br>"
+            f"<b>Descripción:</b> "
+            f"{valor_producto('descripcion', '(sin descripción)')}<br>"
+            f"<b>Marca:</b> "
+            f"{valor_producto('marca', '(no informada)')}<br>"
+            f"<b>Cantidad:</b> "
+            f"{valor_producto('cantidad', '(sin cantidad)')}</p>"
+        )
+
+    bloque_productos = "\n".join(bloques_productos)
+
     content = f"""
 <p>Hola {to_name},</p>
 
 <p>
 Se ha creado un nuevo Negocio asignado desde
 el {origen_texto}.
-</p>
-
-<p>
-<b>Número de Chat (SalesIQ):</b>
-{campos.get("num_chat") or "(sin número de chat)"}
 </p>
 
 <p>
@@ -562,20 +595,9 @@ Abrir Negocio
 {campos.get("telefono") or "(sin teléfono)"}
 </p>
 
-<p>
-<b>Número de parte / descripción:</b>
-{campos.get("num_parte") or "(sin descripción)"}
-</p>
+<h3>Productos solicitados</h3>
 
-<p>
-<b>Marca:</b>
-{campos.get("marca") or "(sin marca)"}
-</p>
-
-<p>
-<b>Cantidad:</b>
-{campos.get("cantidad") or "(sin cantidad)"}
-</p>
+{bloque_productos}
 
 <p>
 <b>Dirección de entrega:</b>

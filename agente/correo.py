@@ -258,12 +258,18 @@ def leer_cuerpo(buzon: str, mensaje_id: str) -> str:
 # LINK DEL PROCESO (botón "Más detalles aquí", "Click Here", etc.)
 # =========================================================
 
-# Texto del botón o enlace que abre el proceso en la plataforma
-TEXTO_BOTON = re.compile(
-    r"m[aá]s detalles|ver detalle|ver (la )?licitaci|ver (el )?proceso|ver (el )?evento|click here|"
-    r"haga clic|haz clic|ingresar a la licitaci|participar|acceder al",
-    re.IGNORECASE,
-)
+# Texto del botón o enlace que abre el proceso en la plataforma, en orden de preferencia:
+# primero los que muestran el detalle (Wherex "Más detalles aquí", Senegocia "Ver cotización
+# completa"), después los que llevan a ofertar.
+TEXTOS_BOTON = [
+    re.compile(r"ver (la )?cotizaci[oó]n|m[aá]s detalles|ver detalle|ver (la )?licitaci|ver (el )?proceso|"
+               r"ver (el )?evento|click here", re.IGNORECASE),
+    re.compile(r"haga clic|haz clic|ingresar a la licitaci|ir a ofertar|ofertar|participar|acceder al",
+               re.IGNORECASE),
+]
+# Botones que nunca son el del proceso: abrirlos puede rechazar la invitación
+# (Senegocia "No participaré" contiene "participar")
+TEXTO_EXCLUIDO = re.compile(r"\bno\s+particip|rechaz|declin|no me interesa|no ofertar", re.IGNORECASE)
 # Enlaces que nunca son el del proceso
 EXCLUIR_LINK = re.compile(
     r"password|contrase|unsubscribe|desuscrib|wherexpay|wherex-pay|/pay\b|facebook|linkedin|twitter|"
@@ -318,10 +324,12 @@ def link_proceso(buzon: str, mensaje_id: str) -> str:
 
     candidatos = [(desenvolver_link(href), texto) for href, texto in lector.enlaces
                   if href.lower().startswith("http")]
-    candidatos = [(url, texto) for url, texto in candidatos if not EXCLUIR_LINK.search(url)]
-    for url, texto in candidatos:
-        if TEXTO_BOTON.search(texto):
-            return url
+    candidatos = [(url, texto) for url, texto in candidatos
+                  if not EXCLUIR_LINK.search(url) and not TEXTO_EXCLUIDO.search(texto)]
+    for patron in TEXTOS_BOTON:
+        for url, texto in candidatos:
+            if patron.search(texto):
+                return url
     for url, _ in candidatos:
         if LINK_PLATAFORMA.search(url):
             return url

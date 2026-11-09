@@ -12,6 +12,10 @@
 - Telecomunicaciones: CCTV, routers, switches, equipos TI, racks.
 - Instrumentos de medición: multímetros, termómetros, osciloscopios.
 - Descansos para motores y molinos, nuevos o reacondicionados.
+- Electrodomésticos: hervidores, microondas, refrigeradores, aspiradoras, estufas, ventiladores, cafeteras, etc.
+
+## Productos que SELEC NO cotiza
+- Rodamientos, retenes y correas (de transmisión o transportadoras), aunque sean de uso industrial.
 
 ## Marcas frecuentes
 ABB, Siemens, Telemecanique, Legrand, IFM, Hirschmann, Finder, Hikvision, Honeywell, SKF, Festo, Mean Well, Multilin, entre otras.

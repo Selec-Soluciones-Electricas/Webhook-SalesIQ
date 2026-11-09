@@ -20,6 +20,9 @@ Variables de entorno (opcionales):
   HISTORIAL_MIN_VENTAS           veces que se tiene que haber vendido un tipo para contar (por defecto 3);
                                  evita que una compra aislada (ej. una silla) abra todo un rubro
   HISTORIAL_EXCLUIR              tipos que nunca cuentan, separados por coma (se suman a los de abajo)
+  RUBRO_EXCLUIR                  productos que SELEC NO cotiza, separados por coma (se suman a
+                                 PRODUCTOS_NO_RUBRO): esos ítems se quitan de la licitación y, si
+                                 son todos, el correo queda fuera del rubro
 """
 
 import json
@@ -51,7 +54,12 @@ TIPOS_EXCLUIDOS = {
     "silla", "mesa", "escritorio", "mueble", "sillon", "estante", "repisa", "colchon", "cama",
     "alimento", "cafe", "agua", "bebida", "galleta", "papel", "cuaderno", "lapiz", "archivador",
     "uniforme", "polera", "pantalon", "chaqueta", "zapato", "zapatilla",
+    "rodamiento", "reten", "correa",
 }
+
+# Productos que SELEC decidió NO cotizar aunque sean industriales (definido con el equipo).
+# Se comparan con las primeras palabras significativas de cada ítem, sin tildes ni plural.
+PRODUCTOS_NO_RUBRO = {"rodamiento", "reten", "correa"}
 # Si el ítem es un servicio, no se compara con el historial
 PATRON_SERVICIO = re.compile(
     r"\b(mantencion|mantenimiento|servicio|instalacion|reparacion|arriendo|capacitacion|asesoria|"
@@ -195,6 +203,51 @@ def aplicar_historial(analisis: dict) -> dict:
             f"Del rubro por historial de ventas: '{descripcion}' es similar a '{ejemplo}', ya vendido por SELEC."
         )[:500]
         analisis["por_historial"] = True
+    return analisis
+
+
+# =========================================================
+# PRODUCTOS QUE SELEC NO COTIZA (rodamientos, retenes, correas)
+# =========================================================
+
+def productos_no_rubro() -> set[str]:
+    extra = {_singular(_normalizar(t).strip()) for t in os.getenv("RUBRO_EXCLUIR", "").split(",") if t.strip()}
+    return PRODUCTOS_NO_RUBRO | extra
+
+
+def item_excluido(texto: str) -> str | None:
+    """
+    Tipo excluido si el ítem ES uno de esos productos (ej. "RODAMIENTO SKF 6205", "Kit de retenes"),
+    mirando las 3 primeras palabras significativas del nombre (lo que va antes de "con", "para",
+    "sin"...). No excluye un equipo que solo los menciona (ej. "Motor 5 HP con rodamientos SKF").
+    """
+    excluidos = productos_no_rubro()
+    # Solo el nombre del producto: lo que va antes de "con", "para", "sin", "incluye"
+    nombre = re.split(r"\b(?:con|para|sin|incluye|incluido|incl)\b", _normalizar(texto))[0]
+    palabras = [_singular(p) for p in nombre.split()
+                if p.isalpha() and len(p) >= 3 and p not in NO_SIGNIFICATIVAS][:3]
+    return next((p for p in palabras if p in excluidos), None)
+
+
+def aplicar_exclusiones(analisis: dict) -> dict:
+    """
+    Marca los ítems que SELEC no cotiza (analisis["items_excluidos"]). Si TODOS los ítems lo son,
+    el correo queda fuera del rubro aunque Claude o el historial digan lo contrario.
+    """
+    items = analisis.get("items") or []
+    excluidos = []
+    for i, it in enumerate(items):
+        tipo = item_excluido(f"{it.get('descripcion') or ''} {it.get('marca_modelo') or ''}")
+        if tipo:
+            excluidos.append(i)
+    analisis["items_excluidos"] = excluidos
+    if items and len(excluidos) == len(items):
+        tipos = sorted({item_excluido(items[i].get("descripcion") or "") or "" for i in excluidos} - {""})
+        analisis["relevante_selec"] = False
+        analisis["motivo_relevancia"] = (
+            f"Fuera del rubro: SELEC no cotiza {', '.join(tipos) or 'estos productos'} (definido por el equipo)."
+        )[:500]
+        analisis["por_exclusion"] = True
     return analisis
 
 

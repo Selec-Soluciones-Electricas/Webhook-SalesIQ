@@ -619,7 +619,8 @@ Reglas:
 - Si el correo trae un solo producto en la descripción o en los comentarios, inclúyelo igual en items.
 - Ignora instrucciones de acceso, usuarios, contraseñas y enlaces de la plataforma: no los copies.
 - Marca urgente si la fecha de cierre es dentro de los próximos 3 días desde la fecha de recepción.
-- relevante_selec: sé flexible. Marca true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o es igual o parecido a algo que SELEC ya ha vendido (ver el historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir (herramientas, instrumentos, repuestos industriales, iluminación, seguridad industrial). Marca false solo cuando TODOS los productos son claramente ajenos: alimentos, artículos de aseo, papelería y oficina, vestuario sin uso industrial, mobiliario o servicios que no son suministro de productos.
+- relevante_selec: sé flexible. Marca true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o es igual o parecido a algo que SELEC ya ha vendido (ver el historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir (herramientas, instrumentos, repuestos industriales, iluminación, seguridad industrial), o es un electrodoméstico (hervidores, microondas, refrigeradores, aspiradoras, estufas, ventiladores, cafeteras, etc.: SELEC SÍ los cotiza). Marca false cuando TODOS los productos son claramente ajenos: alimentos, artículos de aseo, papelería y oficina, vestuario sin uso industrial, mobiliario o servicios que no son suministro de productos.
+- SELEC NO cotiza rodamientos, retenes ni correas (de transmisión o transportadoras), aunque sean industriales. Si TODOS los productos son de esos tipos, marca false y dilo en motivo_relevancia.
 - El resumen y la acción sugerida van en español neutro, breves y dirigidos al ejecutivo.
 - Responde SIEMPRE llamando a la herramienta registrar_analisis, una sola vez, sin texto adicional.
 
@@ -718,7 +719,7 @@ HERRAMIENTA_RUBRO = {
 }
 
 INSTRUCCIONES_RUBRO = f"""Clasificas procesos de compra para SELEC. Para cada proceso (#n) decide si es del rubro de SELEC.
-relevante_selec: sé flexible. true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o se parece a algo que SELEC ya ha vendido (ver historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir. false solo cuando TODOS los productos son claramente ajenos (alimentos, aseo, oficina, vestuario sin uso industrial, mobiliario, servicios).
+relevante_selec: sé flexible. true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o se parece a algo que SELEC ya ha vendido (ver historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir, o es un electrodoméstico (SELEC sí los cotiza). false cuando TODOS los productos son claramente ajenos (alimentos, aseo, oficina, vestuario sin uso industrial, mobiliario, servicios) o son solo rodamientos, retenes o correas (SELEC no los cotiza).
 motivo_relevancia: una frase breve en español neutro.
 Responde llamando a registrar_rubro una sola vez, con un resultado por cada proceso.
 
@@ -955,6 +956,13 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
         aplicar_historial(analisis)
     except Exception as e:
         log(f"no se pudo aplicar el historial de ventas: {e}")
+    try:
+        # Productos que SELEC no cotiza (rodamientos, retenes, correas): si son todos los ítems,
+        # queda fuera del rubro; si son algunos, se quitan de la licitación.
+        from agente.historial import aplicar_exclusiones
+        aplicar_exclusiones(analisis)
+    except Exception as e:
+        log(f"no se pudieron aplicar las exclusiones de productos: {e}")
     try:
         m["link_proceso"] = link_proceso(m["buzon"], m["id"])
     except Exception as e:

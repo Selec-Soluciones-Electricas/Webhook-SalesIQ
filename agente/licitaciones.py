@@ -417,8 +417,14 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         cierre = (ahora + timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
         avisos.append("el correo no indica fecha de cierre: se puso una provisoria (+3 días)")
 
+    # Ítems que SELEC no cotiza (rodamientos, retenes, correas): no van a la licitación
+    excluidos = set(analisis.get("items_excluidos") or [])
+    items = [it for i, it in enumerate(analisis.get("items") or []) if i not in excluidos]
+    if excluidos:
+        avisos.append(f"{len(excluidos)} ítem(s) no se incluyeron (rodamientos, retenes o correas)")
+
     productos = []
-    for it in analisis.get("items") or []:
+    for it in items:
         descripcion = " ".join(x for x in [it.get("descripcion"), f"(SKU comprador {it['codigo']})" if it.get("codigo") else ""] if x)
         fila = {
             "Codigo_Producto": _env("GEN_ID", "4710567000001934003"),
@@ -457,7 +463,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Importe": 1,
         "Fuente_de_Posible_cliente": "Portales",
         "Lugar_de_entrega": lugar,
-        "Notas": notas_productos(analisis.get("items"), m.get("link_proceso", "")),
+        "Notas": notas_productos(items, m.get("link_proceso", "")),
         "Listado_de_productos": productos,
     }
 

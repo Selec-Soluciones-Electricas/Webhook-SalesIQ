@@ -42,6 +42,7 @@ import re
 import time
 import unicodedata
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 
 from agente.correo import CHILE_TZ, _pedir, log
@@ -375,8 +376,10 @@ def notas_productos(items, link=""):
     salto = os.getenv("NOTAS_SALTO_LINEA", "<br>")
     texto = salto.join(lineas)
     if link:
-        url = html.escape(link, quote=True)
-        texto += f'{salto}{salto}Link del proceso: <a href="{url}" target="_blank">{url}</a>'
+        # Creator descarta el href si trae caracteres como "*" (ej. el hash de Senegocia):
+        # en el href van codificados (%2A); el texto visible queda igual.
+        href = html.escape(quote(link, safe=":/?#[]@!$&'()+,;=%-._~"), quote=True)
+        texto += f'{salto}{salto}Link del proceso: <a href="{href}" target="_blank">{html.escape(link)}</a>'
     return texto
 
 

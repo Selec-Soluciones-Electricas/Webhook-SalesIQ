@@ -280,16 +280,29 @@ EXCLUIR_LINK = re.compile(
 LINK_PLATAFORMA = re.compile(r"purchase-bids|wherex\.com/secured|ariba\.com|senegocia", re.IGNORECASE)
 
 
+# URLs que identifican directamente el detalle del proceso (aunque el botón no tenga texto)
+URL_DETALLE = re.compile(r"getHashAction=Summary", re.IGNORECASE)
+# Acciones de Senegocia que no son ver ni ofertar (ej. "No participaré"): nunca se usan
+URL_ACCION_EXCLUIDA = re.compile(r"getHashAction=(?!Summary|Offer|Quote|Bid)", re.IGNORECASE)
+
+
 class _Enlaces(HTMLParser):
-    """Junta (href, texto) de cada <a> del correo."""
+    """
+    Junta (href, texto) de cada <a> del correo. El texto incluye el "title" del enlace
+    y el "alt" de las imágenes dentro del enlace: algunos portales (Senegocia) dibujan
+    los botones como imágenes, y sin esto el botón queda sin texto.
+    """
 
     def __init__(self):
         super().__init__()
         self.enlaces, self._href, self._texto = [], None, []
 
     def handle_starttag(self, tag, attrs):
+        atributos = dict(attrs)
         if tag == "a":
-            self._href, self._texto = dict(attrs).get("href"), []
+            self._href, self._texto = atributos.get("href"), [atributos.get("title") or ""]
+        elif tag == "img" and self._href is not None:
+            self._texto.append(" " + (atributos.get("alt") or atributos.get("title") or "") + " ")
 
     def handle_data(self, data):
         if self._href is not None:
@@ -325,14 +338,24 @@ def link_proceso(buzon: str, mensaje_id: str) -> str:
     candidatos = [(desenvolver_link(href), texto) for href, texto in lector.enlaces
                   if href.lower().startswith("http")]
     candidatos = [(url, texto) for url, texto in candidatos
-                  if not EXCLUIR_LINK.search(url) and not TEXTO_EXCLUIDO.search(texto)]
+                  if not EXCLUIR_LINK.search(url) and not TEXTO_EXCLUIDO.search(texto)
+                  and not URL_ACCION_EXCLUIDA.search(url)]
+    # 1) URL que ya dice que es el detalle (Senegocia "Ver cotización completa")
+    for url, _ in candidatos:
+        if URL_DETALLE.search(url):
+            return url
+    # 2) Por el texto del botón, en orden de preferencia
     for patron in TEXTOS_BOTON:
         for url, texto in candidatos:
             if patron.search(texto):
                 return url
-    for url, _ in candidatos:
-        if LINK_PLATAFORMA.search(url):
-            return url
+    # 3) Enlaces de la plataforma: el más específico (la portada del sitio no sirve)
+    def especifico(url: str) -> bool:
+        partes = urlparse(url)
+        return bool(partes.path.strip("/") or partes.query or partes.fragment.strip("/"))
+    plataforma = [url for url, _ in candidatos if LINK_PLATAFORMA.search(url) and especifico(url)]
+    if plataforma:
+        return max(plataforma, key=len)
     return ""
 
 

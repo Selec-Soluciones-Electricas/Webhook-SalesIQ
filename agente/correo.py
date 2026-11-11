@@ -359,6 +359,19 @@ def link_proceso(buzon: str, mensaje_id: str) -> str:
     return ""
 
 
+def leer_mime(buzon: str, mensaje_id: str) -> bytes:
+    """Correo completo en formato MIME (.eml), tal como lo descarga Outlook."""
+    ruta = f"{GRAPH}/users/{buzon}/messages/{mensaje_id}/$value"
+    for intento in range(1, 4):
+        resp = _pedir("GET", ruta, headers={"Authorization": f"Bearer {_access_token()}"})
+        if resp.status_code not in REINTENTAR_GRAPH or intento == 3:
+            break
+        time.sleep(3 * intento)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Graph MIME -> {resp.status_code}: {resp.text[:200]}")
+    return resp.content
+
+
 def leer_pdfs(buzon: str, mensaje_id: str) -> list[dict]:
     datos = _graph("GET", f"/users/{buzon}/messages/{mensaje_id}/attachments")
     pdfs = []

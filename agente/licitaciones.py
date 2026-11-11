@@ -31,6 +31,12 @@ Variables de entorno:
   CREATOR_CAMPO_NUMERO_LIC (opcional) se detecta leyendo un registro del reporte
   CREATOR_LOOKUP_NUMERO_LIC      (opcional) link name del lookup en Licitación; si no está,
       se busca por la etiqueta "Numero de Licitacion".
+  CORREO_ADJUNTAR_EML  remitentes cuyo correo se adjunta como .eml en el campo "Archivos" de la
+      Licitación (por defecto global.komatsu,enami.cl,corrupac.cl,tgn.cl). Vacío = no adjunta.
+  CREATOR_CAMPO_ARCHIVOS=Archivos   EML_MAX_MB=5
+      Si el correo pesa más de EML_MAX_MB, se adjunta una versión sin los adjuntos; si aun así
+      pesa más, no se adjunta. En ningún caso se deja de crear la licitación.
+      Requiere el scope ZohoCreator.report.CREATE en el token de Creator.
   LICITACION_ASIGNADO=Luis Hurtado
   LUGAR_ENTREGA_DEFECTO=Santiago
   GEN_ID=4710567000001934003
@@ -42,6 +48,9 @@ import re
 import time
 import unicodedata
 from datetime import datetime, timedelta
+from email import policy
+from email.message import EmailMessage
+from email.parser import BytesParser
 from urllib.parse import quote
 
 
@@ -384,6 +393,74 @@ def notas_productos(items, link=""):
 
 
 # =========================================================
+# CORREO ORIGINAL ADJUNTO (.eml) PARA CLIENTES DIRECTOS
+# =========================================================
+
+EML_DEFECTO = "global.komatsu,enami.cl,corrupac.cl,tgn.cl"
+
+
+def adjunta_eml(remitente: str) -> bool:
+    """¿Este remitente está en CORREO_ADJUNTAR_EML (Komatsu, ENAMI, Corrupac, TGN)?"""
+    dominio = (remitente or "").lower().split("@")[-1]
+    for regla in os.getenv("CORREO_ADJUNTAR_EML", EML_DEFECTO).lower().split(","):
+        regla = regla.strip().lstrip("@")
+        if regla and ("@" in regla and remitente.lower() == regla
+                      or dominio == regla or dominio.endswith("." + regla)):
+            return True
+    return False
+
+
+def eml_sin_adjuntos(mime: bytes) -> bytes:
+    """Versión liviana del correo: mismos encabezados y texto, sin los archivos adjuntos."""
+    original = BytesParser(policy=policy.default).parsebytes(mime)
+    nombres = [p.get_filename() or "sin nombre" for p in original.iter_attachments()]
+    liviano = EmailMessage()
+    for encabezado in ("From", "To", "Cc", "Date", "Subject", "Message-ID"):
+        if original[encabezado]:
+            liviano[encabezado] = str(original[encabezado])
+    aviso = ("[Correo adjuntado sin sus archivos por superar el tamaño máximo. "
+             f"Adjuntos originales: {', '.join(nombres) or 'ninguno'}]")
+    texto = original.get_body(preferencelist=("plain",))
+    html_cuerpo = original.get_body(preferencelist=("html",))
+    liviano.set_content(aviso + "\n\n" + (texto.get_content() if texto else ""))
+    if html_cuerpo:
+        liviano.add_alternative(f"<p><i>{html.escape(aviso)}</i></p>" + html_cuerpo.get_content(), subtype="html")
+    return liviano.as_bytes()
+
+
+def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
+    """
+    Descarga el correo (.eml) y lo sube al campo "Archivos" de la Licitación.
+    Devuelve un texto con el resultado; nunca lanza excepción (la licitación ya está creada).
+    """
+    from agente.correo import leer_mime
+
+    maximo = float(os.getenv("EML_MAX_MB", "5")) * 1024 * 1024
+    try:
+        mime = leer_mime(m["buzon"], m["id"])
+        nombre = re.sub(r"[^\w.-]+", "_", f"{id_proceso or 'correo'}")[:80] + ".eml"
+        if len(mime) > maximo:
+            mime = eml_sin_adjuntos(mime)
+            nombre = nombre[:-4] + "_sin_adjuntos.eml"
+            if len(mime) > maximo:
+                return f"correo .eml no adjuntado: pesa {len(mime) / 1048576:.1f} MB aun sin adjuntos"
+        url = (f"https://www.zohoapis.com/creator/v2.1/data/{os.getenv('CREATOR_OWNER', 'selecspa')}/"
+               f"{os.getenv('CREATOR_APP', 'selec')}/report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/"
+               f"{lic_id}/{os.getenv('CREATOR_CAMPO_ARCHIVOS', 'Archivos')}/upload")
+        resp = _pedir("POST", url, intentos=1, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"},
+                      files={"file": (nombre, mime, "message/rfc822")})
+        try:
+            cuerpo = resp.json()
+        except ValueError:
+            cuerpo = {"raw": resp.text[:200]}
+        if resp.status_code == 200 and cuerpo.get("code") == 3000:
+            return f"correo adjuntado como {nombre} ({len(mime) / 1048576:.2f} MB)"
+        return f"correo .eml no adjuntado: Creator {resp.status_code} {str(cuerpo)[:200]}"
+    except Exception as e:
+        return f"correo .eml no adjuntado: {type(e).__name__}: {str(e)[:200]}"
+
+
+# =========================================================
 # CREACIÓN
 # =========================================================
 
@@ -485,6 +562,13 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     if status in (200, 201) and resp.get("code") == 3000:
         lic_id = (resp.get("data") or {}).get("ID")
         log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre})")
+        # Clientes directos (Komatsu, ENAMI, Corrupac, TGN): se adjunta el correo original (.eml)
+        if lic_id and adjunta_eml(m.get("remitente", "")):
+            resultado_eml = adjuntar_correo(m, lic_id, id_proceso)
+            if resultado_eml.startswith("correo adjuntado"):
+                log(f"{id_proceso}: {resultado_eml}")
+            else:
+                avisos.append(resultado_eml)
         for aviso in avisos:
             log(f"⚠ {id_proceso}: {aviso}")
         return {"creada": True, "id": lic_id, "cliente": cliente_nombre, "avisos": avisos}

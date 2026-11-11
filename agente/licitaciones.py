@@ -36,7 +36,8 @@ Variables de entorno:
   CREATOR_CAMPO_ARCHIVOS=Archivos   EML_MAX_MB=5
       Si el correo pesa más de EML_MAX_MB, se adjunta una versión sin los adjuntos; si aun así
       pesa más, no se adjunta. En ningún caso se deja de crear la licitación.
-      Requiere el scope ZohoCreator.report.CREATE en el token de Creator.
+      Requiere el scope ZohoCreator.report.CREATE en el token de Creator. La subida usa
+      skip_workflow=["form_workflow"]: sin eso, el "Al validar" de Licitación la rechaza.
   LICITACION_ASIGNADO=Luis Hurtado
   LUGAR_ENTREGA_DEFECTO=Santiago
   GEN_ID=4710567000001934003
@@ -433,7 +434,11 @@ def _subir_archivo(lic_id, nombre: str, contenido: bytes, tipo: str):
     url = (f"https://www.zohoapis.com/creator/v2.1/data/{os.getenv('CREATOR_OWNER', 'selecspa')}/"
            f"{os.getenv('CREATOR_APP', 'selec')}/report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/"
            f"{lic_id}/{os.getenv('CREATOR_CAMPO_ARCHIVOS', 'Archivos')}/upload")
+    # skip_workflow: la validación "Al validar" del formulario Licitación también se aplica a la
+    # subida de archivos y responde error 3700 (aunque el archivo igual queda guardado).
+    # Se salta solo para esta subida.
     resp = _pedir("POST", url, intentos=1, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"},
+                  params={"skip_workflow": '["form_workflow"]'},
                   files={"file": (nombre, contenido, tipo)})
     try:
         cuerpo = resp.json()
@@ -442,20 +447,11 @@ def _subir_archivo(lic_id, nombre: str, contenido: bytes, tipo: str):
     return resp.status_code == 200 and cuerpo.get("code") == 3000, f"Creator {resp.status_code} {str(cuerpo)[:200]}"
 
 
-def _zip_con(nombre: str, contenido: bytes) -> bytes:
-    import io
-    import zipfile
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr(nombre, contenido)
-    return buffer.getvalue()
-
-
 def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
     """
     Descarga el correo (.eml) y lo sube al campo "Archivos" de la Licitación.
-    Creator a veces rechaza el tipo "message/rfc822" (error 3700): se prueba también como
-    archivo genérico y, si aun así no lo acepta, como .zip con el .eml adentro.
+    Un solo intento: si Creator responde error, el archivo puede haber quedado guardado igual
+    (pasaba con la validación del formulario), así que reintentar lo duplicaría.
     Devuelve un texto con el resultado; nunca lanza excepción (la licitación ya está creada).
     """
     from agente.correo import leer_mime
@@ -469,21 +465,10 @@ def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
             nombre = nombre[:-4] + "_sin_adjuntos.eml"
             if len(mime) > maximo:
                 return f"correo .eml no adjuntado: pesa {len(mime) / 1048576:.1f} MB aun sin adjuntos"
-
-        intentos = [
-            (nombre, mime, "message/rfc822"),
-            (nombre, mime, "application/octet-stream"),
-            (nombre + ".zip", _zip_con(nombre, mime), "application/zip"),
-        ]
-        errores = []
-        for archivo, contenido, tipo in intentos:
-            ok, detalle = _subir_archivo(lic_id, archivo, contenido, tipo)
-            if ok:
-                return f"correo adjuntado como {archivo} ({len(contenido) / 1048576:.2f} MB, {tipo})"
-            errores.append(f"{tipo}: {detalle}")
-            if " 401 " in f" {detalle} " or "oauthscope" in detalle.lower():
-                break  # falta permiso en el token: no sirve probar otro formato
-        return "correo .eml no adjuntado: " + " | ".join(errores)[:600]
+        ok, detalle = _subir_archivo(lic_id, nombre, mime, "message/rfc822")
+        if ok:
+            return f"correo adjuntado como {nombre} ({len(mime) / 1048576:.2f} MB)"
+        return f"correo .eml no adjuntado (revisar si quedó en Archivos): {detalle}"
     except Exception as e:
         return f"correo .eml no adjuntado: {type(e).__name__}: {str(e)[:200]}"
 

@@ -14,7 +14,9 @@ Reglas (definidas con el equipo):
     Si no existe en el formulario de números, se crea.
   - Notas: los productos solicitados, uno por línea, y al final el link que abre el proceso
     en la plataforma (el botón "Más detalles aquí" / "Click Here" del correo).
-  - Asignado a / Propietario: Luis Hurtado.  Cantidad: 1.  Productos: GENERICO.
+  - Propietario: LICITACION_PROPIETARIO (ej. "Agente IA").  Asignado a: por tipo de portal, con
+    cupo diario de 60 productos por persona (ver "ASIGNACIÓN POR TIPO"); sin
+    ASIGNACION_POR_TIPO=on queda LICITACION_ASIGNADO.  Cantidad: 1.  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
 Variables de entorno:
@@ -44,6 +46,7 @@ Variables de entorno:
   LICITACION_PROPIETARIO=Agente IA      (opcional, campo "Propietario de negocio": el alias del agente,
       para medir sus licitaciones. Tiene que existir como opción en Creator. Sin la variable,
       el propietario es el mismo que LICITACION_ASIGNADO)
+  ASIGNACION_POR_TIPO=on  ASIGNACION_INICIALES  ASIGNACION_MAX=60  ASIGNACION_REGLAS (ver abajo)
   LUGAR_ENTREGA_DEFECTO=Santiago
   GEN_ID=4710567000001934003
 """
@@ -581,6 +584,162 @@ def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
 
 
 # =========================================================
+# ASIGNACIÓN POR TIPO (Portal) CON CUPO DIARIO DE 60 PRODUCTOS
+# =========================================================
+#
+# Regla definida con el equipo (pizarra). Cada licitación va COMPLETA a una sola persona:
+#   Codelco    -> MR hasta 60 productos en el día; luego rotando por licitación: PC, JP, JG;
+#                 si todos llegan a 60: CS
+#   Wherex     -> JG; luego PC, JP; si todos llegan a 60: CS
+#   Senegocia  -> PC; luego JP, JG, MR
+#   Industrias -> MR; luego JG, JP, PC   (Komatsu, TGN, Corrupac, ENAMI)
+#
+# - El cupo es por persona, por portal y por día (hora Chile): a las 00:00 todos parten de 0.
+# - Una persona recibe licitaciones mientras lleve menos de 60 productos ese día en ese portal.
+#   La licitación que la hace pasar de 60 igual se le asigna completa (ej. lleva 50 y llega
+#   una de 20: queda con 70) y desde ahí ya no recibe más ese día.
+# - "Rotando por licitación": entre los que tienen cupo, la recibe el que lleva menos
+#   licitaciones hoy (empate: el orden de la regla), así queda PC, JP, JG, PC...
+# - Solo cuentan las licitaciones que creó el agente (Propietario = LICITACION_PROPIETARIO).
+#
+# Variables:
+#   ASIGNACION_POR_TIPO=on   activa la regla (sin ella, todo va a LICITACION_ASIGNADO)
+#   ASIGNACION_INICIALES     quién es cada inicial, ej. "MR=Maria Rengifo,PC=Patricio Cifuentes,..."
+#                            (para pruebas: "MR=Maikel Meriño,PC=Deivys Almario,JP=Elian Barra,...")
+#   ASIGNACION_MAX=60        productos por persona, por portal y por día
+#   ASIGNACION_REGLAS        (opcional) JSON para cambiar la regla sin tocar el código
+
+INICIALES_DEFECTO = ("MR=Maria Rengifo,PC=Patricio Cifuentes,JP=Juan Puerta,"
+                     "JG=Joaquin Gonzalez,CS=Carolina Salazar")
+REGLAS_DEFECTO = {
+    "Codelco": {"primero": "MR", "resto": ["PC", "JP", "JG"], "respaldo": ["CS"]},
+    "Wherex": {"primero": "JG", "resto": ["PC", "JP"], "respaldo": ["CS"]},
+    "Senegocia": {"primero": "PC", "resto": ["JP", "JG", "MR"], "respaldo": []},
+    "Industrias": {"primero": "MR", "resto": ["JG", "JP", "PC"], "respaldo": []},
+}
+
+# Respaldo en memoria por si Creator no responde: {(fecha, portal): {persona: {...}}}
+_carga_memoria = {}
+
+
+def _iniciales():
+    texto = os.getenv("ASIGNACION_INICIALES") or INICIALES_DEFECTO
+    return {k.strip().upper(): v.strip() for k, v in
+            (par.split("=", 1) for par in texto.split(",") if "=" in par)}
+
+
+def _reglas():
+    if os.getenv("ASIGNACION_REGLAS"):
+        import json
+        try:
+            return json.loads(os.environ["ASIGNACION_REGLAS"])
+        except ValueError:
+            log("ASIGNACION_REGLAS no es un JSON válido: se usa la regla por defecto")
+    return REGLAS_DEFECTO
+
+
+def _valor(campo):
+    """Creator devuelve a veces el texto y a veces {"display_value": ...}."""
+    if isinstance(campo, dict):
+        return campo.get("display_value") or campo.get("zc_display_value") or ""
+    return campo or ""
+
+
+def carga_del_dia(portal):
+    """
+    Productos y licitaciones que el agente asignó HOY en este portal, por persona:
+    {"Maikel Meriño": {"productos": 45, "licitaciones": 2}, ...}, más la fuente usada.
+
+    Se lee de Creator (sobrevive a reinicios y despliegues). Si Creator falla o el reporte
+    no trae los campos necesarios, se usa lo que este proceso lleva contado en memoria.
+    """
+    hoy = datetime.now(CHILE_TZ)
+    clave = (hoy.date().isoformat(), portal)
+    propietario = os.getenv("LICITACION_PROPIETARIO") or os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
+    desde = f"{hoy.day:02d}-{MESES[hoy.month - 1]}-{hoy.year} 00:00:00"
+    criterio = (f'(Portal == "{_esc(portal)}" && Propietario_de_negocio == "{_esc(propietario)}"'
+                f' && Added_Time >= "{desde}")')
+    try:
+        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
+                                 params={"criteria": criterio})
+        if datos.get("code") in (3100, 9280):
+            return {}, "creator"
+        if status != 200 or datos.get("code") not in (None, 3000):
+            raise RuntimeError(f"Creator {status}: {str(datos)[:200]}")
+        carga = {}
+        for f in datos.get("data") or []:
+            if "Asignado_a" not in f or "Listado_de_productos" not in f:
+                raise RuntimeError("el reporte no trae Asignado_a o Listado_de_productos")
+            persona = _valor(f.get("Asignado_a"))
+            c = carga.setdefault(persona, {"productos": 0, "licitaciones": 0})
+            c["productos"] += len(f.get("Listado_de_productos") or [])
+            c["licitaciones"] += 1
+        return carga, "creator"
+    except Exception as e:
+        log(f"carga del día ({portal}) desde Creator falló, se usa la memoria: {str(e)[:200]}")
+        return _carga_memoria.get(clave, {}), "memoria"
+
+
+def _sumar_carga(portal, persona, productos):
+    clave = (datetime.now(CHILE_TZ).date().isoformat(), portal)
+    for k in list(_carga_memoria):
+        if k[0] != clave[0]:
+            del _carga_memoria[k]  # días anteriores
+    c = _carga_memoria.setdefault(clave, {}).setdefault(persona, {"productos": 0, "licitaciones": 0})
+    c["productos"] += productos
+    c["licitaciones"] += 1
+
+
+def elegir_asignado(portal, carga=None):
+    """
+    A quién se asigna la próxima licitación de este portal (completa, sin dividir).
+    Devuelve (persona, motivo).
+    """
+    defecto = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
+    if os.getenv("ASIGNACION_POR_TIPO", "off").lower() != "on":
+        return defecto, "ASIGNACION_POR_TIPO desactivada"
+    regla = _reglas().get(portal)
+    if not regla:
+        return defecto, f"sin regla para el portal {portal}"
+    if carga is None:
+        carga, _ = carga_del_dia(portal)
+
+    nombres = _iniciales()
+    def nombre(ini):
+        return nombres.get(str(ini).upper(), ini)
+
+    maximo = int(os.getenv("ASIGNACION_MAX", "60"))
+    def productos(p):
+        return (carga.get(p) or {}).get("productos", 0)
+    def licitaciones(p):
+        return (carga.get(p) or {}).get("licitaciones", 0)
+
+    primero = nombre(regla["primero"])
+    resto = list(dict.fromkeys(nombre(x) for x in regla.get("resto") or []))
+    respaldo = list(dict.fromkeys(nombre(x) for x in regla.get("respaldo") or []))
+
+    if productos(primero) < maximo:
+        return primero, f"primero de {portal} ({productos(primero)}/{maximo} hoy)"
+
+    def rotar(grupo):
+        # El que lleva menos licitaciones hoy; empate -> orden de la regla
+        return min(grupo, key=lambda p: (licitaciones(p), grupo.index(p)))
+
+    con_cupo = [p for p in resto if productos(p) < maximo]
+    if con_cupo:
+        p = rotar(con_cupo)
+        return p, f"{primero} completó {maximo}: rotación ({productos(p)}/{maximo} hoy)"
+    con_cupo = [p for p in respaldo if productos(p) < maximo]
+    if con_cupo:
+        p = rotar(con_cupo)
+        return p, f"todos completaron {maximo}: respaldo ({productos(p)}/{maximo} hoy)"
+    # Todos llenos y sin respaldo con cupo: se sigue rotando entre los demás
+    grupo = resto or [primero]
+    p = rotar(grupo)
+    return p, f"todos completaron {maximo}: se sigue rotando"
+
+
+# =========================================================
 # CREACIÓN
 # =========================================================
 
@@ -643,12 +802,14 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         avisos.append(f"lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
                       f"se puso '{lugar}'")
 
-    asignado = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
-    # Propietario: un alias del agente (ej. "Agente IA") para medir lo que crea el agente.
-    # Sin la variable, queda la misma persona asignada (comportamiento anterior).
-    propietario = os.getenv("LICITACION_PROPIETARIO") or asignado
     plataforma = analisis.get("plataforma") or ""
     portal = _portal(plataforma, m.get("remitente", ""))
+    # Asignado a: por tipo de portal, con cupo diario de 60 productos por persona
+    asignado, motivo_asignado = elegir_asignado(portal)
+    log(f"{id_proceso}: asignado a {asignado} ({len(productos)} productos; {motivo_asignado})")
+    # Propietario: un alias del agente (ej. "Agente IA") para medir lo que crea el agente.
+    # Sin la variable, queda la persona de LICITACION_ASIGNADO (comportamiento anterior).
+    propietario = os.getenv("LICITACION_PROPIETARIO") or os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
 
     datos = {
         "Propietario_de_negocio": propietario,
@@ -696,7 +857,9 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
                             json={"data": datos})
     if status in (200, 201) and resp.get("code") == 3000:
         lic_id = (resp.get("data") or {}).get("ID")
-        log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre})")
+        _sumar_carga(portal, asignado, len(productos))
+        log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre}, "
+            f"asignado {asignado}, {len(productos)} productos)")
         # Clientes directos (Komatsu, ENAMI, Corrupac, TGN): se adjunta el correo original (.eml)
         if lic_id and adjunta_eml(m.get("remitente", "")):
             resultado_eml = adjuntar_correo(m, lic_id, id_proceso)
@@ -706,5 +869,6 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
                 avisos.append(resultado_eml)
         for aviso in avisos:
             log(f"⚠ {id_proceso}: {aviso}")
-        return {"creada": True, "id": lic_id, "cliente": cliente_nombre, "avisos": avisos}
+        return {"creada": True, "id": lic_id, "cliente": cliente_nombre, "asignado": asignado,
+                "avisos": avisos}
     raise RuntimeError(f"Creator {status}: {str(resp)[:400]}")

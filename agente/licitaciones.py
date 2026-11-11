@@ -40,7 +40,10 @@ Variables de entorno:
       pesa más, no se adjunta. En ningún caso se deja de crear la licitación.
       Requiere el scope ZohoCreator.report.CREATE en el token de Creator. La subida usa
       skip_workflow=["form_workflow"]: sin eso, el "Al validar" de Licitación la rechaza.
-  LICITACION_ASIGNADO=Luis Hurtado
+  LICITACION_ASIGNADO=Luis Hurtado      (campo "Asignado a": quien trabaja la licitación)
+  LICITACION_PROPIETARIO=Agente IA      (opcional, campo "Propietario de negocio": el alias del agente,
+      para medir sus licitaciones. Tiene que existir como opción en Creator. Sin la variable,
+      el propietario es el mismo que LICITACION_ASIGNADO)
   LUGAR_ENTREGA_DEFECTO=Santiago
   GEN_ID=4710567000001934003
 """
@@ -641,11 +644,14 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
                       f"se puso '{lugar}'")
 
     asignado = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
+    # Propietario: un alias del agente (ej. "Agente IA") para medir lo que crea el agente.
+    # Sin la variable, queda la misma persona asignada (comportamiento anterior).
+    propietario = os.getenv("LICITACION_PROPIETARIO") or asignado
     plataforma = analisis.get("plataforma") or ""
     portal = _portal(plataforma, m.get("remitente", ""))
 
     datos = {
-        "Propietario_de_negocio": asignado,
+        "Propietario_de_negocio": propietario,
         "Asignado_a": asignado,
         "Portal": portal,
         "Nombre_de_Trato": f"{id_proceso} - {empresa or 'Comprador por definir'}"[:250],

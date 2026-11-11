@@ -428,9 +428,34 @@ def eml_sin_adjuntos(mime: bytes) -> bytes:
     return liviano.as_bytes()
 
 
+def _subir_archivo(lic_id, nombre: str, contenido: bytes, tipo: str):
+    """Sube un archivo al campo "Archivos" de la Licitación. Devuelve (ok, detalle)."""
+    url = (f"https://www.zohoapis.com/creator/v2.1/data/{os.getenv('CREATOR_OWNER', 'selecspa')}/"
+           f"{os.getenv('CREATOR_APP', 'selec')}/report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/"
+           f"{lic_id}/{os.getenv('CREATOR_CAMPO_ARCHIVOS', 'Archivos')}/upload")
+    resp = _pedir("POST", url, intentos=1, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"},
+                  files={"file": (nombre, contenido, tipo)})
+    try:
+        cuerpo = resp.json()
+    except ValueError:
+        cuerpo = {"raw": resp.text[:200]}
+    return resp.status_code == 200 and cuerpo.get("code") == 3000, f"Creator {resp.status_code} {str(cuerpo)[:200]}"
+
+
+def _zip_con(nombre: str, contenido: bytes) -> bytes:
+    import io
+    import zipfile
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(nombre, contenido)
+    return buffer.getvalue()
+
+
 def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
     """
     Descarga el correo (.eml) y lo sube al campo "Archivos" de la Licitación.
+    Creator a veces rechaza el tipo "message/rfc822" (error 3700): se prueba también como
+    archivo genérico y, si aun así no lo acepta, como .zip con el .eml adentro.
     Devuelve un texto con el resultado; nunca lanza excepción (la licitación ya está creada).
     """
     from agente.correo import leer_mime
@@ -438,24 +463,27 @@ def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
     maximo = float(os.getenv("EML_MAX_MB", "5")) * 1024 * 1024
     try:
         mime = leer_mime(m["buzon"], m["id"])
-        nombre = re.sub(r"[^\w.-]+", "_", f"{id_proceso or 'correo'}")[:80] + ".eml"
+        nombre = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{id_proceso or 'correo'}").strip("_")[:80] + ".eml"
         if len(mime) > maximo:
             mime = eml_sin_adjuntos(mime)
             nombre = nombre[:-4] + "_sin_adjuntos.eml"
             if len(mime) > maximo:
                 return f"correo .eml no adjuntado: pesa {len(mime) / 1048576:.1f} MB aun sin adjuntos"
-        url = (f"https://www.zohoapis.com/creator/v2.1/data/{os.getenv('CREATOR_OWNER', 'selecspa')}/"
-               f"{os.getenv('CREATOR_APP', 'selec')}/report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/"
-               f"{lic_id}/{os.getenv('CREATOR_CAMPO_ARCHIVOS', 'Archivos')}/upload")
-        resp = _pedir("POST", url, intentos=1, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"},
-                      files={"file": (nombre, mime, "message/rfc822")})
-        try:
-            cuerpo = resp.json()
-        except ValueError:
-            cuerpo = {"raw": resp.text[:200]}
-        if resp.status_code == 200 and cuerpo.get("code") == 3000:
-            return f"correo adjuntado como {nombre} ({len(mime) / 1048576:.2f} MB)"
-        return f"correo .eml no adjuntado: Creator {resp.status_code} {str(cuerpo)[:200]}"
+
+        intentos = [
+            (nombre, mime, "message/rfc822"),
+            (nombre, mime, "application/octet-stream"),
+            (nombre + ".zip", _zip_con(nombre, mime), "application/zip"),
+        ]
+        errores = []
+        for archivo, contenido, tipo in intentos:
+            ok, detalle = _subir_archivo(lic_id, archivo, contenido, tipo)
+            if ok:
+                return f"correo adjuntado como {archivo} ({len(contenido) / 1048576:.2f} MB, {tipo})"
+            errores.append(f"{tipo}: {detalle}")
+            if " 401 " in f" {detalle} " or "oauthscope" in detalle.lower():
+                break  # falta permiso en el token: no sirve probar otro formato
+        return "correo .eml no adjuntado: " + " | ".join(errores)[:600]
     except Exception as e:
         return f"correo .eml no adjuntado: {type(e).__name__}: {str(e)[:200]}"
 

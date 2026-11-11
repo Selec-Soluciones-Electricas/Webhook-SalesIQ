@@ -5,8 +5,10 @@ Reglas (definidas con el equipo):
   - Solo invitaciones / solicitudes de cotización, del rubro de SELEC y vigentes.
   - Una sola licitación por ID de proceso (va en el Nombre de Trato: "LIC-9643 - Empresa").
   - Cliente: el que coincida en Creator; si no, el cliente "Por Definir".
-  - Contacto CRM: el contacto del portal si está configurado (ej. Wherex → "Cliente Wherex");
-    si no, el contacto "Por Definir".
+  - Contacto CRM: portales → el contacto del portal si está configurado (ej. Wherex → "Cliente Wherex").
+    Clientes directos (Komatsu, ENAMI, ...) → la persona que firma el correo: se busca por correo en
+    CRM y, si no existe, se crea (CREAR_CONTACTOS_CRM=off lo evita). Si no, el contacto "Por Definir".
+  - Cliente: el de Creator más parecido al nombre de la empresa (no el primero que coincida).
   - Numero de Licitacion: Wherex/Senegocia → número del ID de proceso (LIC-4674 → 4674).
     Codelco (SAP Ariba) → número del evento (6001102591_SA01_... → 6001102591), no el Doc.
     Si no existe en el formulario de números, se crea.
@@ -235,18 +237,41 @@ def diagnostico_busqueda(id_proceso):
         return {"reporte": reporte, "id_proceso": id_proceso, "error": str(e)[:400]}
 
 
+def _parecido(a, b):
+    """0 a 1: 1 si son iguales; si uno contiene al otro, largo del menor / largo del mayor."""
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if a in b or b in a:
+        return min(len(a), len(b)) / max(len(a), len(b))
+    return 0.0
+
+
 def buscar_cliente(empresa):
+    """
+    Cliente de Creator más parecido al nombre de la empresa compradora.
+    Antes se tomaba el primero que contuviera el nombre: "Komatsu Cummins Chile Ltda."
+    quedaba como "KOMATSU CHILE S.A" aunque existiera "Komatsu Cummins". Ahora se comparan
+    todos los candidatos y gana el más parecido (igual > más largo en común).
+    """
     clave = _normalizar(empresa)
-    palabra = next((w for w in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{3,}", empresa or "")
-                    if not re.fullmatch(SUFIJOS, w.lower())), "")
-    if clave and palabra:
-        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_CLIENTES', 'Clientes_Report')}",
-                                 params={"criteria": f'(Nombre_de_Cuenta.contains("{_esc(palabra)}"))'})
-        if status == 200:
-            for f in datos.get("data") or []:
-                existente = _normalizar(f.get("Nombre_de_Cuenta") or "")
-                if existente and (existente == clave or existente in clave or clave in existente):
-                    return f["ID"], f.get("Nombre_de_Cuenta")
+    palabras = [w for w in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{3,}", empresa or "")
+                if not re.fullmatch(SUFIJOS, w.lower())]
+    if clave and palabras:
+        candidatos = {}
+        for palabra in palabras[:2]:  # las 2 primeras palabras: "Komatsu", "Cummins"
+            status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_CLIENTES', 'Clientes_Report')}",
+                                     params={"criteria": f'(Nombre_de_Cuenta.contains("{_esc(palabra)}"))'})
+            if status == 200:
+                for f in datos.get("data") or []:
+                    candidatos[f["ID"]] = f.get("Nombre_de_Cuenta") or ""
+        puntajes = sorted(((_parecido(clave, _normalizar(n)), n, i) for i, n in candidatos.items()), reverse=True)
+        if puntajes and puntajes[0][0] > 0:
+            mejor = puntajes[0]
+            if len(puntajes) > 1:
+                log(f"cliente '{empresa}': " + ", ".join(f"{n} ({p:.2f})" for p, n, _ in puntajes[:4]))
+            return mejor[2], mejor[1]
     return cliente_por_definir(), "Por Definir"
 
 
@@ -275,6 +300,85 @@ def contacto_crm(portal):
     """Contacto del portal (CRM_CONTACTO_WHEREX_ID, ...) o, si no hay, el contacto "Por Definir"."""
     clave = re.sub(r"[^A-Z0-9]", "_", (portal or "").upper())
     return os.getenv(f"CRM_CONTACTO_{clave}_ID") or _env("CRM_CONTACTO_POR_DEFINIR_ID")
+
+
+def _crm(metodo, ruta, **kwargs):
+    """Llamada a Zoho CRM con las credenciales del proyecto (ZOHO_CLIENT_ID / ZOHO_REFRESH_TOKEN)."""
+    from services.zoho_service import get_access_token
+    token = get_access_token()
+    if not token:
+        raise RuntimeError("sin token de Zoho CRM")
+    resp = _pedir(metodo, f"https://www.zohoapis.com/crm/v8/{ruta}",
+                  headers={"Authorization": f"Zoho-oauthtoken {token}"}, **kwargs)
+    if resp.status_code == 204:
+        return 204, {}
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, {"raw": resp.text[:200]}
+
+
+def _cuenta_crm(empresa):
+    """ID de la cuenta de CRM más parecida al nombre de la empresa, o None."""
+    clave = _normalizar(empresa)
+    palabra = next((w for w in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{3,}", empresa or "")
+                    if not re.fullmatch(SUFIJOS, w.lower())), "")
+    if not palabra:
+        return None
+    status, datos = _crm("GET", "Accounts/search", params={"word": palabra, "per_page": 50})
+    puntajes = sorted(((_parecido(clave, _normalizar(a.get("Account_Name"))), a["id"])
+                       for a in (datos.get("data") or []) if a.get("id")), reverse=True) if status == 200 else []
+    return puntajes[0][1] if puntajes and puntajes[0][0] > 0 else None
+
+
+def contacto_comprador(analisis, remitente, empresa):
+    """
+    Contacto de CRM de la persona que firma el correo (clientes directos: Komatsu, ENAMI, ...).
+    Lo busca por correo en CRM; si no existe, lo crea (con su cuenta si se encuentra).
+    Devuelve (id, nombre) o (None, motivo).
+    """
+    correo = (analisis.get("contacto_correo") or remitente or "").strip().lower()
+    if not re.fullmatch(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", correo):
+        return None, "sin correo del comprador"
+    nombre = " ".join((analisis.get("contacto_nombre") or "").split())
+    if not nombre:  # v.gonzalez@... -> "V Gonzalez"
+        nombre = " ".join(p.capitalize() for p in re.split(r"[._-]+", correo.split("@")[0]) if p)
+
+    status, datos = _crm("GET", "Contacts/search", params={"email": correo})
+    if status == 200 and (datos.get("data") or []):
+        c = datos["data"][0]
+        return c["id"], (c.get("Full_Name") or nombre)
+    if status not in (200, 204):
+        return None, f"no se pudo buscar el contacto en CRM ({status}): {str(datos)[:150]}"
+    if os.getenv("CREAR_CONTACTOS_CRM", "on").lower() == "off":
+        return None, f"el contacto {correo} no existe en CRM"
+
+    # Nombres chilenos: los 2 últimos son apellidos ("Vanessa Esther | Gonzalez Leon")
+    partes = nombre.split()
+    corte = len(partes) - 2 if len(partes) >= 4 else 1  # 3 palabras: "Vanessa | Gonzalez Leon"
+    registro = {
+        "First_Name": " ".join(partes[:corte])[:40] if len(partes) > 1 else "",
+        "Last_Name": (" ".join(partes[corte:]) if len(partes) > 1 else (partes[0] if partes else correo.split("@")[0]))[:80],
+        "Email": correo,
+        "Description": "Creado por el agente de correos (licitaciones).",
+    }
+    telefono = str(analisis.get("contacto_telefono") or "").strip()
+    if telefono and "000000" not in re.sub(r"\D", "", telefono):  # firmas con "+56 2 0000 0000"
+        registro["Phone"] = telefono[:30]
+    if analisis.get("contacto_cargo"):
+        registro["Title"] = str(analisis["contacto_cargo"])[:100]
+    try:
+        cuenta = _cuenta_crm(empresa)
+        if cuenta:
+            registro["Account_Name"] = {"id": cuenta}
+    except Exception as e:
+        log(f"no se pudo buscar la cuenta '{empresa}' en CRM: {e}")
+    status, resp = _crm("POST", "Contacts", json={"data": [registro]})
+    fila = (resp.get("data") or [{}])[0] if isinstance(resp.get("data"), list) else {}
+    if status in (200, 201) and fila.get("code") == "SUCCESS":
+        log(f"contacto creado en CRM: {nombre} <{correo}>")
+        return fila["details"]["id"], nombre
+    return None, f"no se pudo crear el contacto {correo} en CRM ({status}): {str(resp)[:150]}"
 
 
 def campo_lookup_numero():
@@ -546,7 +650,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Portal": portal,
         "Nombre_de_Trato": f"{id_proceso} - {empresa or 'Comprador por definir'}"[:250],
         "Clientes": cliente_id,
-        "Contactos_CRM": contacto_crm(portal),
+        "Contactos_CRM": contacto_crm(portal),  # se reemplaza abajo para clientes directos
         "fecha_limite_oferta": _texto_fecha(cierre),
         "Fase": "Pendiente por cotizar",
         "Probabilidad": 10,
@@ -556,6 +660,18 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Notas": notas_productos(items, m.get("link_proceso", "")),
         "Listado_de_productos": productos,
     }
+
+    # Clientes directos (no portales): el contacto es la persona que firma el correo
+    if portal == "Industrias":
+        try:
+            contacto_id, contacto_nombre = contacto_comprador(analisis, m.get("remitente", ""), empresa)
+        except Exception as e:
+            contacto_id, contacto_nombre = None, f"{type(e).__name__}: {str(e)[:150]}"
+        if contacto_id:
+            datos["Contactos_CRM"] = contacto_id
+            log(f"{id_proceso}: contacto {contacto_nombre}")
+        else:
+            avisos.append(f"contacto 'Por Definir': {contacto_nombre}")
 
     # Numero de Licitacion: si falla, la licitación se crea igual y queda el aviso en el log
     try:

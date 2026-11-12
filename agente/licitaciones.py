@@ -3,7 +3,13 @@ Crea la Licitación en Zoho Creator a partir de un correo ya analizado.
 
 Reglas (definidas con el equipo):
   - Solo invitaciones / solicitudes de cotización, del rubro de SELEC y vigentes.
-  - Una sola licitación por ID de proceso (va en el Nombre de Trato: "LIC-9643 - Empresa").
+  - Nombre de Trato y control de duplicados por tipo (ver "NOMBRE DE TRATO POR TIPO"):
+      Codelco / Wherex / Senegocia -> "LIC-<número de licitación>" (ej. LIC-6001102591, LIC-4674)
+      Industrias (Komatsu, ENAMI, TGN, Corrupac) -> lo que solicitan, breve (ej. "Cables y terminales"),
+      sin Numero de Licitacion.
+  - Cuenta: Codelco -> siempre el cliente CODELCO (CREATOR_CLIENTE_CODELCO).
+  - Contacto: Codelco -> el comprador del "De:" del correo; Senegocia/Wherex -> "Cliente <portal>";
+    Industrias -> la persona que firma. Si no se encuentra: "Por Definir".
   - Cliente: el que coincida en Creator; si no, el cliente "Por Definir".
   - Contacto CRM: portales → el contacto del portal si está configurado (ej. Wherex → "Cliente Wherex").
     Clientes directos (Komatsu, ENAMI, ...) → la persona que firma el correo: se busca por correo en
@@ -584,6 +590,125 @@ def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
 
 
 # =========================================================
+# NOMBRE DE TRATO POR TIPO
+# =========================================================
+
+PORTALES_CON_NUMERO = ("Codelco", "Wherex", "Senegocia")
+REF_NOTAS = "Ref. correo"
+
+
+def resumen_productos(analisis, items):
+    """Lo que solicitan, en pocas palabras (ej. "Cables y terminales"), para Industrias."""
+    texto = " ".join((analisis.get("resumen_productos") or "").split()).strip(" .")
+    if not texto:  # respaldo: las primeras palabras de los primeros productos
+        texto = ", ".join(" ".join((it.get("descripcion") or "").split()[:3]) for it in items[:2]).strip(", ")
+    texto = texto or "Solicitud de cotización"
+    return (texto[0].upper() + texto[1:])[:120]
+
+
+def nombre_trato(portal, id_proceso, analisis, items, m):
+    """
+    (nombre, claves para buscar duplicados).
+      Codelco / Wherex / Senegocia: "LIC-<número de licitación>".
+      Industrias: lo que solicitan (ej. "Cables y terminales").
+    Las claves incluyen el formato anterior ("<ID> - Empresa") para no duplicar las ya creadas.
+    """
+    if portal in PORTALES_CON_NUMERO:
+        numero = extraer_numero(id_proceso, portal, (analisis.get("nombre_proceso"), m.get("subject"), id_proceso))
+        if numero:
+            nombre = f"LIC-{numero}"
+            return nombre, list(dict.fromkeys([nombre, id_proceso]))
+        empresa = (analisis.get("empresa_compradora") or "").strip()
+        return f"{id_proceso} - {empresa or 'Comprador por definir'}"[:250], [id_proceso]
+    return resumen_productos(analisis, items), [id_proceso]
+
+
+def industria_existente(id_proceso):
+    """Industrias: el nombre no lleva el ID, se busca la referencia que queda al final de las Notas."""
+    criterio = f'(Notas.contains("{_esc(REF_NOTAS)}: {_esc(id_proceso)}"))'
+    try:
+        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
+                                 params={"criteria": criterio})
+    except Exception as e:
+        log(f"no se pudo revisar duplicados de {id_proceso} por Notas: {e}")
+        return None
+    if status == 200 and datos.get("code") in (None, 3000):
+        filas = datos.get("data") or []
+        return filas[0].get("ID") if filas else None
+    if datos.get("code") not in (3100, 9280):
+        log(f"no se pudo revisar duplicados de {id_proceso} por Notas ({status}): {str(datos)[:200]}")
+    return None
+
+
+def cliente_codelco():
+    """Codelco: la cuenta es siempre CODELCO (el cliente de Creator más parecido a ese nombre)."""
+    return buscar_cliente(os.getenv("CREATOR_CLIENTE_CODELCO", "CODELCO"))
+
+
+CORREOS_GENERICOS = re.compile(r"(ariba\.com|no-?reply|noreply|notificacion|notification|mailer)", re.I)
+
+
+def contacto_codelco(analisis, m):
+    """
+    Codelco: el comprador que aparece en el "De:" del correo (o el que detecta el análisis).
+      1. Por correo (si no es un correo genérico de Ariba): se busca en CRM y, si no está, se crea.
+      2. Si solo hay nombre: se busca por nombre en CRM.
+    Devuelve (id, nombre) o (None, motivo) -> "Por Definir".
+    """
+    datos = dict(analisis)
+    correo = (analisis.get("contacto_correo") or "").strip().lower()
+    if not correo or CORREOS_GENERICOS.search(correo):
+        remitente = (m.get("remitente") or "").lower()
+        correo = "" if CORREOS_GENERICOS.search(remitente) else remitente
+    datos["contacto_correo"] = correo
+    nombre = " ".join((analisis.get("contacto_nombre") or m.get("remitente_nombre") or "").split())
+    # "Codelco - Juan Pérez" / "Juan Pérez via SAP Business Network" -> "Juan Pérez"
+    nombre = re.sub(r"(?i)\b(via|vía)\b.*$|^\s*codelco\b[\s\-–:|]*|\bsap\b.*$", "", nombre).strip(" -–|:")
+    datos["contacto_nombre"] = nombre
+
+    if correo:
+        return contacto_comprador(datos, correo, "CODELCO")
+    if len(nombre.split()) >= 2:
+        status, resp = _crm("GET", "Contacts/search", params={"word": nombre, "per_page": 10})
+        clave = _normalizar(nombre)
+        for c in (resp.get("data") or []) if status == 200 else []:
+            if _normalizar(c.get("Full_Name")) == clave:
+                return c["id"], c.get("Full_Name")
+        return None, f"el comprador '{nombre}' no está en CRM y el correo no trae su dirección"
+    return None, "el correo no trae el nombre ni el correo del comprador"
+
+
+_contactos_portal = {}
+
+
+def contacto_portal(portal):
+    """
+    Contacto genérico del portal ("Cliente Senegocia", "Cliente Wherex"):
+    CRM_CONTACTO_<PORTAL>_ID o, si no está, se busca una vez en CRM por el nombre
+    (CRM_CONTACTO_<PORTAL>_NOMBRE, por defecto "Cliente <Portal>"). Si no: "Por Definir".
+    """
+    clave = re.sub(r"[^A-Z0-9]", "_", (portal or "").upper())
+    if os.getenv(f"CRM_CONTACTO_{clave}_ID"):
+        return os.environ[f"CRM_CONTACTO_{clave}_ID"], "variable"
+    if portal not in _contactos_portal:
+        nombre = os.getenv(f"CRM_CONTACTO_{clave}_NOMBRE", f"Cliente {portal}")
+        encontrado = None
+        try:
+            status, resp = _crm("GET", "Contacts/search", params={"word": nombre, "per_page": 20})
+            for c in (resp.get("data") or []) if status == 200 else []:
+                if _normalizar(c.get("Full_Name")) == _normalizar(nombre):
+                    encontrado = c["id"]
+                    break
+        except Exception as e:
+            log(f"no se pudo buscar el contacto '{nombre}' en CRM: {e}")
+            return _env("CRM_CONTACTO_POR_DEFINIR_ID"), f"error buscando '{nombre}'"
+        _contactos_portal[portal] = encontrado
+        log(f"contacto del portal {portal}: " + (f"'{nombre}' ({encontrado})" if encontrado else
+                                                  f"'{nombre}' no existe en CRM, se usa 'Por Definir'"))
+    return (_contactos_portal[portal] or _env("CRM_CONTACTO_POR_DEFINIR_ID")), "crm"
+
+
+# =========================================================
 # ASIGNACIÓN POR TIPO (Portal) CON CUPO DIARIO DE 60 PRODUCTOS
 # =========================================================
 #
@@ -760,12 +885,28 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     if cierre and cierre < ahora:
         return {"omitida": f"cerrada el {analisis.get('fecha_cierre')}"}
 
-    existente = licitacion_existente(id_proceso)
-    if existente:
-        return {"omitida": "ya existe", "id": existente}
-
     empresa = (analisis.get("empresa_compradora") or "").strip()
-    cliente_id, cliente_nombre = buscar_cliente(empresa)
+    portal = _portal(analisis.get("plataforma") or "", m.get("remitente", ""))
+
+    # Ítems que SELEC no cotiza (rodamientos, retenes, correas): no van a la licitación
+    excluidos = set(analisis.get("items_excluidos") or [])
+    items = [it for i, it in enumerate(analisis.get("items") or []) if i not in excluidos]
+
+    # Nombre de Trato según el tipo, y control de duplicados con ese nombre
+    nombre, claves = nombre_trato(portal, id_proceso, analisis, items, m)
+    for clave in claves:
+        existente = licitacion_existente(clave)
+        if existente:
+            return {"omitida": "ya existe", "id": existente}
+    if portal == "Industrias":
+        existente = industria_existente(id_proceso)
+        if existente:
+            return {"omitida": "ya existe", "id": existente}
+
+    if portal == "Codelco":
+        cliente_id, cliente_nombre = cliente_codelco()
+    else:
+        cliente_id, cliente_nombre = buscar_cliente(empresa)
 
     avisos = []
     if cliente_nombre == "Por Definir":
@@ -774,9 +915,6 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         cierre = (ahora + timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
         avisos.append("el correo no indica fecha de cierre: se puso una provisoria (+3 días)")
 
-    # Ítems que SELEC no cotiza (rodamientos, retenes, correas): no van a la licitación
-    excluidos = set(analisis.get("items_excluidos") or [])
-    items = [it for i, it in enumerate(analisis.get("items") or []) if i not in excluidos]
     if excluidos:
         avisos.append(f"{len(excluidos)} ítem(s) no se incluyeron (rodamientos, retenes o correas)")
 
@@ -803,8 +941,6 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         avisos.append(f"lugar de entrega '{analisis.get('lugar_entrega') or 'no indicado'}' no está en la lista: "
                       f"se puso '{lugar}'")
 
-    plataforma = analisis.get("plataforma") or ""
-    portal = _portal(plataforma, m.get("remitente", ""))
     # Asignado a: por tipo de portal, con cupo diario de 60 productos por persona
     asignado, motivo_asignado = elegir_asignado(portal)
     log(f"{id_proceso}: asignado a {asignado} ({len(productos)} productos; {motivo_asignado})")
@@ -816,9 +952,9 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Propietario_de_negocio": propietario,
         "Asignado_a": asignado,
         "Portal": portal,
-        "Nombre_de_Trato": f"{id_proceso} - {empresa or 'Comprador por definir'}"[:250],
+        "Nombre_de_Trato": nombre[:250],
         "Clientes": cliente_id,
-        "Contactos_CRM": contacto_crm(portal),  # se reemplaza abajo para clientes directos
+        "Contactos_CRM": _env("CRM_CONTACTO_POR_DEFINIR_ID"),  # se reemplaza abajo según el tipo
         "fecha_limite_oferta": _texto_fecha(cierre),
         "Fase": "Pendiente por cotizar",
         "Probabilidad": 10,
@@ -829,10 +965,17 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Listado_de_productos": productos,
     }
 
-    # Clientes directos (no portales): el contacto es la persona que firma el correo
+    # Industrias: referencia del correo al final de las Notas (el nombre no lleva el ID)
     if portal == "Industrias":
+        datos["Notas"] += f"{os.getenv('NOTAS_SALTO_LINEA', '<br>')}{REF_NOTAS}: {html.escape(id_proceso)}"
+
+    # Contacto según el tipo
+    if portal in ("Industrias", "Codelco"):
         try:
-            contacto_id, contacto_nombre = contacto_comprador(analisis, m.get("remitente", ""), empresa)
+            if portal == "Codelco":
+                contacto_id, contacto_nombre = contacto_codelco(analisis, m)
+            else:  # la persona que firma el correo
+                contacto_id, contacto_nombre = contacto_comprador(analisis, m.get("remitente", ""), empresa)
         except Exception as e:
             contacto_id, contacto_nombre = None, f"{type(e).__name__}: {str(e)[:150]}"
         if contacto_id:
@@ -840,19 +983,22 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
             log(f"{id_proceso}: contacto {contacto_nombre}")
         else:
             avisos.append(f"contacto 'Por Definir': {contacto_nombre}")
+    else:  # Senegocia / Wherex: "Cliente Senegocia", "Cliente Wherex"
+        datos["Contactos_CRM"], _ = contacto_portal(portal)
 
-    # Numero de Licitacion: si falla, la licitación se crea igual y queda el aviso en el log
-    try:
-        lookup, valor = numero_licitacion(
-            id_proceso, portal,
-            (analisis.get("nombre_proceso"), m.get("subject"), id_proceso),
-        )
-        if lookup:
-            datos[lookup] = valor
-        else:
-            avisos.append(f"Numero de Licitacion sin asignar: {valor}")
-    except Exception as e:
-        avisos.append(f"Numero de Licitacion sin asignar: {e}")
+    # Numero de Licitacion (no aplica a Industrias): si falla, se crea igual y queda el aviso
+    if portal != "Industrias":
+        try:
+            lookup, valor = numero_licitacion(
+                id_proceso, portal,
+                (analisis.get("nombre_proceso"), m.get("subject"), id_proceso),
+            )
+            if lookup:
+                datos[lookup] = valor
+            else:
+                avisos.append(f"Numero de Licitacion sin asignar: {valor}")
+        except Exception as e:
+            avisos.append(f"Numero de Licitacion sin asignar: {e}")
 
     status, resp = _creator("POST", f"form/{os.getenv('CREATOR_FORM_LICITACION', 'Licitaci_n')}",
                             json={"data": datos})

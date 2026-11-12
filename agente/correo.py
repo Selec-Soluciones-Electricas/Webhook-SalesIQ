@@ -197,6 +197,9 @@ def preparar_mensaje(m: dict, buzon: str) -> bool:
         remitente = original
 
     m["remitente"] = remitente
+    # Nombre visible del "De:" (en SAP Ariba suele venir el comprador de Codelco)
+    if not m.get("reenviado_por"):
+        m["remitente_nombre"] = ((m.get("from") or {}).get("emailAddress") or {}).get("name", "")
     m["buzon"] = buzon
     m["internetMessageId"] = m.get("internetMessageId") or m["id"]
     return True
@@ -588,11 +591,12 @@ HERRAMIENTA_ANALISIS = {
             "plataforma": {"type": "string", "description": "Wherex, Senegocia, SAP Ariba, correo directo, etc."},
             "id_proceso": {"type": "string", "description": "ID de la licitación, cotización o evento"},
             "empresa_compradora": {"type": "string", "description": "Razón social completa del comprador, tal como aparece en el correo o la firma (ej. Komatsu Cummins Chile Ltda.)"},
-            "contacto_nombre": {"type": "string", "description": "Nombre completo de la persona que pide la cotización (la firma del correo), sin cargo. Vacío si es una notificación automática de un portal"},
-            "contacto_correo": {"type": "string", "description": "Correo de esa persona (el remitente original si es un reenvío)"},
+            "contacto_nombre": {"type": "string", "description": "Nombre completo de la persona que pide la cotización, sin cargo: la firma del correo o, en SAP Ariba (Codelco), el comprador que aparece en el \"De:\" o en el cuerpo. Vacío si no aparece ninguna persona"},
+            "contacto_correo": {"type": "string", "description": "Correo de esa persona (el del \"De:\", o el remitente original si es un reenvío). Vacío si solo hay correos genéricos de la plataforma (ariba.com, no-reply)"},
             "contacto_telefono": {"type": "string", "description": "Teléfono de esa persona si aparece en la firma y no es un número de ejemplo"},
             "contacto_cargo": {"type": "string", "description": "Cargo de esa persona si aparece (ej. Comprador Nacional)"},
             "nombre_proceso": {"type": "string"},
+            "resumen_productos": {"type": "string", "description": "Qué solicitan, en 2 a 6 palabras, solo los tipos de producto (ej. \"Cables y terminales\", \"Luminarias LED\"). Sin cantidades, marcas ni códigos"},
             "categoria": {"type": "string"},
             "fecha_inicio": {"type": "string", "description": "DD-MM-AAAA HH:MM, si existe"},
             "fecha_cierre": {"type": "string", "description": "DD-MM-AAAA HH:MM, si existe"},
@@ -673,7 +677,7 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
     contenido.append({
         "type": "text",
         "text": (
-            f"De: {m['remitente']}\n"
+            f"De: {(m.get('remitente_nombre') + ' ') if m.get('remitente_nombre') else ''}<{m['remitente']}>\n"
             f"{reenvio}"
             f"Para (buzón SELEC): {m['buzon']}\n"
             f"Recibido: {m.get('receivedDateTime', '')}\n"

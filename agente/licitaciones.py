@@ -594,8 +594,9 @@ def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
 #   Senegocia  -> PC; luego JP, JG, MR
 #   Industrias -> MR; luego JG, JP, PC   (Komatsu, TGN, Corrupac, ENAMI)
 #
-# - El cupo es por persona, por portal y por día (hora Chile): a las 00:00 todos parten de 0.
-# - Una persona recibe licitaciones mientras lleve menos de 60 productos ese día en ese portal.
+# - El cupo es por persona y por día (hora Chile), sumando TODOS los portales: a las 00:00
+#   todos parten de 0. Ej.: 41 en Wherex + 19 en Senegocia = 60, ya no recibe más ese día.
+# - Una persona recibe licitaciones mientras lleve menos de 60 productos ese día.
 #   La licitación que la hace pasar de 60 igual se le asigna completa (ej. lleva 50 y llega
 #   una de 20: queda con 70) y desde ahí ya no recibe más ese día.
 # - "Rotando por licitación": entre los que tienen cupo, la recibe el que lleva menos
@@ -606,7 +607,7 @@ def adjuntar_correo(m: dict, lic_id, id_proceso: str) -> str:
 #   ASIGNACION_POR_TIPO=on   activa la regla (sin ella, todo va a LICITACION_ASIGNADO)
 #   ASIGNACION_INICIALES     quién es cada inicial, ej. "MR=Maria Rengifo,PC=Patricio Cifuentes,..."
 #                            (para pruebas: "MR=Maikel Meriño,PC=Deivys Almario,JP=Elian Barra,...")
-#   ASIGNACION_MAX=60        productos por persona, por portal y por día
+#   ASIGNACION_MAX=60        productos por persona y por día (todos los portales)
 #   ASIGNACION_REGLAS        (opcional) JSON para cambiar la regla sin tocar el código
 
 INICIALES_DEFECTO = ("MR=Maria Rengifo,PC=Patricio Cifuentes,JP=Juan Puerta,"
@@ -618,7 +619,7 @@ REGLAS_DEFECTO = {
     "Industrias": {"primero": "MR", "resto": ["JG", "JP", "PC"], "respaldo": []},
 }
 
-# Respaldo en memoria por si Creator no responde: {(fecha, portal): {persona: {...}}}
+# Respaldo en memoria por si Creator no responde: {fecha: {persona: {...}}}
 _carga_memoria = {}
 
 
@@ -645,20 +646,20 @@ def _valor(campo):
     return campo or ""
 
 
-def carga_del_dia(portal):
+def carga_del_dia(portal=None):
     """
-    Productos y licitaciones que el agente asignó HOY en este portal, por persona:
+    Productos y licitaciones que el agente asignó HOY, por persona, sumando todos los portales
+    (el parámetro portal se mantiene solo por compatibilidad):
     {"Maikel Meriño": {"productos": 45, "licitaciones": 2}, ...}, más la fuente usada.
 
     Se lee de Creator (sobrevive a reinicios y despliegues). Si Creator falla o el reporte
     no trae los campos necesarios, se usa lo que este proceso lleva contado en memoria.
     """
     hoy = datetime.now(CHILE_TZ)
-    clave = (hoy.date().isoformat(), portal)
+    clave = hoy.date().isoformat()
     propietario = os.getenv("LICITACION_PROPIETARIO") or os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
     desde = f"{hoy.day:02d}-{MESES[hoy.month - 1]}-{hoy.year} 00:00:00"
-    criterio = (f'(Portal == "{_esc(portal)}" && Propietario_de_negocio == "{_esc(propietario)}"'
-                f' && Added_Time >= "{desde}")')
+    criterio = f'(Propietario_de_negocio == "{_esc(propietario)}" && Added_Time >= "{desde}")'
     try:
         status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
                                  params={"criteria": criterio})
@@ -676,14 +677,14 @@ def carga_del_dia(portal):
             c["licitaciones"] += 1
         return carga, "creator"
     except Exception as e:
-        log(f"carga del día ({portal}) desde Creator falló, se usa la memoria: {str(e)[:200]}")
+        log(f"carga del día desde Creator falló, se usa la memoria: {str(e)[:200]}")
         return _carga_memoria.get(clave, {}), "memoria"
 
 
 def _sumar_carga(portal, persona, productos):
-    clave = (datetime.now(CHILE_TZ).date().isoformat(), portal)
+    clave = datetime.now(CHILE_TZ).date().isoformat()
     for k in list(_carga_memoria):
-        if k[0] != clave[0]:
+        if k != clave:
             del _carga_memoria[k]  # días anteriores
     c = _carga_memoria.setdefault(clave, {}).setdefault(persona, {"productos": 0, "licitaciones": 0})
     c["productos"] += productos
@@ -719,7 +720,7 @@ def elegir_asignado(portal, carga=None):
     respaldo = list(dict.fromkeys(nombre(x) for x in regla.get("respaldo") or []))
 
     if productos(primero) < maximo:
-        return primero, f"primero de {portal} ({productos(primero)}/{maximo} hoy)"
+        return primero, f"primero de {portal} ({productos(primero)}/{maximo} hoy en total)"
 
     def rotar(grupo):
         # El que lleva menos licitaciones hoy; empate -> orden de la regla
@@ -728,11 +729,11 @@ def elegir_asignado(portal, carga=None):
     con_cupo = [p for p in resto if productos(p) < maximo]
     if con_cupo:
         p = rotar(con_cupo)
-        return p, f"{primero} completó {maximo}: rotación ({productos(p)}/{maximo} hoy)"
+        return p, f"{primero} completó {maximo}: rotación ({productos(p)}/{maximo} hoy en total)"
     con_cupo = [p for p in respaldo if productos(p) < maximo]
     if con_cupo:
         p = rotar(con_cupo)
-        return p, f"todos completaron {maximo}: respaldo ({productos(p)}/{maximo} hoy)"
+        return p, f"todos completaron {maximo}: respaldo ({productos(p)}/{maximo} hoy en total)"
     # Todos llenos y sin respaldo con cupo: se sigue rotando entre los demás
     grupo = resto or [primero]
     p = rotar(grupo)

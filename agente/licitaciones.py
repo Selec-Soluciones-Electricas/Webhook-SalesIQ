@@ -715,9 +715,9 @@ def contacto_portal(portal):
 # Regla definida con el equipo (pizarra). Cada licitación va COMPLETA a una sola persona:
 #   Codelco    -> MR hasta 60 productos en el día; luego rotando por licitación: PC, JP, JG;
 #                 si todos llegan a 60: CS
-#   Wherex     -> JG; luego PC, JP; si todos llegan a 60: CS
+#   Wherex     -> JG; luego PC, JP, MR
 #   Senegocia  -> PC; luego JP, JG, MR
-#   Industrias -> MR; luego JG, JP, PC   (Komatsu, TGN, Corrupac, ENAMI)
+#   Industrias -> MR; luego JG, JP, PC; si todos llegan a 60: CS   (Komatsu, TGN, Corrupac, ENAMI)
 #
 # - El cupo es por persona y por día (hora Chile), sumando TODOS los portales: a las 00:00
 #   todos parten de 0. Ej.: 41 en Wherex + 19 en Senegocia = 60, ya no recibe más ese día.
@@ -739,9 +739,9 @@ INICIALES_DEFECTO = ("MR=Maria Rengifo,PC=Patricio Cifuentes,JP=Juan Puerta,"
                      "JG=Joaquin Gonzalez,CS=Carolina Salazar")
 REGLAS_DEFECTO = {
     "Codelco": {"primero": "MR", "resto": ["PC", "JP", "JG"], "respaldo": ["CS"]},
-    "Wherex": {"primero": "JG", "resto": ["PC", "JP"], "respaldo": ["CS"]},
+    "Wherex": {"primero": "JG", "resto": ["PC", "JP", "MR"], "respaldo": []},
     "Senegocia": {"primero": "PC", "resto": ["JP", "JG", "MR"], "respaldo": []},
-    "Industrias": {"primero": "MR", "resto": ["JG", "JP", "PC"], "respaldo": []},
+    "Industrias": {"primero": "MR", "resto": ["JG", "JP", "PC"], "respaldo": ["CS"]},
 }
 
 # Respaldo en memoria por si Creator no responde: {fecha: {persona: {...}}}

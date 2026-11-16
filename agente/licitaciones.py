@@ -727,20 +727,23 @@ def contacto_portal(portal):
 #   Senegocia  -> PC; luego JP, JG, MR
 #   Industrias -> MR; luego JG, JP, PC; si todos llegan a 60: CS   (Komatsu, TGN, Corrupac, ENAMI)
 #
-# - El cupo es por persona y por día (hora Chile), sumando TODOS los portales: a las 00:00
-#   todos parten de 0. Ej.: 41 en Wherex + 19 en Senegocia = 60, ya no recibe más ese día.
-# - Una persona recibe licitaciones mientras lleve menos de 60 productos ese día.
+# - El cupo es por persona y por FECHA LÍMITE DE OFERTA, sumando todos los portales y todas las
+#   licitaciones en Fase "Pendiente por cotizar" (las del agente y las ingresadas a mano): es el
+#   gráfico "Productos Pendientes por Cotizar". Ej.: María tiene 56 para el 16-11 -> una licitación
+#   que vence el 16-11 aún le llega; una que vence el 17-11 se compara con lo que tiene para el 17-11.
+# - Una persona recibe licitaciones mientras lleve menos de 60 productos para esa fecha.
 #   La licitación que la hace pasar de 60 igual se le asigna completa (ej. lleva 50 y llega
 #   una de 20: queda con 70) y desde ahí ya no recibe más ese día.
 # - "Rotando por licitación": entre los que tienen cupo, la recibe el que lleva menos
 #   licitaciones hoy (empate: el orden de la regla), así queda PC, JP, JG, PC...
-# - Solo cuentan las licitaciones que creó el agente (Propietario = LICITACION_PROPIETARIO).
+# - Productos por licitación: Numero_Productos o, si viene vacío, las filas de Listado de productos.
 #
 # Variables:
 #   ASIGNACION_POR_TIPO=on   activa la regla (sin ella, todo va a LICITACION_ASIGNADO)
 #   ASIGNACION_INICIALES     quién es cada inicial, ej. "MR=Maria Rengifo,PC=Patricio Cifuentes,..."
 #                            (para pruebas: "MR=Maikel Meriño,PC=Deivys Almario,JP=Elian Barra,...")
-#   ASIGNACION_MAX=60        productos por persona y por día (todos los portales)
+#   ASIGNACION_MAX=60        productos pendientes por persona y por fecha límite de oferta
+#   ASIGNACION_FASE_PENDIENTE="Pendiente por cotizar"  fase que se cuenta
 #   ASIGNACION_REGLAS        (opcional) JSON para cambiar la regla sin tocar el código
 
 INICIALES_DEFECTO = ("MR=Maria Rengifo,PC=Patricio Cifuentes,JP=Juan Puerta,"
@@ -779,54 +782,72 @@ def _valor(campo):
     return campo or ""
 
 
-def carga_del_dia(portal=None):
-    """
-    Productos y licitaciones que el agente asignó HOY, por persona, sumando todos los portales
-    (el parámetro portal se mantiene solo por compatibilidad):
-    {"Maikel Meriño": {"productos": 45, "licitaciones": 2}, ...}, más la fuente usada.
+def _productos_de(fila):
+    """Productos de una licitación: el campo Numero_Productos (el del gráfico) o, si viene vacío
+    (licitaciones creadas por API), las filas de Listado de productos."""
+    try:
+        n = int(float(str(fila.get("Numero_Productos") or "0").replace(",", ".")))
+    except ValueError:
+        n = 0
+    return n if n > 0 else len(fila.get("Listado_de_productos") or [])
 
-    Se lee de Creator (sobrevive a reinicios y despliegues). Si Creator falla o el reporte
-    no trae los campos necesarios, se usa lo que este proceso lleva contado en memoria.
+
+def carga_del_dia(portal=None, fecha=None):
     """
-    hoy = datetime.now(CHILE_TZ)
-    clave = hoy.date().isoformat()
-    propietario = os.getenv("LICITACION_PROPIETARIO") or os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
-    desde = f"{hoy.day:02d}-{MESES[hoy.month - 1]}-{hoy.year} 00:00:00"
-    criterio = f'(Propietario_de_negocio == "{_esc(propietario)}" && Added_Time >= "{desde}")'
+    Productos PENDIENTES POR COTIZAR por persona con FECHA LÍMITE DE OFERTA en `fecha`
+    (datetime o date; por defecto hoy), de todas las licitaciones (agente y manuales):
+    {"Maria Rengifo": {"productos": 56, "licitaciones": 7}, ...}, más la fuente usada.
+    Es el mismo número del gráfico "Productos Pendientes por Cotizar" para esa fecha.
+    (El parámetro portal se mantiene solo por compatibilidad: el cupo suma todos los portales.)
+
+    Se lee de Creator. Si Creator falla o el reporte no trae los campos necesarios, se usa lo
+    que este proceso lleva contado en memoria para esa fecha.
+    """
+    dia = fecha or datetime.now(CHILE_TZ)
+    dia = dia.date() if hasattr(dia, "date") and callable(dia.date) else dia
+    clave = dia.isoformat()
+    texto_dia = f"{dia.day:02d}-{MESES[dia.month - 1]}-{dia.year}"
+    fase = os.getenv("ASIGNACION_FASE_PENDIENTE", "Pendiente por cotizar")
+    criterio = (f'(Fase == "{_esc(fase)}" && fecha_limite_oferta >= "{texto_dia} 00:00:00"'
+                f' && fecha_limite_oferta <= "{texto_dia} 23:59:59")')
     try:
         status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
-                                 params={"criteria": criterio})
+                                 params={"criteria": criterio, "max_records": 1000})
         if datos.get("code") in (3100, 9280):
             return {}, "creator"
         if status != 200 or datos.get("code") not in (None, 3000):
             raise RuntimeError(f"Creator {status}: {str(datos)[:200]}")
         carga = {}
         for f in datos.get("data") or []:
-            if "Asignado_a" not in f or "Listado_de_productos" not in f:
-                raise RuntimeError("el reporte no trae Asignado_a o Listado_de_productos")
+            if "Asignado_a" not in f or ("Numero_Productos" not in f and "Listado_de_productos" not in f):
+                raise RuntimeError("el reporte no trae Asignado_a o Numero_Productos / Listado_de_productos")
             persona = _valor(f.get("Asignado_a"))
             c = carga.setdefault(persona, {"productos": 0, "licitaciones": 0})
-            c["productos"] += len(f.get("Listado_de_productos") or [])
+            c["productos"] += _productos_de(f)
             c["licitaciones"] += 1
         return carga, "creator"
     except Exception as e:
-        log(f"carga del día desde Creator falló, se usa la memoria: {str(e)[:200]}")
+        log(f"carga del {texto_dia} desde Creator falló, se usa la memoria: {str(e)[:200]}")
         return _carga_memoria.get(clave, {}), "memoria"
 
 
-def _sumar_carga(portal, persona, productos):
-    clave = datetime.now(CHILE_TZ).date().isoformat()
+def _sumar_carga(portal, persona, productos, fecha=None):
+    dia = fecha or datetime.now(CHILE_TZ)
+    dia = dia.date() if hasattr(dia, "date") and callable(dia.date) else dia
+    clave = dia.isoformat()
+    hoy = datetime.now(CHILE_TZ).date().isoformat()
     for k in list(_carga_memoria):
-        if k != clave:
-            del _carga_memoria[k]  # días anteriores
+        if k < hoy:
+            del _carga_memoria[k]  # fechas límite ya pasadas
     c = _carga_memoria.setdefault(clave, {}).setdefault(persona, {"productos": 0, "licitaciones": 0})
     c["productos"] += productos
     c["licitaciones"] += 1
 
 
-def elegir_asignado(portal, carga=None):
+def elegir_asignado(portal, carga=None, fecha=None):
     """
-    A quién se asigna la próxima licitación de este portal (completa, sin dividir).
+    A quién se asigna la próxima licitación de este portal (completa, sin dividir), según los
+    productos pendientes que cada persona ya tiene para la misma fecha límite de oferta.
     Devuelve (persona, motivo).
     """
     defecto = os.getenv("LICITACION_ASIGNADO", "Luis Hurtado")
@@ -836,7 +857,7 @@ def elegir_asignado(portal, carga=None):
     if not regla:
         return defecto, f"sin regla para el portal {portal}"
     if carga is None:
-        carga, _ = carga_del_dia(portal)
+        carga, _ = carga_del_dia(portal, fecha)
 
     nombres = _iniciales()
     def nombre(ini):
@@ -853,7 +874,7 @@ def elegir_asignado(portal, carga=None):
     respaldo = list(dict.fromkeys(nombre(x) for x in regla.get("respaldo") or []))
 
     if productos(primero) < maximo:
-        return primero, f"primero de {portal} ({productos(primero)}/{maximo} hoy en total)"
+        return primero, f"primero de {portal} ({productos(primero)}/{maximo} para esa fecha límite)"
 
     def rotar(grupo):
         # El que lleva menos licitaciones hoy; empate -> orden de la regla
@@ -862,15 +883,15 @@ def elegir_asignado(portal, carga=None):
     con_cupo = [p for p in resto if productos(p) < maximo]
     if con_cupo:
         p = rotar(con_cupo)
-        return p, f"{primero} completó {maximo}: rotación ({productos(p)}/{maximo} hoy en total)"
+        return p, f"{primero} completó {maximo}: rotación ({productos(p)}/{maximo} para esa fecha límite)"
     con_cupo = [p for p in respaldo if productos(p) < maximo]
     if con_cupo:
         p = rotar(con_cupo)
-        return p, f"todos completaron {maximo}: respaldo ({productos(p)}/{maximo} hoy en total)"
+        return p, f"todos completaron {maximo}: respaldo ({productos(p)}/{maximo} para esa fecha límite)"
     # Todos llenos y sin respaldo con cupo: se sigue rotando entre los demás
     grupo = resto or [primero]
     p = rotar(grupo)
-    return p, f"todos completaron {maximo}: se sigue rotando"
+    return p, f"todos completaron {maximo} para esa fecha límite: se sigue rotando"
 
 
 # =========================================================
@@ -996,7 +1017,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
                       f"se puso '{lugar}'")
 
     # Asignado a: por tipo de portal, con cupo diario de 60 productos por persona
-    asignado, motivo_asignado = elegir_asignado(portal)
+    asignado, motivo_asignado = elegir_asignado(portal, fecha=cierre)
     log(f"{id_proceso}: asignado a {asignado} ({len(productos)} productos; {motivo_asignado})")
     # Propietario: un alias del agente (ej. "Agente IA") para medir lo que crea el agente.
     # Sin la variable, queda la persona de LICITACION_ASIGNADO (comportamiento anterior).
@@ -1061,7 +1082,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
                             json={"data": datos})
     if status in (200, 201) and resp.get("code") == 3000:
         lic_id = (resp.get("data") or {}).get("ID")
-        _sumar_carga(portal, asignado, len(productos))
+        _sumar_carga(portal, asignado, len(productos), cierre)
         log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre}, "
             f"asignado {asignado}, {len(productos)} productos)")
         # Clientes directos (Komatsu, ENAMI, Corrupac, TGN): se adjunta el correo original (.eml)

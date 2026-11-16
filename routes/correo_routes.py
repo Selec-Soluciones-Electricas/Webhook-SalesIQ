@@ -119,7 +119,8 @@ def register_correo_routes(app):
     # Completar "Licitacion Creator" en filas "Sin dato" buscando en Creator
     #   sin parámetros  -> simulación;  ?aplicar=1 -> guarda;  ?limite=40 (máx. 60)
     #   ?id=LIC-4681    -> diagnóstico: búsqueda de ese ID en Creator
-    #   ?carga=Codelco  -> diagnóstico: productos asignados hoy por persona y el próximo asignado
+    #   ?carga=Codelco&fecha=17-11-2026 -> diagnóstico: productos pendientes por persona para esa
+    #                   fecha límite y el próximo asignado
     # -----------------------------------------------------
     @app.route("/cron/correos/verificar-creator", methods=["POST"])
     def verificar_creator_endpoint():
@@ -134,10 +135,13 @@ def register_correo_routes(app):
             if request.args.get("carga"):
                 # Diagnóstico: carga del día por persona en un portal y a quién iría la próxima
                 from agente.licitaciones import carga_del_dia, elegir_asignado
-                carga, fuente = carga_del_dia(request.args["carga"])
-                siguiente, motivo = elegir_asignado(request.args["carga"], carga)
-                return jsonify({"portal": request.args["carga"], "fuente": fuente, "carga": carga,
-                                "siguiente": siguiente, "motivo": motivo})
+                # ?carga=Codelco&fecha=17-11-2026  (fecha límite de oferta; por defecto hoy)
+                from datetime import datetime as _dt
+                fecha = _dt.strptime(request.args["fecha"], "%d-%m-%Y") if request.args.get("fecha") else None
+                carga, fuente = carga_del_dia(request.args["carga"], fecha)
+                siguiente, motivo = elegir_asignado(request.args["carga"], carga, fecha)
+                return jsonify({"portal": request.args["carga"], "fecha": request.args.get("fecha", "hoy"),
+                                "fuente": fuente, "carga": carga, "siguiente": siguiente, "motivo": motivo})
             if request.args.get("id"):
                 # Diagnóstico: respuesta cruda de Creator para un ID de proceso
                 from agente.licitaciones import diagnostico_busqueda

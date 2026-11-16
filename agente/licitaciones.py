@@ -22,7 +22,7 @@ Reglas (definidas con el equipo):
     en la plataforma (el botón "Más detalles aquí" / "Click Here" del correo).
   - Propietario: LICITACION_PROPIETARIO (ej. "Agente IA").  Asignado a: por tipo de portal, con
     cupo diario de 60 productos por persona (ver "ASIGNACIÓN POR TIPO"); sin
-    ASIGNACION_POR_TIPO=on queda LICITACION_ASIGNADO.  Cantidad: 1.  Productos: GENERICO.
+    ASIGNACION_POR_TIPO=on queda LICITACION_ASIGNADO.  Cantidad: la del correo (1 si no viene).  Productos: GENERICO.
     (Así se activa la cadena: análisis → identificación de producto → proveedores.)
 
 Variables de entorno:
@@ -944,6 +944,28 @@ def sincronizar_crm(lic_id):
         return f"no se pudo revisar el envío al CRM: {type(e).__name__}: {str(e)[:150]}"
 
 
+def cantidad_numero(texto):
+    """
+    Cantidad del correo -> número para el subformulario (Cantidadsub). Formato chileno:
+    "7" -> 7, "1.000" -> 1000, "2,5" -> 2.5, "7 Unidad" -> 7. Sin cantidad o inválida -> 1.
+    """
+    t = re.search(r"\d[\d.,]*", str(texto or ""))
+    if not t:
+        return 1
+    t = t.group(0).rstrip(".,")
+    if "," in t:  # coma decimal: los puntos son miles
+        t = t.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"\d{1,3}(\.\d{3})+", t):  # 1.000 / 12.500 -> miles
+        t = t.replace(".", "")
+    try:
+        n = float(t)
+    except ValueError:
+        return 1
+    if n <= 0:
+        return 1
+    return int(n) if n == int(n) else round(n, 2)
+
+
 def crear_licitacion(m: dict, analisis: dict) -> dict:
     tipo = analisis.get("tipo")
     id_proceso = (analisis.get("id_proceso") or "").strip()
@@ -999,7 +1021,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         fila = {
             "Codigo_Producto": _env("GEN_ID", "4710567000001934003"),
             "Descripcion": descripcion[:1000] or "Sin descripción",
-            "Cantidadsub": 1,
+            "Cantidadsub": cantidad_numero(it.get("cantidad")),
         }
         if it.get("numero_parte"):
             fila["Numero_de_parte"] = it["numero_parte"][:250]

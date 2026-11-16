@@ -1010,6 +1010,9 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Clientes": cliente_id,
         "Contactos_CRM": contacto_por_definir(),  # se reemplaza abajo según el tipo
         "fecha_limite_oferta": _texto_fecha(cierre),
+        # Misma fecha, sin hora (campo de solo fecha)
+        os.getenv("CREATOR_CAMPO_FECHA_LIMITE_SOLO", "Fecha_Limite_Oferta_Fecha1"):
+            f"{cierre.day:02d}-{MESES[cierre.month - 1]}-{cierre.year}",
         "Fase": "Pendiente por cotizar",
         "Probabilidad": 10,
         "Importe": 1,

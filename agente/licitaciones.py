@@ -33,7 +33,7 @@ Variables de entorno:
   CREATOR_FORM_LICITACION=Licitaci_n  CREATOR_REPORT_LICITACION=Licitaci_n_Report
   CREATOR_REPORT_CLIENTES=Clientes_Report
   CREATOR_CLIENTE_POR_DEFINIR_ID (opcional) ID del cliente "Por Definir"; si no está, se busca por nombre
-  CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM
+  CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM (por defecto 4358923000100932002)
   CRM_CONTACTO_WHEREX_ID         (opcional) ID del contacto "Cliente Wherex" en Zoho CRM.
       Sirve para cualquier portal: CRM_CONTACTO_SENEGOCIA_ID, CRM_CONTACTO_CODELCO_ID, etc.
   CREATOR_REPORT_NUMERO_LIC=Numeros_Licitaciones_report  (por defecto) reporte de los números
@@ -308,10 +308,18 @@ def cliente_por_definir():
 # CONTACTO, NÚMERO DE LICITACIÓN Y NOTAS
 # =========================================================
 
+CONTACTO_POR_DEFINIR = "4358923000100932002"
+
+
+def contacto_por_definir():
+    """ID del contacto "Por Definir" en CRM (si no hay contacto, Creator rechaza el campo)."""
+    return os.getenv("CRM_CONTACTO_POR_DEFINIR_ID") or CONTACTO_POR_DEFINIR
+
+
 def contacto_crm(portal):
     """Contacto del portal (CRM_CONTACTO_WHEREX_ID, ...) o, si no hay, el contacto "Por Definir"."""
     clave = re.sub(r"[^A-Z0-9]", "_", (portal or "").upper())
-    return os.getenv(f"CRM_CONTACTO_{clave}_ID") or _env("CRM_CONTACTO_POR_DEFINIR_ID")
+    return os.getenv(f"CRM_CONTACTO_{clave}_ID") or contacto_por_definir()
 
 
 def _crm(metodo, ruta, **kwargs):
@@ -701,11 +709,11 @@ def contacto_portal(portal):
                     break
         except Exception as e:
             log(f"no se pudo buscar el contacto '{nombre}' en CRM: {e}")
-            return _env("CRM_CONTACTO_POR_DEFINIR_ID"), f"error buscando '{nombre}'"
+            return contacto_por_definir(), f"error buscando '{nombre}'"
         _contactos_portal[portal] = encontrado
         log(f"contacto del portal {portal}: " + (f"'{nombre}' ({encontrado})" if encontrado else
                                                   f"'{nombre}' no existe en CRM, se usa 'Por Definir'"))
-    return (_contactos_portal[portal] or _env("CRM_CONTACTO_POR_DEFINIR_ID")), "crm"
+    return (_contactos_portal[portal] or contacto_por_definir()), "crm"
 
 
 # =========================================================
@@ -869,6 +877,52 @@ def elegir_asignado(portal, carga=None):
 # CREACIÓN
 # =========================================================
 
+# =========================================================
+# ENVÍO AL CRM (workflow de Creator)
+# =========================================================
+
+def _id_deal(lic_id):
+    """ID_Deals_CRM del registro, "" si no tiene, o None si el reporte no trae el campo."""
+    status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/{lic_id}")
+    fila = datos.get("data") if status == 200 else None
+    if not isinstance(fila, dict) or "ID_Deals_CRM" not in fila:
+        return None
+    return str(fila.get("ID_Deals_CRM") or "").strip()
+
+
+def sincronizar_crm(lic_id):
+    """
+    Asegura que la licitación quede como Negocio en CRM.
+    Si después de crearla no tiene ID_Deals_CRM, se edita por API (Fase con el mismo valor) para que
+    el workflow "Creado o editado" vuelva a correr, como cuando se guarda a mano. El workflow solo
+    crea el Negocio si ID_Deals_CRM está vacío, así que no se duplica.
+    CRM_SINCRONIZAR=off lo desactiva.  CRM_SINCRONIZAR_ESPERA=4 segundos antes de revisar.
+    """
+    if os.getenv("CRM_SINCRONIZAR", "on").lower() == "off":
+        return "negocio en CRM: sincronización desactivada"
+    espera = float(os.getenv("CRM_SINCRONIZAR_ESPERA", "4"))
+    reporte = os.getenv("CREATOR_REPORT_LICITACION", "Licitaci_n_Report")
+    try:
+        time.sleep(espera)
+        deal = _id_deal(lic_id)
+        if deal:
+            return f"negocio en CRM: {deal}"
+        status, resp = _creator("PATCH", f"report/{reporte}/{lic_id}",
+                                json={"data": {"Fase": "Pendiente por cotizar"}})
+        if not (status == 200 and resp.get("code") == 3000):
+            return f"no se pudo reenviar al CRM (Creator {status}): {str(resp)[:200]}"
+        time.sleep(espera)
+        deal = _id_deal(lic_id)
+        if deal:
+            return f"negocio en CRM: {deal} (al reenviar)"
+        if deal is None:
+            return "negocio en CRM: reenviado (el reporte no muestra ID_Deals_CRM para confirmarlo)"
+        return ("la licitación no quedó en CRM ni al reenviarla: revisar el log del workflow "
+                "'Integracion Licitacion a CRM' ([Deals] Error al crear)")
+    except Exception as e:
+        return f"no se pudo revisar el envío al CRM: {type(e).__name__}: {str(e)[:150]}"
+
+
 def crear_licitacion(m: dict, analisis: dict) -> dict:
     tipo = analisis.get("tipo")
     id_proceso = (analisis.get("id_proceso") or "").strip()
@@ -954,7 +1008,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         "Portal": portal,
         "Nombre_de_Trato": nombre[:250],
         "Clientes": cliente_id,
-        "Contactos_CRM": _env("CRM_CONTACTO_POR_DEFINIR_ID"),  # se reemplaza abajo según el tipo
+        "Contactos_CRM": contacto_por_definir(),  # se reemplaza abajo según el tipo
         "fecha_limite_oferta": _texto_fecha(cierre),
         "Fase": "Pendiente por cotizar",
         "Probabilidad": 10,
@@ -1014,6 +1068,14 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
                 log(f"{id_proceso}: {resultado_eml}")
             else:
                 avisos.append(resultado_eml)
+        # Envío al CRM: el workflow "Integracion Licitacion a CRM" no deja el Negocio al crear por API;
+        # se hace la misma edición que hoy se hace a mano para que vuelva a correr
+        if lic_id:
+            resultado_crm = sincronizar_crm(lic_id)
+            if resultado_crm.startswith("negocio en CRM"):
+                log(f"{id_proceso}: {resultado_crm}")
+            else:
+                avisos.append(resultado_crm)
         for aviso in avisos:
             log(f"⚠ {id_proceso}: {aviso}")
         return {"creada": True, "id": lic_id, "cliente": cliente_nombre, "asignado": asignado,

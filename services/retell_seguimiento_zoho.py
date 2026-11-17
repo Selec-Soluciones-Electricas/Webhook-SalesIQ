@@ -3,7 +3,7 @@ import re
 from services import zoho_service
 
 
-def buscar_asunto_control_zoho(modulo, asunto):
+def buscar_asunto_control_zoho(modulo, asunto, *, conexion=None):
     """
     Busca un identificador de control en Zoho CRM.
 
@@ -31,16 +31,27 @@ def buscar_asunto_control_zoho(modulo, asunto):
         return error
 
     try:
-        token = zoho_service.get_access_token()
-
-        if not token:
+        if not isinstance(conexion, dict):
             return error
 
-        base = (
-            zoho_service.CRM_BASE.split("/crm/")[0]
-        )
+        base = conexion.get("base")
+        obtener_token = conexion.get("obtener_token")
+        http_get = conexion.get("http_get")
 
-        respuesta = zoho_service.requests.get(
+        if (
+            base != "https://sandbox.zohoapis.com"
+            or not callable(obtener_token)
+            or not callable(http_get)
+        ):
+            return error
+
+        token = obtener_token()
+
+        if not isinstance(token, str) or not token.strip():
+            return error
+
+        respuesta = http_get(
+
             f"{base}/crm/v8/{modulo}/search",
             headers={
                 "Authorization": f"Zoho-oauthtoken {token}"

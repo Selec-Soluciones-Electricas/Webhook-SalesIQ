@@ -434,6 +434,8 @@ def procesar_pendientes_sofia(
     candidatas = []
     revisiones_detectadas = []
     postventas_detectadas = []
+    consultas_detectadas = []
+    consultas_en_revision = []
 
     # Revisar primero las llamadas mas antiguas.
     for llamada in reversed(llamadas):
@@ -473,10 +475,82 @@ def procesar_pendientes_sofia(
             estado == "otra_solicitud"
             and clasificacion.get("tipo") == "postventa"
         ):
-            postventas_detectadas.append({
-                "call_id": llamada.get("call_id"),
-                "tipo": "postventa",
-            })
+            from services.retell_postventas import (
+                clasificar_postventa_sofia,
+            )
+
+            postventa = clasificar_postventa_sofia(
+                llamada,
+                agente_autorizado,
+            )
+
+            if (
+                isinstance(postventa, dict)
+                and postventa.get("estado") == "candidata_caso"
+            ):
+                postventas_detectadas.append({
+                    **postventa,
+                    "tipo": "postventa",
+                })
+
+            else:
+                # No descartar postventas incompletas.
+                # Deben quedar pendientes de revision.
+                revisiones_detectadas.append({
+                    "call_id": llamada.get("call_id"),
+                    "motivo": (
+                        postventa.get(
+                            "motivo",
+                            "postventa_no_confirmada",
+                        )
+                        if isinstance(postventa, dict)
+                        else "respuesta_invalida"
+                    ),
+                    "faltantes": [],
+                })
+
+
+        elif (
+            estado == "otra_solicitud"
+            and clasificacion.get("tipo") == "consulta"
+        ):
+            from services.retell_consultas import (
+                clasificar_consulta_sofia,
+            )
+
+            consulta = clasificar_consulta_sofia(
+                llamada,
+                agente_autorizado,
+            )
+
+            if (
+                isinstance(consulta, dict)
+                and consulta.get("estado") == "candidata_caso"
+            ):
+                consultas_detectadas.append(consulta)
+
+            else:
+                # No descartar silenciosamente una consulta
+                # que no pudo confirmarse como candidata.
+                consultas_en_revision.append({
+                    "call_id": (
+                        llamada.get("call_id")
+                        if isinstance(llamada, dict)
+                        else None
+                    ),
+                    "estado_clasificacion": (
+                        consulta.get("estado", "sin_estado")
+                        if isinstance(consulta, dict)
+                        else "respuesta_invalida"
+                    ),
+                    "motivo": (
+                        consulta.get("motivo", "sin_motivo")
+                        if isinstance(consulta, dict)
+                        else "respuesta_invalida"
+                    ),
+                })
+
+
 
 
 
@@ -747,7 +821,18 @@ def procesar_pendientes_sofia(
         ),
         "postventas_detectadas": postventas_detectadas,
 
+        "total_consultas_detectadas": len(
+            consultas_detectadas
+        ),
+        "consultas_detectadas": consultas_detectadas,
+
         "resultados": resultados,
+
+        "total_consultas_en_revision": len(
+            consultas_en_revision
+        ),
+        "consultas_en_revision": consultas_en_revision,
+
 
     }
 

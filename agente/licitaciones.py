@@ -260,7 +260,26 @@ def _parecido(a, b):
     return 0.0
 
 
-def buscar_cliente(empresa):
+DOMINIOS_GENERICOS = {"gmail", "hotmail", "outlook", "yahoo", "live", "icloud", "selec", "ariba",
+                      "ansmtp", "wherex", "senegocia", "global", "mail", "correo", "com", "cl"}
+
+
+def pistas_cliente(empresa, *correos):
+    """
+    Nombres cortos que suelen ser el cliente en Creator:
+      - siglas entre paréntesis: "Empresa Nacional de Minería (ENAMI) - Planta Vallenar" -> ENAMI
+      - el dominio del correo: fmilla@enami.cl -> ENAMI; x@global.komatsu -> KOMATSU
+    """
+    pistas = re.findall(r"\(([A-Za-zÁÉÍÓÚÑ0-9&.\- ]{2,20})\)", empresa or "")
+    for correo in correos:
+        dominio = (correo or "").split("@")[-1].lower() if "@" in (correo or "") else ""
+        for parte in dominio.split("."):
+            if len(parte) >= 3 and parte not in DOMINIOS_GENERICOS:
+                pistas.append(parte)
+    return list(dict.fromkeys(p.strip() for p in pistas if p.strip()))
+
+
+def buscar_cliente(empresa, pistas=()):
     """
     Cliente de Creator más parecido al nombre de la empresa compradora.
     Antes se tomaba el primero que contuviera el nombre: "Komatsu Cummins Chile Ltda."
@@ -270,15 +289,25 @@ def buscar_cliente(empresa):
     clave = _normalizar(empresa)
     palabras = [w for w in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{3,}", empresa or "")
                 if not re.fullmatch(SUFIJOS, w.lower())]
-    if clave and palabras:
+    pistas = [p for p in (pistas or []) if p]
+    if clave and (palabras or pistas):
         candidatos = {}
-        for palabra in palabras[:2]:  # las 2 primeras palabras: "Komatsu", "Cummins"
+        # Primero las pistas (siglas y dominio), luego las 2 primeras palabras: "Komatsu", "Cummins"
+        for palabra in list(dict.fromkeys(pistas + palabras[:2])):
             status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_CLIENTES', 'Clientes_Report')}",
                                      params={"criteria": f'(Nombre_de_Cuenta.contains("{_esc(palabra)}"))'})
             if status == 200:
                 for f in datos.get("data") or []:
                     candidatos[f["ID"]] = f.get("Nombre_de_Cuenta") or ""
-        puntajes = sorted(((_parecido(clave, _normalizar(n)), n, i) for i, n in candidatos.items()), reverse=True)
+        claves_pista = {_normalizar(p) for p in pistas}
+
+        def puntaje(nombre):
+            n = _normalizar(nombre)
+            # El cliente se llama igual que la sigla o el dominio (ej. "ENAMI"): coincidencia fuerte
+            if n in claves_pista:
+                return 0.95
+            return _parecido(clave, n)
+        puntajes = sorted(((puntaje(n), n, i) for i, n in candidatos.items()), reverse=True)
         if puntajes and puntajes[0][0] > 0:
             mejor = puntajes[0]
             if len(puntajes) > 1:
@@ -1003,7 +1032,8 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
     if portal == "Codelco":
         cliente_id, cliente_nombre = cliente_codelco()
     else:
-        cliente_id, cliente_nombre = buscar_cliente(empresa)
+        cliente_id, cliente_nombre = buscar_cliente(
+            empresa, pistas_cliente(empresa, analisis.get("contacto_correo"), m.get("remitente")))
 
     avisos = []
     if cliente_nombre == "Por Definir":

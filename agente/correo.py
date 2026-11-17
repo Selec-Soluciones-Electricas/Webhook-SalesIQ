@@ -968,8 +968,17 @@ def verificar_en_creator(aplicar: bool = False, limite: int = 40) -> dict:
 def procesar_correo(m: dict, dry_run: bool) -> dict:
     asunto = m.get("subject") or ""
     cuerpo = m.get("cuerpo") or leer_cuerpo(m["buzon"], m["id"])
-    pdfs = leer_pdfs(m["buzon"], m["id"]) if m.get("hasAttachments") else []
+    # Se revisan los adjuntos siempre: en algunos reenvíos Graph informa hasAttachments=false
+    # aunque el correo traiga PDF (por ejemplo, cuando van incrustados en el cuerpo).
+    try:
+        pdfs = leer_pdfs(m["buzon"], m["id"])
+    except Exception as e:
+        log(f"no se pudieron leer los adjuntos: {e}")
+        pdfs = []
     analisis = analizar(m, cuerpo, pdfs)
+    if pdfs or not (analisis.get("items") or []):
+        log(f"{m.get('subject', '')[:60]!r}: {len(pdfs)} PDF leídos "
+            f"({', '.join(p['nombre'] for p in pdfs) or 'ninguno'}), {len(analisis.get('items') or [])} ítems")
     try:
         # Si Claude lo dejó fuera del rubro pero hay un producto de un tipo que SELEC ya vendió,
         # se considera del rubro (historial de "Artículos facturados").
@@ -1057,6 +1066,54 @@ def ejecutar(horas: int = 24, dry_run: bool = False, limite: int = 10) -> dict:
     if errores_buzon:
         respuesta["errores_buzon"] = errores_buzon
     return respuesta
+
+
+def probar_correo(texto: str, buzon: str | None = None) -> dict:
+    """
+    Diagnóstico SIN guardar nada: busca el correo más reciente que contenga `texto`
+    (asunto, número, etc.) y muestra qué ve el agente: remitente resuelto, adjuntos,
+    PDF que se envían a la IA y el análisis completo (ítems, rubro, exclusiones).
+    Consume una llamada a la IA.
+    """
+    buzon = buzon or (_lista_env("CORREO_BUZONES") or [""])[0]
+    datos = _graph("GET", f"/users/{buzon}/messages",
+                   params={"$search": f'"{texto}"', "$select": CAMPOS_MENSAJE, "$top": 10})
+    mensajes = sorted(datos.get("value", []), key=lambda x: x.get("receivedDateTime", ""), reverse=True)
+    if not mensajes:
+        return {"error": f"No se encontró ningún correo con '{texto}' en {buzon}"}
+    m = mensajes[0]
+    resultado = {
+        "buzon": buzon,
+        "asunto": m.get("subject"),
+        "recibido": m.get("receivedDateTime"),
+        "de": ((m.get("from") or {}).get("emailAddress") or {}).get("address"),
+        "hasAttachments": m.get("hasAttachments"),
+        "otros_resultados": [x.get("subject") for x in mensajes[1:5]],
+    }
+    resultado["permitido"] = preparar_mensaje(m, buzon)
+    resultado["remitente_resuelto"] = m.get("remitente")
+    resultado["reenviado_por"] = m.get("reenviado_por")
+    adjuntos = _graph("GET", f"/users/{buzon}/messages/{m['id']}/attachments",
+                      params={"$select": "name,contentType,size,isInline"})
+    resultado["adjuntos"] = [
+        {"nombre": a.get("name"), "tipo": a.get("contentType"), "kb": round((a.get("size") or 0) / 1024),
+         "inline": a.get("isInline"), "clase": a.get("@odata.type", "").split(".")[-1]}
+        for a in adjuntos.get("value", [])
+    ]
+    pdfs = leer_pdfs(buzon, m["id"])  # se leen aunque hasAttachments venga en false
+    resultado["pdfs_enviados_a_ia"] = [p["nombre"] for p in pdfs]
+    cuerpo = m.get("cuerpo") or leer_cuerpo(buzon, m["id"])
+    resultado["cuerpo_inicio"] = cuerpo[:600]
+    analisis = analizar(m, cuerpo, pdfs)
+    resultado["items_ia"] = len(analisis.get("items") or [])
+    try:
+        from agente.historial import aplicar_historial, aplicar_exclusiones
+        aplicar_historial(analisis)
+        aplicar_exclusiones(analisis)
+    except Exception as e:
+        resultado["aviso"] = f"historial/exclusiones: {e}"
+    resultado["analisis"] = analisis
+    return resultado
 
 
 _en_proceso: set[str] = set()

@@ -154,6 +154,26 @@ def register_correo_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------------------------------
+    # Diagnóstico de un correo (no guarda nada; usa 1 llamada a la IA)
+    #   ?texto=M13002800            parte del asunto o número
+    #   &buzon=elian@selec.cl       (opcional; por defecto el primer buzón)
+    # -----------------------------------------------------
+    @app.route("/cron/correos/probar", methods=["POST"])
+    def probar_correo_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        texto = (request.args.get("texto") or "").strip()
+        if not texto:
+            return jsonify({"error": "Falta ?texto= (parte del asunto o número)"}), 400
+        try:
+            from agente.correo import probar_correo
+            return jsonify(probar_correo(texto, request.args.get("buzon")))
+        except Exception as e:
+            print(f"[cron/correos/probar] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
     # Crear / renovar la suscripción de Graph (1 vez al día)
     # -----------------------------------------------------
     @app.route("/cron/suscripciones", methods=["GET", "POST"])

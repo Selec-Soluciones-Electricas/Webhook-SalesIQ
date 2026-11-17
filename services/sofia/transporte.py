@@ -44,5 +44,3 @@ class ClienteConPlazo:
             raise ValueError('GET no permitido')
         r = self.cliente.get(url, **self.parametros(kwargs))
         return RespuestaConPlazo(r, self.fin, self.reloj)
-
-

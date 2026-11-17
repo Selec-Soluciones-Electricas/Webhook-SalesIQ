@@ -44,5 +44,3 @@ def crear_contexto_aviso(requests, valores):
                 res = consultar_solicitud(args['empresa'], args['referencia_solicitud'], leer)
             return res, destino
     return preparar
-
-

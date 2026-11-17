@@ -88,6 +88,104 @@ def inicio():
 # =========================================================
 
 @app.route(
+    "/api/metricas/formularios/inicio",
+    methods=["POST"],
+)
+
+def validar_inicio_formulario():
+    """Registra el inicio de formularios WhatsApp."""
+
+    import os
+
+    from services.metricas_formularios import (
+        registrar_inicio_analytics,
+        verificar_firma_formulario,
+    )
+
+    if (
+        request.content_length is not None
+        and request.content_length > 2048
+    ):
+        return jsonify({
+            "estado": "datos_demasiado_grandes"
+        }), 413
+
+    datos = request.get_json(silent=True)
+
+    if not isinstance(datos, dict):
+        return jsonify({
+            "estado": "datos_invalidos"
+        }), 400
+
+    identificador = datos.get("form_session_id")
+    firma = datos.get("form_session_firma")
+    origen = datos.get("origen")
+
+    clave = os.getenv(
+        "SELEC_FORMULARIOS_FIRMA_CLAVE", ""
+    )
+
+    if not verificar_firma_formulario(
+        identificador, firma, clave, origen
+    ):
+        return jsonify({
+            "estado": "firma_invalida"
+        }), 403
+
+    # Nunca registrar solicitudes Web.
+    if origen == "web":
+        return jsonify({
+            "estado": "origen_excluido"
+        }), 202
+
+    if origen != "whatsapp":
+        return jsonify({
+            "estado": "origen_invalido"
+        }), 400
+
+    # Deshabilitado por defecto.
+    permitir_escritura = (
+        os.getenv(
+            "SELEC_FORMULARIOS_ESCRITURA", "0"
+        ) == "1"
+    )
+
+    try:
+        sesion = None
+
+        if permitir_escritura:
+            from SELEC_metricas_guardado_seguro import (
+                abrir_sesion,
+            )
+            sesion = abrir_sesion()
+
+        resultado = registrar_inicio_analytics(
+            sesion=sesion,
+            form_session_id=identificador,
+            origen=origen,
+            permitir_escritura=permitir_escritura,
+        )
+
+    except ValueError:
+        return jsonify({
+            "estado": "datos_invalidos"
+        }), 400
+
+    except Exception as error:
+        current_app.logger.warning(
+            "Error seguimiento formulario: %s",
+            type(error).__name__,
+        )
+        return jsonify({
+            "estado": "seguimiento_no_disponible"
+        }), 503
+
+    return jsonify({
+        "estado": resultado
+    }), 200 if permitir_escritura else 202
+
+
+@app.route(
     "/solicitud/cotizacion",
     methods=["GET", "POST"]
 )
@@ -95,9 +193,45 @@ def cotizacion():
 
     if request.method == "GET":
 
-        return render_template(
-            "cotizacion.html"
+        import os
+        from secrets import token_hex
+        from pathlib import Path
+        from dotenv import load_dotenv
+
+        from services.metricas_formularios import (
+            firmar_id_formulario,
         )
+
+        load_dotenv(
+            Path(__file__).resolve().parents[1] / ".env"
+        )
+
+        clave = os.getenv(
+            "SELEC_FORMULARIOS_FIRMA_CLAVE", ""
+        )
+
+        form_session_id = ""
+        form_session_firma = ""
+
+        origen_firmado = request.args.get(
+            "origen", ""
+        ).strip().lower()
+
+        if len(clave) >= 32 and origen_firmado in {"web", "whatsapp"}:
+            form_session_id = token_hex(16)
+            form_session_firma = firmar_id_formulario(
+                form_session_id,
+                clave,
+                origen_firmado,
+            )
+
+        return render_template(
+            "cotizacion.html",
+            form_session_id=form_session_id,
+            form_session_firma=form_session_firma,
+        )
+
+
 
 
     # =====================================================
@@ -116,6 +250,39 @@ def cotizacion():
     }:
 
         origen = "no_identificado"
+
+
+    # =====================================================
+    # VERIFICAR IDENTIFICADOR DEL FORMULARIO
+    # =====================================================
+
+    import os
+
+    from services.metricas_formularios import (
+        verificar_firma_formulario,
+    )
+
+    form_session_id_recibido = request.form.get(
+        "form_session_id", ""
+    ).strip()
+
+    form_session_firma_recibida = request.form.get(
+        "form_session_firma", ""
+    ).strip()
+
+    form_session_id_verificado = ""
+
+    if verificar_firma_formulario(
+        form_session_id_recibido,
+        form_session_firma_recibida,
+        os.getenv("SELEC_FORMULARIOS_FIRMA_CLAVE", ""),
+        origen,
+    ):
+        form_session_id_verificado = form_session_id_recibido
+
+    if origen == "whatsapp" and not form_session_id_verificado:
+        origen = "no_identificado"
+        attempt_id = ""
 
 
     # =====================================================
@@ -717,6 +884,67 @@ def cotizacion():
     ] = str(
         deal_id
     )
+
+
+    # =====================================================
+    # METRICAS - CONFIRMACION DEL FORMULARIO
+    # =====================================================
+
+
+    if origen == "whatsapp" and form_session_id_verificado:
+        try:
+            import os
+
+
+            from services.metricas_formularios import (
+                registrar_inicio_analytics,
+                registrar_confirmacion_analytics,
+            )
+
+
+            permitir_escritura = (
+                os.getenv(
+                    "SELEC_FORMULARIOS_ESCRITURA", "0"
+                ) == "1"
+            )
+
+            sesion = None
+
+            if permitir_escritura:
+                from SELEC_metricas_guardado_seguro import (
+                    abrir_sesion,
+                )
+                sesion = abrir_sesion()
+
+
+            # Asegurar que exista el inicio antes
+            # de confirmar el negocio en Analytics.
+            resultado_inicio = registrar_inicio_analytics(
+                sesion=sesion,
+                form_session_id=form_session_id_verificado,
+                origen="whatsapp",
+                permitir_escritura=permitir_escritura,
+            )
+
+
+            resultado_seguimiento = registrar_confirmacion_analytics(
+                sesion=sesion,
+                form_session_id=form_session_id_verificado,
+                deal_id=str(deal_id),
+                permitir_escritura=permitir_escritura,
+            )
+
+            current_app.logger.info(
+                "[METRICAS FORMULARIOS] Confirmacion: %s",
+                resultado_seguimiento,
+            )
+
+        except Exception as error:
+            current_app.logger.warning(
+                "Seguimiento de formulario no disponible: %s",
+                type(error).__name__,
+            )
+
 
 
     solicitud[

@@ -29,6 +29,7 @@ from routes.excel_routes import excel_bp
 from routes.correo_routes import register_correo_routes
 from services.zoho_service import get_access_token
 from utils.sesiones import SesionesConExpiracion
+from routes.metricas_cron_seguro import registrar_rutas_metricas
 from routes.flow_mvp import (
     flow_mvp_bp,
 )
@@ -73,6 +74,8 @@ register_routes(
 register_correo_routes(app)
 
 register_cron_routes(app)
+
+registrar_rutas_metricas(app)
 
 register_reparacion_routes(app)
 

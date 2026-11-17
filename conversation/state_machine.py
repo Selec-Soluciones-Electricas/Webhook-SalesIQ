@@ -354,7 +354,7 @@ def iniciar_cotizacion(
         (
             "Para solicitar una cotización, complete el "
             "siguiente formulario con los datos de su requerimiento:\n\n"
-            "https://webhook-salesiq-production.up.railway.app/"
+            "https://webhook-salesiq.onrender.com/"
             "solicitud/cotizacion?origen=whatsapp"
         )
     )

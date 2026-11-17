@@ -490,6 +490,19 @@
                 value="{{ request.args.get('origen', '') }}"
             >
 
+            <input
+                type="hidden"
+                name="form_session_id"
+                value="{{ form_session_id | e }}"
+            >
+
+
+            <input
+                type="hidden"
+                name="form_session_firma"
+                value="{{ form_session_firma | e }}"
+            >
+
 
             <!--
                 ESTE CAMPO SE ENVIARÁ AL BACKEND.
@@ -2314,6 +2327,98 @@
 
 
         renderStep();
+
+
+        /* =================================================
+           METRICAS - PRIMERA INTERACCION DEL CLIENTE
+        ================================================== */
+
+        let inicioFormularioNotificado = false;
+
+        function notificarInicioFormulario(event) {
+
+            if (inicioFormularioNotificado) {
+                return;
+            }
+
+            const campo = event.target;
+
+            if (
+                !(campo instanceof HTMLElement) ||
+                !campo.matches(
+                    'input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, select'
+                )
+            ) {
+                return;
+            }
+
+            if (
+                (campo.type === "checkbox" ||
+                 campo.type === "radio") &&
+                !campo.checked
+            ) {
+                return;
+            }
+
+            if (
+                campo.type === "file"
+                    ? !campo.files.length
+                    : !String(campo.value || "").trim()
+            ) {
+                return;
+            }
+
+            const identificador = form.querySelector(
+                '[name="form_session_id"]'
+            )?.value;
+
+            const firma = form.querySelector(
+                '[name="form_session_firma"]'
+            )?.value;
+
+            const origen = form.querySelector(
+                '[name="origen"]'
+            )?.value;
+
+            if (
+                !identificador ||
+                !firma ||
+                !["whatsapp", "web"].includes(origen)
+            ) {
+                return;
+            }
+
+            inicioFormularioNotificado = true;
+
+            fetch("/api/metricas/formularios/inicio", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                credentials: "same-origin",
+                keepalive: true,
+                body: JSON.stringify({
+                    form_session_id: identificador,
+                    form_session_firma: firma,
+                    origen: origen
+                })
+            }).catch(() => {
+                // Las metricas no deben interrumpir
+                // el funcionamiento del formulario.
+            });
+        }
+
+        form.addEventListener(
+            "input",
+            notificarInicioFormulario
+        );
+
+        form.addEventListener(
+            "change",
+            notificarInicioFormulario
+        );
+
+
 
 
     })();

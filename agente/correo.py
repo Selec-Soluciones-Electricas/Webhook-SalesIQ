@@ -254,7 +254,7 @@ def leer_cuerpo(buzon: str, mensaje_id: str) -> str:
         params={"$select": "body"},
         headers={"Prefer": 'outlook.body-content-type="text"'},
     )
-    return (datos.get("body") or {}).get("content", "")[:20000]
+    return (datos.get("body") or {}).get("content", "")[:60000]  # licitaciones largas: hasta ~60 mil caracteres de cuerpo
 
 
 # =========================================================
@@ -667,7 +667,7 @@ def _sistema(instrucciones: str) -> list[dict]:
 def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
     global _cliente_ia
     if _cliente_ia is None:
-        _cliente_ia = Anthropic(timeout=120, max_retries=2)
+        _cliente_ia = Anthropic(timeout=300, max_retries=2)
 
     contenido = [
         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": p["base64"]}, "title": p["nombre"]}
@@ -686,16 +686,39 @@ def analizar(m: dict, cuerpo: str, pdfs: list[dict]) -> dict:
         ),
     })
 
-    respuesta = _cliente_ia.messages.create(
-        model=MODELO,
-        max_tokens=4000,
-        system=_sistema(INSTRUCCIONES),
-        tools=[HERRAMIENTA_ANALISIS],
-        # "auto": algunos modelos no aceptan forzar la herramienta (tool_choice "tool").
-        # El prompt le pide usarla siempre y abajo se valida que lo haya hecho.
-        tool_choice={"type": "auto"},
-        messages=[{"role": "user", "content": contenido}],
-    )
+    # Licitaciones con muchos productos (57, 80, 150 ítems...) necesitan bastante salida.
+    # Se parte con CORREO_MAX_TOKENS (16000) y, si la respuesta se corta, se reintenta con el
+    # doble hasta CORREO_MAX_TOKENS_TOPE (64000). Solo se cobra lo que se usa.
+    # Se usa streaming porque con límites altos la API no acepta la llamada normal.
+    max_salida = int(os.getenv("CORREO_MAX_TOKENS", "16000"))
+    tope = int(os.getenv("CORREO_MAX_TOKENS_TOPE", "64000"))
+    while True:
+        with _cliente_ia.messages.stream(
+            model=MODELO,
+            max_tokens=max_salida,
+            system=_sistema(INSTRUCCIONES),
+            tools=[HERRAMIENTA_ANALISIS],
+            # "auto": algunos modelos no aceptan forzar la herramienta (tool_choice "tool").
+            # El prompt le pide usarla siempre y abajo se valida que lo haya hecho.
+            tool_choice={"type": "auto"},
+            messages=[{"role": "user", "content": contenido}],
+        ) as flujo:
+            respuesta = flujo.get_final_message()
+        if respuesta.stop_reason != "max_tokens":
+            break
+        if max_salida >= tope:
+            # Mejor fallar y avisar que registrar una licitación sin productos
+            raise RuntimeError(f"La respuesta de la IA se cortó aun con {max_salida} tokens "
+                               f"(correo con demasiados productos). Sube CORREO_MAX_TOKENS_TOPE.")
+        log(f"{(m.get('subject') or '')[:60]!r}: respuesta cortada con {max_salida} tokens, "
+            f"se reintenta con {min(max_salida * 2, tope)}")
+        max_salida = min(max_salida * 2, tope)
+    u = getattr(respuesta, "usage", None)
+    if u:
+        log(f"uso {MODELO}: entrada {getattr(u, 'input_tokens', 0)} | escrito caché "
+            f"{getattr(u, 'cache_creation_input_tokens', 0) or 0} | leído caché "
+            f"{getattr(u, 'cache_read_input_tokens', 0) or 0} | salida {getattr(u, 'output_tokens', 0)} | "
+            f"pdfs {len(pdfs)} | {m.get('remitente', '')}")
     for bloque in respuesta.content:
         if bloque.type == "tool_use" and bloque.name == "registrar_analisis":
             return bloque.input

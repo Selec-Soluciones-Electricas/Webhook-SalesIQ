@@ -1164,41 +1164,64 @@ def probar_correo(texto: str, buzon: str | None = None, procesar: bool = False) 
     return resultado
 
 
+def _recibido_chile(texto: str):
+    """Fecha 'Recibido' de Analytics -> datetime (acepta los formatos que devuelve la API)."""
+    texto = (texto or "").strip()
+    for formato in ("%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M", "%d %b %Y %H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                    "%d/%m/%Y %H:%M:%S", "%b %d, %Y %H:%M:%S"):
+        try:
+            return datetime.strptime(texto[:len(datetime.now().strftime(formato))], formato).replace(tzinfo=CHILE_TZ)
+        except ValueError:
+            continue
+    return None
+
+
+def _es_error(fila: dict) -> bool:
+    """La licitación no se pudo crear: 'Error: ...' en Licitacion Creator, o el correo quedó como tipo error."""
+    lic = (fila.get("Licitacion Creator") or "").strip().lower()
+    return lic.startswith("error") or (fila.get("Tipo") or "").strip().lower() == "error"
+
+
 def reintentar_errores(horas: int = 24, limite: int = 20, aplicar: bool = False) -> dict:
     """
     Vuelve a procesar los correos de las últimas `horas` cuya licitación quedó en
-    "Error: ..." (por ejemplo, cuando la API de Zoho Creator estaba caída).
+    "Error: ..." o cuyo análisis quedó como tipo "error" (por ejemplo, cuando la API de
+    Zoho Creator estaba caída).
       aplicar=False: solo lista cuáles se reintentarían (no gasta tokens).
       aplicar=True:  los analiza de nuevo, crea la licitación y REEMPLAZA su fila en Analytics.
     No duplica licitaciones: crear_licitacion revisa si ya existe en Creator.
     """
     base, headers = _analytics()
-    config = {"responseFormat": "json", "keyValueFormat": True,
-              "criteria": "\"Licitacion Creator\" like 'Error%'",
-              "selectedColumns": ["Message ID", "Recibido", "ID Proceso", "Licitacion Creator"]}
+    columnas = ["Message ID", "Recibido", "Tipo", "ID Proceso", "Remitente", "Resumen"]
+    if os.getenv("ANALYTICS_COLUMNA_LICITACION", "off").lower() == "on":
+        columnas.append("Licitacion Creator")
+    config = {"responseFormat": "json", "keyValueFormat": True, "selectedColumns": columnas}
     resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
     if resp.status_code != 200:
         raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
     desde = datetime.now(CHILE_TZ) - timedelta(hours=horas)
-    filas = []
+    recientes = []
     for f in resp.json().get("data") or []:
-        try:
-            recibido = datetime.strptime(f.get("Recibido", "")[:19], "%d-%m-%Y %H:%M:%S").replace(tzinfo=CHILE_TZ)
-        except ValueError:
-            try:  # Analytics a veces devuelve la fecha con otro formato
-                recibido = datetime.strptime(f.get("Recibido", "")[:20], "%d %b %Y %H:%M:%S").replace(tzinfo=CHILE_TZ)
-            except ValueError:
-                recibido = None  # fecha en formato desconocido: se incluye (se ve en la simulación)
-        if recibido is None or recibido >= desde:
-            filas.append({**f, "_recibido": recibido})
-    filas.sort(key=lambda f: f["_recibido"] or desde)
-    filas = filas[:limite]
+        recibido = _recibido_chile(f.get("Recibido"))
+        if recibido and recibido >= desde:
+            recientes.append({**f, "_recibido": recibido})
+    recientes.sort(key=lambda f: f["_recibido"])
+    filas = [f for f in recientes if _es_error(f)][:limite]
     resultado = {"modo": "aplicado" if aplicar else "simulación (agrega &aplicar=1 para reintentar)",
                  "encontrados": len(filas), "correos": []}
+    if not filas:
+        # Para revisar por qué no hay errores: cómo quedaron los correos del período
+        resultado["correos_del_periodo"] = len(recientes)
+        resultado["ultimos"] = [
+            {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M"), "tipo": f.get("Tipo"),
+             "id_proceso": f.get("ID Proceso"), "remitente": f.get("Remitente"),
+             "licitacion": (f.get("Licitacion Creator") or "")[:120],
+             "resumen": (f.get("Resumen") or "")[:120]}
+            for f in recientes[-25:]
+        ]
     for f in filas:
-        item = {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M") if f["_recibido"] else f.get("Recibido"),
-                "id_proceso": f.get("ID Proceso"),
-                "error_anterior": (f.get("Licitacion Creator") or "")[:150]}
+        item = {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M"), "id_proceso": f.get("ID Proceso"),
+                "error_anterior": (f.get("Licitacion Creator") or f.get("Resumen") or "")[:150]}
         if aplicar:
             mid = f["Message ID"]
             m = None

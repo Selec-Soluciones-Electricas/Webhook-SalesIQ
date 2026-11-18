@@ -940,6 +940,33 @@ def _id_deal(lic_id):
     return str(fila.get("ID_Deals_CRM") or "").strip()
 
 
+def reenviar_a_crm(lic_id, aplicar=False):
+    """
+    Revisa una licitación ya creada y, si no tiene Negocio en CRM (ID_Deals_CRM vacío o no
+    visible en el reporte), la edita por API con su MISMA Fase para que el workflow
+    "Integracion Licitacion a CRM" vuelva a correr. No cambia ningún dato y no duplica
+    el Negocio (el workflow solo crea si ID_Deals_CRM está vacío).
+    """
+    reporte = os.getenv("CREATOR_REPORT_LICITACION", "Licitaci_n_Report")
+    status, datos = _creator("GET", f"report/{reporte}/{lic_id}")
+    fila = datos.get("data") if status == 200 else None
+    if not isinstance(fila, dict):
+        return {"id": lic_id, "estado": f"no encontrada en Creator ({status})"}
+    nombre = fila.get("Nombre_de_Trato") or ""
+    deal = str(fila.get("ID_Deals_CRM") or "").strip() if "ID_Deals_CRM" in fila else None
+    fase = _valor(fila.get("Fase")) or "Pendiente por cotizar"
+    if deal:
+        return {"id": lic_id, "trato": nombre, "estado": f"ya tiene Negocio en CRM ({deal})"}
+    if not aplicar:
+        return {"id": lic_id, "trato": nombre, "fase": fase,
+                "estado": "sin Negocio en CRM: se reenviaría" if deal == "" else
+                          "no se ve ID_Deals_CRM en el reporte: se reenviaría"}
+    status, resp = _creator("PATCH", f"report/{reporte}/{lic_id}", json={"data": {"Fase": fase}})
+    if not (status == 200 and resp.get("code") == 3000):
+        return {"id": lic_id, "trato": nombre, "estado": f"no se pudo reenviar (Creator {status}): {str(resp)[:150]}"}
+    return {"id": lic_id, "trato": nombre, "estado": "reenviada al CRM"}
+
+
 def sincronizar_crm(lic_id):
     """
     Asegura que la licitación quede como Negocio en CRM.
@@ -971,6 +998,53 @@ def sincronizar_crm(lic_id):
                 "'Integracion Licitacion a CRM' ([Deals] Error al crear)")
     except Exception as e:
         return f"no se pudo revisar el envío al CRM: {type(e).__name__}: {str(e)[:150]}"
+
+
+MARCAS_EXCEL_CHINA = (
+    "ABB,ABMATIC,ADVANTECH,AECOSENSOR,AEMC,ALLENBRADLEY,ALTECH,AMERICANFIBERTEK,AMETEK,ARYAR,ATLASCOPCO,"
+    "AUMA,BR,BALLUF,BANNER,BAOFENG,BATERIALITIO,BELDEN,BENDER,BENTLYNEVADA,BITZER,BOSCH,BRADY,BUSSMANN,"
+    "CABLE,CALIBRATOR,CAMPBELL,CAREL,CARLOGAVAZZI,CELESCO,CHINT,CISCO,CONTROLTECHNIQUES,CUTLERHAMMER,"
+    "DAHUA,DANFOSS,DARCOTEX,DELL,DELTA,DRAGER,DREXELBROOK,DUNGS,DWYER,DYNEX,EASTRON,EATON,EBROARMATUREN,"
+    "ELOBAU,EMBPAPST,EMERSON,ENDRESS,EPEVER,EUPEC,FAN,FESTO,FINDER,FISHER,FLIR,FLUIDSUPPLY,FLUKE,FNIRSI,"
+    "FOXBORO,FUJI,FUSE,GATES,GE,GENERALELECTRIC,GOULDSHAWMUT,GOYEN,GUNTNER,HACH,HANNA,HARVEST,"
+    "HBCRADIOMATIC,HEIDENHAI,HENGSTLER,HICONICS,HIDGLOBAL,HIKVISION,HIOKI,HIRSCHMANN,HITACHI,HONEYWELL,HP,"
+    "HYDROPA,IDEC,IEHC,IFM,IMPRES,IRISYS,ITALWEBER,JABRA,JIANGSUYAWEI,JUMPER,KENWOOD,KOINO,KSB,LAPP,LCOM,"
+    "LEXO,LIEBERT,LOGITECH,LOVATO,LUTRON,MAGNETEK,MASTERLOCK,MEANWELL,MEGGER,MERLINGERIN,METSO,"
+    "METTLERTOLEDO,MHCONNECTORS,MICROSONIC,MILLTRONICS,MILWAUKEE,MININOTIFIER,MITSUBISHI,MODICON,MOTOROLA,"
+    "MOUJEN,MOXA,MURRELECTRONIK,NEXTION,NORDTECHNIK,NORGREN,NOTIFIER,NOYAFA,NTRON,NVIDIA,OMEGA,OMRON,"
+    "OPTEX,OPTRONIC,PANASONIC,PARKER,PENTAIRGOYEN,PEPPERLFUCHS,PHOENIXCONTACT,PILZ,PIZZATO,PLANET,"
+    "PLANTRONICS,PMV,PNEUMAX,POWERELECTRONICS,PROSOFT,PROSOFTMODICON,PYLONTECH,RADIOMATIC,RADWIN,RAMSEY,"
+    "RITTAL,ROCKWELL,ROSEMOUNT,ROTORK,ROXTEC,SAACKE,SCHMERSAL,SCHNEIDER,SCHNEIDERELECTRIC,SCHRACK,"
+    "SEMIKRON,SEW,SICK,SIEMENS,SIEMON,SIMATEK,SKF,SMC,SOLA,SONATAX,SPRINGERCONTROLS,SQUARED,STARRET,SUNON,"
+    "TADIRAN,TAIHUA,TECNOMEMORY,TECSYSTEM,TELEMECANIQUE,TELERADIO,TESTO,TEXASINSTRUMENTS,"
+    "THERMOFISHERSCIENTIFIC,TIME,TOKU,TRELECTRONIC,TSI,TURCK,UBIQUITI,UNIFY,UNIT,UNIVERSALFLOWMONITOR,"
+    "VACON,VEGA,VISION,VOITHTURBO,WAGO,WEG,WEIDMULLER,WEINTEK,WENGLOR,WESCODE,WESTINGHOUSE,WIELAND,WIKA,"
+    "XECRO,YASKAWA,ZEBRA,ZIEHLABEGG"
+)
+
+
+def _clave_marca(texto):
+    """'Allen-Bradley' -> 'ALLENBRADLEY', 'B&R' -> 'BR', 'Pepperl+Fuchs' -> 'PEPPERLFUCHS', 'Dräger' -> 'DRAGER'."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^A-Z0-9]", "", t.upper())
+
+
+def es_marca_excel_china(marca):
+    """
+    True si la marca está en el listado de "Excel china" (variable EXCEL_CHINA_MARCAS para cambiarlo).
+    Se compara sin espacios, guiones ni tildes. Las marcas de 6+ letras también coinciden si la marca
+    del correo las contiene al inicio (ej. "Endress+Hauser" -> ENDRESS); las cortas (GE, HP, SEW...)
+    solo si son exactas, para no marcar "GEWISS" como GE.
+    """
+    clave = _clave_marca(marca)
+    if not clave:
+        return False
+    marcas = {_clave_marca(m) for m in (os.getenv("EXCEL_CHINA_MARCAS") or MARCAS_EXCEL_CHINA).split(",")}
+    marcas.discard("")
+    if clave in marcas:
+        return True
+    return any(len(m) >= 6 and clave.startswith(m) for m in marcas)
 
 
 def cantidad_numero(texto):
@@ -1057,6 +1131,10 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
             fila["Numero_de_parte"] = it["numero_parte"][:250]
         if it.get("marca"):
             fila["Marca"] = it["marca"][:250]
+        # Excel china: se marca si la marca de ESTA fila está en el listado (igual que el workflow
+        # "Automatizacion Excel china", que por API no se ejecuta porque es de entrada de usuario)
+        if es_marca_excel_china(it.get("marca")):
+            fila[os.getenv("CREATOR_CAMPO_EXCEL_CHINA", "Excel_china")] = True
         productos.append(fila)
     if not productos:
         return {"omitida": "sin productos"}

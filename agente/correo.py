@@ -1186,80 +1186,87 @@ def _es_error(fila: dict) -> bool:
     return lic.startswith("error") or (fila.get("Tipo") or "").strip().lower() == "error"
 
 
+TIPOS_LICITACION = {"invitacion_licitacion", "solicitud_cotizacion"}
+
+
+def _filas_por_id(ids: list[str], columnas: list[str]) -> dict[str, dict]:
+    """Filas de Analytics de estos Message ID (consulta por lotes; no depende del formato de fecha)."""
+    base, headers = _analytics()
+    filas = {}
+    ids = list(dict.fromkeys(i for i in ids if i))
+    for inicio in range(0, len(ids), LOTE_CONSULTA):
+        lote = ids[inicio:inicio + LOTE_CONSULTA]
+        lista = ",".join("'" + i.replace("'", "''") + "'" for i in lote)
+        config = {"responseFormat": "json", "keyValueFormat": True,
+                  "criteria": f"\"Message ID\" in ({lista})", "selectedColumns": columnas}
+        resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+        if resp.status_code != 200:
+            raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+        for f in resp.json().get("data") or []:
+            filas[f.get("Message ID")] = f
+    return filas
+
+
 def reintentar_errores(horas: int = 24, limite: int = 20, aplicar: bool = False) -> dict:
     """
-    Vuelve a procesar los correos de las últimas `horas` cuya licitación quedó en
-    "Error: ..." o cuyo análisis quedó como tipo "error" (por ejemplo, cuando la API de
-    Zoho Creator estaba caída).
+    Reintenta los correos de las últimas `horas` que quedaron SIN licitación en Creator
+    (por ejemplo, cuando la API de Zoho Creator estaba caída):
+      - "Licitacion Creator" con "Error: ...", o
+      - el análisis quedó como tipo "error", o
+      - es una invitación / solicitud de cotización y no tiene resultado de licitación.
+    Los correos se toman del buzón (Graph) y su estado se busca en Analytics por Message ID.
       aplicar=False: solo lista cuáles se reintentarían (no gasta tokens).
       aplicar=True:  los analiza de nuevo, crea la licitación y REEMPLAZA su fila en Analytics.
     No duplica licitaciones: crear_licitacion revisa si ya existe en Creator.
     """
-    base, headers = _analytics()
-    columnas = ["Message ID", "Recibido", "Tipo", "ID Proceso", "Remitente", "Resumen"]
-    if os.getenv("ANALYTICS_COLUMNA_LICITACION", "off").lower() == "on":
+    mensajes = []
+    for buzon in _lista_env("CORREO_BUZONES"):
+        try:
+            mensajes += listar_pendientes(buzon, horas)
+        except Exception as e:
+            log(f"reintento: no se pudo leer {buzon}: {e}")
+    columnas = ["Message ID", "Tipo", "ID Proceso", "Resumen"]
+    con_columna = os.getenv("ANALYTICS_COLUMNA_LICITACION", "off").lower() == "on"
+    if con_columna:
         columnas.append("Licitacion Creator")
-    config = {"responseFormat": "json", "keyValueFormat": True, "selectedColumns": columnas}
-    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
-    if resp.status_code != 200:
-        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
-    desde = datetime.now(CHILE_TZ) - timedelta(hours=horas)
-    recientes = []
-    todas = resp.json().get("data") or []
-    for f in todas:
-        recibido = _recibido_chile(f.get("Recibido"))
-        if recibido and recibido >= desde:
-            recientes.append({**f, "_recibido": recibido})
-    recientes.sort(key=lambda f: f["_recibido"])
-    filas = [f for f in recientes if _es_error(f)][:limite]
+    filas = _filas_por_id([m["internetMessageId"] for m in mensajes], columnas)
+
+    candidatos = []
+    for m in sorted(mensajes, key=lambda x: x.get("receivedDateTime", "")):
+        f = filas.get(m["internetMessageId"])
+        if not f:
+            continue  # aún no analizado: lo toma la revisión normal (/cron/correos)
+        lic = (f.get("Licitacion Creator") or "").strip()
+        tipo = (f.get("Tipo") or "").strip().lower()
+        if (lic.lower().startswith("error") or tipo == "error"
+                or (con_columna and not lic and tipo in TIPOS_LICITACION)):
+            candidatos.append((m, f))
+    candidatos = candidatos[:limite]
+
     resultado = {"modo": "aplicado" if aplicar else "simulación (agrega &aplicar=1 para reintentar)",
-                 "encontrados": len(filas), "correos": []}
-    if not filas:
-        # Para revisar por qué no hay errores: cómo quedaron los correos del período
-        resultado["correos_del_periodo"] = len(recientes)
-        resultado["filas_en_tabla"] = len(todas)
-        # Formato real de la fecha "Recibido" que devuelve Analytics (para ajustar el filtro)
-        resultado["muestra_recibido"] = [f.get("Recibido") for f in todas[-5:]]
-        resultado["ultimos"] = [
-            {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M"), "tipo": f.get("Tipo"),
-             "id_proceso": f.get("ID Proceso"), "remitente": f.get("Remitente"),
-             "licitacion": (f.get("Licitacion Creator") or "")[:120],
-             "resumen": (f.get("Resumen") or "")[:120]}
-            for f in recientes[-25:]
-        ]
-    for f in filas:
-        item = {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M"), "id_proceso": f.get("ID Proceso"),
-                "error_anterior": (f.get("Licitacion Creator") or f.get("Resumen") or "")[:150]}
+                 "correos_revisados": len(mensajes), "en_analytics": len(filas),
+                 "encontrados": len(candidatos), "correos": []}
+    for m, f in candidatos:
+        item = {"recibido": _fecha_chile(m.get("receivedDateTime")), "asunto": (m.get("subject") or "")[:120],
+                "id_proceso": f.get("ID Proceso"), "tipo": f.get("Tipo"),
+                "estado_anterior": (f.get("Licitacion Creator") or f.get("Resumen") or "")[:150]}
         if aplicar:
-            mid = f["Message ID"]
-            m = None
-            for buzon in _lista_env("CORREO_BUZONES"):
-                datos = _graph("GET", f"/users/{buzon}/messages",
-                               params={"$filter": f"internetMessageId eq '{mid}'", "$select": CAMPOS_MENSAJE})
-                if datos.get("value"):
-                    m = datos["value"][0]
-                    if not preparar_mensaje(m, buzon):
-                        m = None
-                    break
-            if not m:
-                item["resultado"] = "no se encontró el correo en el buzón"
+            clave = m["internetMessageId"]
+            with _candado:
+                ocupado = clave in _en_proceso
+                _en_proceso.add(clave)
+            if ocupado:
+                item["resultado"] = "ya se está procesando"
             else:
-                clave = m["internetMessageId"]
-                with _candado:
-                    ocupado = clave in _en_proceso
-                    _en_proceso.add(clave)
-                if ocupado:
-                    item["resultado"] = "ya se está procesando"
-                else:
-                    try:
-                        r = procesar_correo(m, dry_run=False, actualizar=True)
-                        item["resultado"] = r.get("licitacion") or r.get("tipo") or "procesado"
-                    except Exception as e:
-                        item["resultado"] = f"error: {str(e)[:200]}"
-                    finally:
-                        with _candado:
-                            _en_proceso.discard(clave)
-            log(f"reintento {item['id_proceso']}: {item.get('resultado')}")
+                try:
+                    r = procesar_correo(m, dry_run=False, actualizar=True)
+                    item["resultado"] = texto_licitacion(r.get("licitacion")) or r.get("tipo") or "procesado"
+                except Exception as e:
+                    item["resultado"] = f"error: {str(e)[:200]}"
+                finally:
+                    with _candado:
+                        _en_proceso.discard(clave)
+            log(f"reintento {item['id_proceso']}: {item['resultado']}")
         resultado["correos"].append(item)
     return resultado
 

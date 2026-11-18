@@ -1246,6 +1246,14 @@ def reintentar_errores(horas: int = 24, limite: int = 20, aplicar: bool = False)
     resultado = {"modo": "aplicado" if aplicar else "simulación (agrega &aplicar=1 para reintentar)",
                  "correos_revisados": len(mensajes), "en_analytics": len(filas),
                  "encontrados": len(candidatos), "correos": []}
+    if not aplicar:
+        # Cómo quedó cada correo del período (para revisar por qué uno no se reintenta)
+        resultado["estados"] = [
+            {"recibido": _fecha_chile(m.get("receivedDateTime")), "asunto": (m.get("subject") or "")[:90],
+             "tipo": (filas.get(m["internetMessageId"]) or {}).get("Tipo"),
+             "licitacion": ((filas.get(m["internetMessageId"]) or {}).get("Licitacion Creator") or "")[:120]}
+            for m in sorted(mensajes, key=lambda x: x.get("receivedDateTime", ""))
+        ]
     for m, f in candidatos:
         item = {"recibido": _fecha_chile(m.get("receivedDateTime")), "asunto": (m.get("subject") or "")[:120],
                 "id_proceso": f.get("ID Proceso"), "tipo": f.get("Tipo"),

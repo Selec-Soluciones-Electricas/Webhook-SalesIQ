@@ -446,6 +446,17 @@ def guardar_fila(columnas: dict) -> None:
         raise RuntimeError(f"Analytics insertar -> {resp.status_code}: {resp.text[:300]}")
 
 
+def actualizar_fila(columnas: dict) -> None:
+    """Reemplaza la fila existente de ese Message ID (para reintentos; no crea filas nuevas)."""
+    base, headers = _analytics()
+    mid = columnas["Message ID"].replace("'", "''")
+    config = {"columns": {k: v for k, v in columnas.items() if k != "Message ID"},
+              "criteria": f"\"Message ID\" = '{mid}'", "dateFormat": "dd-MM-yyyy HH:mm:ss"}
+    resp = _pedir("PUT", f"{base}/rows", intentos=1, headers=headers, params={"CONFIG": json.dumps(config)})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Analytics actualizar -> {resp.status_code}: {resp.text[:300]}")
+
+
 def _fecha_chile(iso_utc: str) -> str:
     try:
         dt = datetime.fromisoformat((iso_utc or "").replace("Z", "+00:00"))
@@ -988,7 +999,7 @@ def verificar_en_creator(aplicar: bool = False, limite: int = 40) -> dict:
 # PROCESO PRINCIPAL
 # =========================================================
 
-def procesar_correo(m: dict, dry_run: bool) -> dict:
+def procesar_correo(m: dict, dry_run: bool, actualizar: bool = False) -> dict:
     asunto = m.get("subject") or ""
     cuerpo = m.get("cuerpo") or leer_cuerpo(m["buzon"], m["id"])
     # Se revisan los adjuntos siempre: en algunos reenvíos Graph informa hasAttachments=false
@@ -1035,8 +1046,11 @@ def procesar_correo(m: dict, dry_run: bool) -> dict:
                 log(f"ERROR creando licitación en Creator: {e}")
                 licitacion = {"error": str(e)[:300]}
             log(f"licitación {analisis.get('id_proceso', '')}: {texto_licitacion(licitacion)}")
-        # 2) Guardar en Analytics
-        guardar_fila(fila_analytics(m, analisis, licitacion))
+        # 2) Guardar en Analytics (en un reintento se reemplaza la fila que ya existía)
+        if actualizar:
+            actualizar_fila(fila_analytics(m, analisis, licitacion))
+        else:
+            guardar_fila(fila_analytics(m, analisis, licitacion))
 
     log(
         f"{m['buzon']} <- {m['remitente']} | {analisis['tipo']} | "
@@ -1091,12 +1105,16 @@ def ejecutar(horas: int = 24, dry_run: bool = False, limite: int = 10) -> dict:
     return respuesta
 
 
-def probar_correo(texto: str, buzon: str | None = None) -> dict:
+def probar_correo(texto: str, buzon: str | None = None, procesar: bool = False) -> dict:
     """
     Diagnóstico SIN guardar nada: busca el correo más reciente que contenga `texto`
     (asunto, número, etc.) y muestra qué ve el agente: remitente resuelto, adjuntos,
     PDF que se envían a la IA y el análisis completo (ítems, rubro, exclusiones).
     Consume una llamada a la IA.
+
+    procesar=True: en vez de solo mostrar, procesa ESE correo de verdad (crea la licitación y
+    guarda la fila en Analytics), aunque ya esté registrado. Sirve para reintentar un correo
+    que falló. No duplica la licitación: crear_licitacion revisa si ya existe en Creator.
     """
     buzon = buzon or (_lista_env("CORREO_BUZONES") or [""])[0]
     datos = _graph("GET", f"/users/{buzon}/messages",
@@ -1116,6 +1134,13 @@ def probar_correo(texto: str, buzon: str | None = None) -> dict:
     resultado["permitido"] = preparar_mensaje(m, buzon)
     resultado["remitente_resuelto"] = m.get("remitente")
     resultado["reenviado_por"] = m.get("reenviado_por")
+    if procesar:
+        if not resultado["permitido"]:
+            resultado["error"] = "El remitente no está permitido: no se procesa"
+            return resultado
+        log(f"reproceso manual: {m.get('subject')!r} de {m.get('remitente')}")
+        resultado["procesado"] = _procesar_una_vez(m, dry_run=False)
+        return resultado
     adjuntos = _graph("GET", f"/users/{buzon}/messages/{m['id']}/attachments",
                       params={"$select": "name,contentType,size,isInline"})
     resultado["adjuntos"] = [
@@ -1136,6 +1161,75 @@ def probar_correo(texto: str, buzon: str | None = None) -> dict:
     except Exception as e:
         resultado["aviso"] = f"historial/exclusiones: {e}"
     resultado["analisis"] = analisis
+    return resultado
+
+
+def reintentar_errores(horas: int = 24, limite: int = 20, aplicar: bool = False) -> dict:
+    """
+    Vuelve a procesar los correos de las últimas `horas` cuya licitación quedó en
+    "Error: ..." (por ejemplo, cuando la API de Zoho Creator estaba caída).
+      aplicar=False: solo lista cuáles se reintentarían (no gasta tokens).
+      aplicar=True:  los analiza de nuevo, crea la licitación y REEMPLAZA su fila en Analytics.
+    No duplica licitaciones: crear_licitacion revisa si ya existe en Creator.
+    """
+    base, headers = _analytics()
+    config = {"responseFormat": "json", "keyValueFormat": True,
+              "criteria": "\"Licitacion Creator\" like 'Error%'",
+              "selectedColumns": ["Message ID", "Recibido", "ID Proceso", "Licitacion Creator"]}
+    resp = _pedir("GET", f"{base}/data", headers=headers, params={"CONFIG": json.dumps(config)})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
+    desde = datetime.now(CHILE_TZ) - timedelta(hours=horas)
+    filas = []
+    for f in resp.json().get("data") or []:
+        try:
+            recibido = datetime.strptime(f.get("Recibido", "")[:19], "%d-%m-%Y %H:%M:%S").replace(tzinfo=CHILE_TZ)
+        except ValueError:
+            try:  # Analytics a veces devuelve la fecha con otro formato
+                recibido = datetime.strptime(f.get("Recibido", "")[:20], "%d %b %Y %H:%M:%S").replace(tzinfo=CHILE_TZ)
+            except ValueError:
+                recibido = None  # fecha en formato desconocido: se incluye (se ve en la simulación)
+        if recibido is None or recibido >= desde:
+            filas.append({**f, "_recibido": recibido})
+    filas.sort(key=lambda f: f["_recibido"] or desde)
+    filas = filas[:limite]
+    resultado = {"modo": "aplicado" if aplicar else "simulación (agrega &aplicar=1 para reintentar)",
+                 "encontrados": len(filas), "correos": []}
+    for f in filas:
+        item = {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M") if f["_recibido"] else f.get("Recibido"),
+                "id_proceso": f.get("ID Proceso"),
+                "error_anterior": (f.get("Licitacion Creator") or "")[:150]}
+        if aplicar:
+            mid = f["Message ID"]
+            m = None
+            for buzon in _lista_env("CORREO_BUZONES"):
+                datos = _graph("GET", f"/users/{buzon}/messages",
+                               params={"$filter": f"internetMessageId eq '{mid}'", "$select": CAMPOS_MENSAJE})
+                if datos.get("value"):
+                    m = datos["value"][0]
+                    if not preparar_mensaje(m, buzon):
+                        m = None
+                    break
+            if not m:
+                item["resultado"] = "no se encontró el correo en el buzón"
+            else:
+                clave = m["internetMessageId"]
+                with _candado:
+                    ocupado = clave in _en_proceso
+                    _en_proceso.add(clave)
+                if ocupado:
+                    item["resultado"] = "ya se está procesando"
+                else:
+                    try:
+                        r = procesar_correo(m, dry_run=False, actualizar=True)
+                        item["resultado"] = r.get("licitacion") or r.get("tipo") or "procesado"
+                    except Exception as e:
+                        item["resultado"] = f"error: {str(e)[:200]}"
+                    finally:
+                        with _candado:
+                            _en_proceso.discard(clave)
+            log(f"reintento {item['id_proceso']}: {item.get('resultado')}")
+        resultado["correos"].append(item)
     return resultado
 
 

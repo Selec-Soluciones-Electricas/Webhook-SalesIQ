@@ -154,9 +154,34 @@ def register_correo_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------------------------------
+    # Reintentar los correos cuya licitación quedó en "Error" (ej. Creator caído)
+    #   ?horas=14&limite=20   sin aplicar -> solo lista (no gasta tokens)
+    #   &aplicar=1            los procesa de nuevo y reemplaza su fila en Analytics
+    # -----------------------------------------------------
+    @app.route("/cron/correos/reintentar", methods=["POST"])
+    def reintentar_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        try:
+            horas = max(1, min(int(request.args.get("horas", 24)), 24 * 7))
+            limite = max(1, min(int(request.args.get("limite", 20)), 40))
+        except ValueError:
+            horas, limite = 24, 20
+        aplicar = request.args.get("aplicar", "").lower() in ("1", "true", "si")
+        try:
+            from agente.correo import reintentar_errores
+            return jsonify(reintentar_errores(horas=horas, limite=limite, aplicar=aplicar))
+        except Exception as e:
+            print(f"[cron/correos/reintentar] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
     # Diagnóstico de un correo (no guarda nada; usa 1 llamada a la IA)
     #   ?texto=M13002800            parte del asunto o número
     #   &buzon=elian@selec.cl       (opcional; por defecto el primer buzón)
+    #   &procesar=1                 procesa ESE correo de verdad (crea la licitación), aunque
+    #                               ya esté registrado en Analytics
     # -----------------------------------------------------
     @app.route("/cron/correos/probar", methods=["POST"])
     def probar_correo_endpoint():
@@ -167,7 +192,8 @@ def register_correo_routes(app):
             return jsonify({"error": "Falta ?texto= (parte del asunto o número)"}), 400
         try:
             from agente.correo import probar_correo
-            return jsonify(probar_correo(texto, request.args.get("buzon")))
+            procesar = request.args.get("procesar", "").lower() in ("1", "true", "si")
+            return jsonify(probar_correo(texto, request.args.get("buzon"), procesar=procesar))
         except Exception as e:
             print(f"[cron/correos/probar] ERROR: {e}", flush=True)
             traceback.print_exc()

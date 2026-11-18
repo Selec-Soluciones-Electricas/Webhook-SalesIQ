@@ -1132,6 +1132,10 @@ def probar_correo(texto: str, buzon: str | None = None, procesar: bool = False) 
         "otros_resultados": [x.get("subject") for x in mensajes[1:5]],
     }
     resultado["permitido"] = preparar_mensaje(m, buzon)
+    try:
+        resultado["ya_en_analytics"] = bool(ids_ya_analizados([m.get("internetMessageId") or m["id"]]))
+    except Exception as e:
+        resultado["ya_en_analytics"] = f"no se pudo consultar: {str(e)[:150]}"
     resultado["remitente_resuelto"] = m.get("remitente")
     resultado["reenviado_por"] = m.get("reenviado_por")
     if procesar:
@@ -1201,7 +1205,8 @@ def reintentar_errores(horas: int = 24, limite: int = 20, aplicar: bool = False)
         raise RuntimeError(f"Analytics consulta -> {resp.status_code}: {resp.text[:300]}")
     desde = datetime.now(CHILE_TZ) - timedelta(hours=horas)
     recientes = []
-    for f in resp.json().get("data") or []:
+    todas = resp.json().get("data") or []
+    for f in todas:
         recibido = _recibido_chile(f.get("Recibido"))
         if recibido and recibido >= desde:
             recientes.append({**f, "_recibido": recibido})
@@ -1212,6 +1217,9 @@ def reintentar_errores(horas: int = 24, limite: int = 20, aplicar: bool = False)
     if not filas:
         # Para revisar por qué no hay errores: cómo quedaron los correos del período
         resultado["correos_del_periodo"] = len(recientes)
+        resultado["filas_en_tabla"] = len(todas)
+        # Formato real de la fecha "Recibido" que devuelve Analytics (para ajustar el filtro)
+        resultado["muestra_recibido"] = [f.get("Recibido") for f in todas[-5:]]
         resultado["ultimos"] = [
             {"recibido": f["_recibido"].strftime("%d-%m-%Y %H:%M"), "tipo": f.get("Tipo"),
              "id_proceso": f.get("ID Proceso"), "remitente": f.get("Remitente"),

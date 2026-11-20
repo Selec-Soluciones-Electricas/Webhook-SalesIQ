@@ -170,14 +170,8 @@ def register_sofia_cron_routes(app):
                 total_revisiones_generales,
             )
 
-            return jsonify({
-                "error": "Existen llamadas sin resolver",
-                "recuperacion_requerida": True,
-                "revisiones_generales": (
-                    total_revisiones_generales
-                ),
-                "escrituras_crm": False,
-            }), 503
+            # Continuar con las solicitudes validas.
+            # Las revisiones se informan al finalizar.
 
 
         # 5. Preparar borradores de Casos.
@@ -461,6 +455,7 @@ def register_sofia_cron_routes(app):
             "borradores_casos_preparados": len(borradores),
 
             "resumen_casos": resumen_casos,
+            "revisiones_generales": total_revisiones_generales,
 
             "casos_pendientes_creacion": (
                 resumen_casos["creacion_simulada"]
@@ -468,8 +463,14 @@ def register_sofia_cron_routes(app):
 
             "recuperacion_requerida": (
                 plan["total_pendientes"] > 0
+                or total_revisiones_generales > 0
             ),
 
             "recuperacion_completada": False,
+            "advertencia": (
+                "Llamadas pendientes de revision"
+                if total_revisiones_generales > 0
+                else None
+            ),
             "escrituras_crm": resumen_casos["creado"] > 0,
         }), 200

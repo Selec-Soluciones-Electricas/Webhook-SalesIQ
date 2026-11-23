@@ -189,6 +189,9 @@ def registrar_cotizacion_sandbox(
                     if modulo == "Accounts":
                         recibido = recibido.replace(".", "").replace(" ", "").upper()
                         igual = recibido == valor
+                    elif modulo == "Deals":
+                        # Call ID exige coincidencia exacta, respetando mayusculas.
+                        igual = recibido == valor
                     else:
                         igual = recibido.casefold() == valor.casefold()
                     if igual:
@@ -223,6 +226,17 @@ def registrar_cotizacion_sandbox(
 
     if negocio["estado"] != "no_encontrado":
         return detener("busqueda_negocio_inconclusa")
+
+    # Zoho puede demorar en indexar /search. Verificar el listado
+    # antes de escribir, tambien para Negocios con Call ID unico.
+    listado_negocio = verificar_listado("Deals", "Retell_Call_ID", call_id)
+    if listado_negocio["estado"] == "encontrado":
+        return {
+            "estado": "ya_registrado",
+            "negocio_id": listado_negocio["registro_id"],
+        }
+    if listado_negocio["estado"] != "no_encontrado":
+        return detener("listado_negocios_inconcluso")
 
     # 2. Resolver Cuenta.
     cuenta = buscar_cuenta_sandbox_por_rut(
@@ -335,6 +349,17 @@ def registrar_cotizacion_sandbox(
     if negocio["estado"] != "no_encontrado":
         return detener("segunda_busqueda_inconclusa")
 
+    # Verificar el listado tambien inmediatamente antes del POST.
+    # Protege reintentos tras timeout con escritura efectiva.
+    listado_negocio = verificar_listado("Deals", "Retell_Call_ID", call_id)
+    if listado_negocio["estado"] == "encontrado":
+        return {
+            "estado": "ya_registrado",
+            "negocio_id": listado_negocio["registro_id"],
+        }
+    if listado_negocio["estado"] != "no_encontrado":
+        return detener("segundo_listado_negocios_inconcluso")
+
     # 5. Preparar Negocio con relaciones verificadas.
     final = preparar_registros_cotizacion_sandbox(
         borrador,
@@ -352,6 +377,24 @@ def registrar_cotizacion_sandbox(
     respuesta = insertar("Deals", deal_data)
 
     if respuesta["estado"] != "creado":
+        # No repetir el POST: Zoho puede haber confirmado internamente
+        # la creacion aunque la respuesta no llegara a Retell/Render.
+        # Solo una coincidencia exacta permite resolver la incertidumbre.
+        if respuesta["estado"] == "resultado_incierto":
+            confirmado = buscar("Deals", "Retell_Call_ID", call_id)
+            if confirmado["estado"] == "encontrado":
+                return {
+                    "estado": "ya_registrado",
+                    "negocio_id": confirmado["registro_id"],
+                    "verificacion_posterior": "confirmada",
+                }
+            listado = verificar_listado("Deals", "Retell_Call_ID", call_id)
+            if listado["estado"] == "encontrado":
+                return {
+                    "estado": "ya_registrado",
+                    "negocio_id": listado["registro_id"],
+                    "verificacion_posterior": "confirmada",
+                }
         return respuesta
 
     return {

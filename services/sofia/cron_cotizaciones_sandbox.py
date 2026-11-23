@@ -41,6 +41,8 @@ def procesar_cotizaciones_cron_sandbox(
         "bloqueadas": 0,
         "pendientes": 0,
         "escrituras_crm": False,
+        # Codigo de estado seguro, sin Call IDs ni datos del cliente.
+        "motivo_bloqueo": None,
     }
     if not isinstance(llamadas, list) or not agent_id:
         return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
@@ -159,7 +161,11 @@ def procesar_cotizaciones_cron_sandbox(
         return {**resumen, "estado": "sandbox_habilitado"}
 
     fecha_cierre = (date.today() + timedelta(days=dias)).isoformat()
-    for borrador in pendientes_autorizadas[:maximo]:
+    # Priorizar llamadas recientes. El cupo limita CREACIONES, no consultas:
+    # una llamada ya registrada no debe impedir atender nuevas solicitudes.
+    for borrador in reversed(pendientes_autorizadas):
+        if resumen["creadas"] >= maximo:
+            break
         try:
             decision = registrar_cotizacion_sandbox(
                 borrador,
@@ -182,6 +188,20 @@ def procesar_cotizaciones_cron_sandbox(
         else:
             resumen["bloqueadas"] += 1
             resumen["estado"] = "parcial"
+            # Motivos controlados, nunca incluir datos del cliente.
+            motivo = decision.get("motivo") if isinstance(decision, dict) else None
+            permitidos = {
+                "token_no_disponible", "datos_invalidos", "error_http",
+                "insercion_sin_confirmacion", "respuesta_no_confirmada",
+                "respuesta_no_interpretable", "busqueda_negocio_inconclusa",
+                "listado_negocios_inconcluso", "segundo_listado_negocios_inconcluso",
+                "busqueda_cuenta_inconclusa", "listado_cuentas_inconcluso",
+                "busqueda_contacto_inconclusa", "listado_contactos_inconcluso",
+                "segunda_busqueda_inconclusa", "contacto_no_verificado",
+                "contacto_de_otra_cuenta", "negocio_invalido", "fecha_invalida",
+                "autorizacion_invalida", "conexion_invalida", "escritura_desactivada",
+            }
+            resumen["motivo_bloqueo"] = motivo if motivo in permitidos else "resultado_incierto"
             break  # No continuar creando en caso de duda.
 
     resumen["escrituras_crm"] = resumen["creadas"] > 0

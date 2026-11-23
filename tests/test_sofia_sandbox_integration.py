@@ -112,6 +112,98 @@ ENV_WRITE = {
 
 
 class Flujo(unittest.TestCase):
+    def test_automatica_no_se_atasca_en_llamadas_ya_registradas(self):
+        crm = ZohoFicticio()
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": "",
+               "SOFIA_SANDBOX_DEALS_MAX_PER_RUN": "1"}
+        # La llamada que ya existe no debe consumir el cupo de creacion.
+        con_anterior = llamada("call_anterior")
+        con_nueva = llamada("call_nueva")
+        with patch.dict(os.environ, env):
+            original = procesar_cotizaciones_cron_sandbox(
+                [con_anterior], AGENTE, conexion=crm.conexion, http_post=crm.post,
+            )
+            siguiente = procesar_cotizaciones_cron_sandbox(
+                [con_anterior, con_nueva], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+            repetido = procesar_cotizaciones_cron_sandbox(
+                [con_anterior, con_nueva], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+        self.assertEqual(original["creadas"], 1)
+        self.assertEqual(siguiente["creadas"], 1)
+        self.assertEqual(len(crm.data["Deals"]), 2)
+        self.assertEqual(repetido["creadas"], 0)
+        self.assertEqual(repetido["ya_registradas"], 2)
+
+    def test_deal_creado_pero_respuesta_perdida_se_reconcilia(self):
+        """Zoho guardo Deals; falló la respuesta HTTP: no duplicar."""
+        crm = ZohoFicticio()
+        def post_con_timeout_tras_guardar(url, **kwargs):
+            respuesta = crm.post(url, **kwargs)
+            if url == BASE + "Deals":
+                raise TimeoutError("la respuesta no llego al servidor")
+            return respuesta
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": ""}
+        with patch.dict(os.environ, env):
+            primero = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_reconciliar")], AGENTE,
+                conexion=crm.conexion, http_post=post_con_timeout_tras_guardar,
+            )
+            segundo = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_reconciliar")], AGENTE,
+                conexion=crm.conexion, http_post=post_con_timeout_tras_guardar,
+            )
+        self.assertEqual(primero["estado"], "sandbox_habilitado")
+        self.assertEqual(primero["ya_registradas"], 1)
+        self.assertEqual(segundo["ya_registradas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals"])
+
+    def test_deal_existente_con_busqueda_desactualizada_no_duplicar(self):
+        crm = ZohoFicticio()
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": ""}
+        with patch.dict(os.environ, env):
+            primero = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_indexacion")], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+            self.assertEqual(primero["creadas"], 1)
+            def get_busqueda_desactualizada(url, **kwargs):
+                if url == BASE + "Deals/search":
+                    return Response(204)
+                return crm.get(url, **kwargs)
+            conexion = crm.conexion
+            conexion["http_get"] = get_busqueda_desactualizada
+            repetido = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_indexacion")], AGENTE,
+                conexion=conexion, http_post=crm.post,
+            )
+        self.assertEqual(repetido["estado"], "sandbox_habilitado")
+        self.assertEqual(repetido["ya_registradas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals"])
+
+    def test_fallo_real_en_deal_no_se_marca_como_creado(self):
+        crm = ZohoFicticio()
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": ""}
+        def post_no_guardado(url, **kwargs):
+            if url == BASE + "Deals":
+                raise TimeoutError("no se confirmo el envio")
+            return crm.post(url, **kwargs)
+        with patch.dict(os.environ, env):
+            fallido = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_fallo_real")], AGENTE,
+                conexion=crm.conexion, http_post=post_no_guardado,
+            )
+        self.assertEqual(fallido["estado"], "parcial")
+        self.assertEqual(fallido["creadas"], 0)
+        self.assertEqual(fallido["motivo_bloqueo"], "insercion_sin_confirmacion")
+        self.assertEqual(crm.creados, ["Accounts", "Contacts"])
+
     def test_modo_automatico_sin_whitelist_y_reintento(self):
         crm = ZohoFicticio()
         env = {

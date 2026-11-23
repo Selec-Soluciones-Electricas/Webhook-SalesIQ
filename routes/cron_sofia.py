@@ -150,23 +150,13 @@ def register_sofia_cron_routes(app):
             }), 503
 
         if total_consultas_en_revision > 0:
-
+            # Una consulta incompleta NO bloquea una cotizacion valida.
+            # Sigue informada como pendiente de revision, sin descartarla.
             current_app.logger.warning(
                 "[SOFIA CRON] Consultas pendientes de "
                 "revision: %s",
                 total_consultas_en_revision,
             )
-
-            return jsonify({
-                "error": "Existen consultas sin clasificar",
-                "recuperacion_requerida": True,
-                "consultas_en_revision": (
-                    total_consultas_en_revision
-                ),
-                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
-            }), 503
-
-
 
         # 4.2. Comprobar revisiones del clasificador principal.
         revisiones_generales = resultado.get(
@@ -450,12 +440,12 @@ def register_sofia_cron_routes(app):
         return jsonify({
             "estado": (
                 "sandbox_ejecutado"
-                if escritura_sandbox or resumen_cotizaciones["creadas"] > 0
+                if escritura_sandbox or resumen_cotizaciones["estado"] == "sandbox_habilitado"
                 else "simulacion"
             ),
             "procesamiento": (
                 "escritura_sandbox_controlada"
-                if escritura_sandbox or resumen_cotizaciones["creadas"] > 0
+                if escritura_sandbox or resumen_cotizaciones["estado"] == "sandbox_habilitado"
                 else "verificacion_simulada"
             ),
 
@@ -487,6 +477,7 @@ def register_sofia_cron_routes(app):
 
             "resumen_casos": resumen_casos,
             "revisiones_generales": total_revisiones_generales,
+            "consultas_en_revision": total_consultas_en_revision,
 
             "casos_pendientes_creacion": (
                 resumen_casos["creacion_simulada"]
@@ -495,12 +486,14 @@ def register_sofia_cron_routes(app):
             "recuperacion_requerida": (
                 plan["total_pendientes"] > 0
                 or total_revisiones_generales > 0
+                or total_consultas_en_revision > 0
             ),
 
             "recuperacion_completada": False,
             "advertencia": (
                 "Llamadas pendientes de revision"
                 if total_revisiones_generales > 0
+                or total_consultas_en_revision > 0
                 else None
             ),
             "resumen_cotizaciones": resumen_cotizaciones,

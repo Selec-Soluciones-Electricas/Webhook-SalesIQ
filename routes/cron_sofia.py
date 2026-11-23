@@ -278,6 +278,38 @@ def register_sofia_cron_routes(app):
 
         consultas_planificadas = plan["seleccionadas"]
 
+        # El primer despliegue de Casos usa una sola llamada autorizada.
+        # Se implementara modo automatico tras validar la idempotencia.
+        casos_escritura_habilitada = (
+            os.getenv(
+                "SOFIA_SANDBOX_CASES_WRITES_ENABLED", "false"
+            ).strip().lower() == "true"
+        )
+        if casos_escritura_habilitada:
+            call_id_autorizado = os.getenv(
+                "SOFIA_SANDBOX_CASES_ALLOWED_CALL_ID", ""
+            ).strip()
+            if (
+                not call_id_autorizado
+                or not call_id_autorizado.startswith("call_")
+                or len(call_id_autorizado) > 128
+                or any(
+                    c not in (
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                        "abcdefghijklmnopqrstuvwxyz"
+                        "0123456789_-"
+                    ) for c in call_id_autorizado
+                )
+            ):
+                return jsonify({
+                    "error": "Casos Sandbox: falta una llamada autorizada",
+                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
+                }), 503
+            consultas_planificadas = [
+                c for c in consultas_planificadas
+                if isinstance(c, dict)
+                and c.get("call_id") == call_id_autorizado
+            ][:1]
 
         try:
             borradores = preparar_borradores_consultas(
@@ -317,16 +349,11 @@ def register_sofia_cron_routes(app):
             "SOFIA_SANDBOX_CASES_OWNER_ID", ""
         ).strip()
 
-        # Exigir autorizacion explicita antes de escribir.
+        # Autorizacion exclusiva de Casos Sandbox: nunca depender
+        # de activar el escritor antiguo del CRM de produccion.
         if escritura_sandbox:
             autorizado = (
-                os.getenv(
-                    "RETELL_CRM_WRITES_ENABLED", "false"
-                ).strip().lower() == "true"
-                and os.getenv(
-                    "RETELL_CASES_WRITES_ENABLED", "false"
-                ).strip().lower() == "true"
-                and propietario_sandbox.isascii()
+                propietario_sandbox.isascii()
                 and propietario_sandbox.isdecimal()
             )
 
@@ -390,6 +417,7 @@ def register_sofia_cron_routes(app):
                         "https://sandbox.zohoapis.com/crm/v8"
                         if escritura_sandbox else None
                     ),
+                    sandbox_cases_writes_enabled=escritura_sandbox,
                 )
 
                 estado = (

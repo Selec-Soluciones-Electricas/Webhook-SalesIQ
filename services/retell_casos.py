@@ -912,6 +912,7 @@ def ejecutar_creacion_caso_consulta_controlada(
     http_post=None,
     obtener_token=None,
     crm_base=None,
+    sandbox_cases_writes_enabled=False,
 ):
     """
     Ejecuta una insercion de Caso solo si todas
@@ -931,21 +932,20 @@ def ejecutar_creacion_caso_consulta_controlada(
             "creacion_confirmada": False,
         }
 
-    escritura_general = (
-        os.getenv("RETELL_CRM_WRITES_ENABLED", "false")
-        .strip().lower() == "true"
-    )
-
-    escritura_casos = (
-        os.getenv("RETELL_CASES_WRITES_ENABLED", "false")
-        .strip().lower() == "true"
+    # El permiso de escritura no se hereda del escritor antiguo de Retell.
+    # Requiere opt-in explicito del invocador Y la variable de Sandbox.
+    autorizacion_sandbox = (
+        sandbox_cases_writes_enabled is True
+        and os.getenv(
+            "SOFIA_SANDBOX_CASES_WRITES_ENABLED", "false"
+        ).strip().lower() == "true"
     )
 
     autorizacion = comprobar_autorizacion_creacion_caso(
         solicitud,
         simulacion=simulacion,
-        crm_writes_enabled=escritura_general,
-        cases_writes_enabled=escritura_casos,
+        crm_writes_enabled=autorizacion_sandbox,
+        cases_writes_enabled=autorizacion_sandbox,
         propietario_id=propietario_id,
     )
 
@@ -1079,6 +1079,7 @@ def procesar_creacion_caso_consulta(
     http_post=None,
     obtener_token=None,
     crm_base=None,
+    sandbox_cases_writes_enabled=False,
 ):
     """
     Coordina la verificacion y posible creacion
@@ -1140,6 +1141,7 @@ def procesar_creacion_caso_consulta(
         http_post=http_post,
         obtener_token=obtener_token,
         crm_base=crm_base,
+        sandbox_cases_writes_enabled=sandbox_cases_writes_enabled,
     )
 
     # 6. Ante un duplicado o un resultado incierto,

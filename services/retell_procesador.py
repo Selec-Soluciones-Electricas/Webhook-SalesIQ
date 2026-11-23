@@ -341,6 +341,7 @@ def procesar_pendientes_sofia(
     usar_busqueda_multiple=False,
     inicio_ms=None,
     fin_ms=None,
+    incluir_cotizaciones_sandbox=False,
 ):
 
 
@@ -694,9 +695,35 @@ def procesar_pendientes_sofia(
         call_id = llamada.get("call_id")
 
         if simulacion:
+            # Preparacion aislada de cotizaciones Sandbox.
+            # No realiza consultas ni escrituras CRM.
+            try:
+                from services.sofia.cotizaciones_sandbox import (
+                    preparar_borrador_cotizacion_sandbox,
+                )
+
+                borrador_sandbox = (
+                    preparar_borrador_cotizacion_sandbox(
+                        llamada
+                    )
+                )
+
+                if (
+                    isinstance(borrador_sandbox, dict)
+                    and borrador_sandbox.get("estado")
+                    == "borrador_preparado"
+                ):
+                    estado_sandbox = "lista"
+                else:
+                    estado_sandbox = "revision"
+
+            except Exception:
+                estado_sandbox = "error_validacion"
+
             resultados.append({
                 "call_id": call_id,
                 "estado": "simulada",
+                "cotizacion_sandbox": estado_sandbox,
             })
             continue
 
@@ -827,6 +854,11 @@ def procesar_pendientes_sofia(
         "consultas_detectadas": consultas_detectadas,
 
         "resultados": resultados,
+
+        # Datos internos para el cron de Sandbox; solo se entregan
+        # si el consumidor lo solicita expresamente en simulacion.
+        **({"cotizaciones_sandbox_candidatas": candidatas}
+           if simulacion and incluir_cotizaciones_sandbox else {}),
 
         "total_consultas_en_revision": len(
             consultas_en_revision

@@ -77,6 +77,7 @@ def register_sofia_cron_routes(app):
                 simulacion=True,
                 inicio_ms=inicio_ms,
                 fin_ms=fin_ms,
+                incluir_cotizaciones_sandbox=True,
             )
 
 
@@ -99,6 +100,31 @@ def register_sofia_cron_routes(app):
             }), 503
 
 
+        # 5. Cotizaciones Sandbox independientes de Casos.
+        # El procesador antiguo permanece SIEMPRE en simulacion.
+        from services.sofia.cron_cotizaciones_sandbox import (
+            procesar_cotizaciones_cron_sandbox,
+        )
+        from services.sofia.crm_sandbox import obtener_conexion_sandbox
+
+        conexion_sandbox = obtener_conexion_sandbox()
+
+        candidatas_cotizaciones = resultado.get(
+            "cotizaciones_sandbox_candidatas"
+        )
+        if not isinstance(candidatas_cotizaciones, list):
+            return jsonify({
+                "error": "Llamadas de cotizacion no disponibles",
+                "escrituras_crm": False,
+            }), 503
+
+        resumen_cotizaciones = procesar_cotizaciones_cron_sandbox(
+            candidatas_cotizaciones,
+            agente,
+            conexion=conexion_sandbox,
+            http_post=requests.post,
+        )
+
         # 4.1. Comprobar consultas que requieren revision.
         # No declarar completado un periodo con consultas
         # que no pudieron clasificarse correctamente.
@@ -120,7 +146,7 @@ def register_sofia_cron_routes(app):
         ):
             return jsonify({
                 "error": "Resultado de revisiones invalido",
-                "escrituras_crm": False,
+                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
             }), 503
 
         if total_consultas_en_revision > 0:
@@ -137,7 +163,7 @@ def register_sofia_cron_routes(app):
                 "consultas_en_revision": (
                     total_consultas_en_revision
                 ),
-                "escrituras_crm": False,
+                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
             }), 503
 
 
@@ -160,7 +186,7 @@ def register_sofia_cron_routes(app):
         ):
             return jsonify({
                 "error": "Resultado de revisiones generales invalido",
-                "escrituras_crm": False,
+                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
             }), 503
 
         if total_revisiones_generales > 0:
@@ -190,7 +216,7 @@ def register_sofia_cron_routes(app):
         ):
             return jsonify({
                 "error": "Lista de solicitudes invalida",
-                "escrituras_crm": False,
+                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
             }), 503
 
         # Ambas solicitudes comparten el flujo
@@ -213,13 +239,7 @@ def register_sofia_cron_routes(app):
             buscar_casos_consulta_por_call_ids,
         )
 
-        from services.sofia.crm_sandbox import (
-        obtener_conexion_sandbox,
-        )
-
         try:
-            conexion_sandbox = obtener_conexion_sandbox()
-
             barrido = consultar_consultas_en_lotes(
                 consultas,
                 consultar_lote=lambda call_ids: buscar_casos_consulta_por_call_ids(
@@ -243,7 +263,7 @@ def register_sofia_cron_routes(app):
                     "lotes_consultados": (
                         barrido["lotes_consultados"]
                     ),
-                    "escrituras_crm": False,
+                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
                 }), 503
 
             # Separar Casos existentes de pendientes.
@@ -263,7 +283,7 @@ def register_sofia_cron_routes(app):
             return jsonify({
                 "error": "No se pudo planificar recuperacion",
                 "recuperacion_requerida": True,
-                "escrituras_crm": False,
+                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
             }), 503
 
         consultas_planificadas = plan["seleccionadas"]
@@ -323,7 +343,7 @@ def register_sofia_cron_routes(app):
             if not autorizado:
                 return jsonify({
                     "error": "Escritura Sandbox no autorizada",
-                    "escrituras_crm": False,
+                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
                 }), 503
 
         def enviar_caso_sandbox(url, **kwargs):
@@ -399,7 +419,7 @@ def register_sofia_cron_routes(app):
             )
             return jsonify({
                 "error": "Fallo la verificacion de Casos",
-                "escrituras_crm": False,
+                "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
             }), 503
 
         # 7. Ante verificaciones fallidas, no
@@ -410,21 +430,32 @@ def register_sofia_cron_routes(app):
                 "resumen_casos": resumen_casos,
                 "escrituras_crm": (
                     resumen_casos["creado"] > 0
+                    or resumen_cotizaciones["creadas"] > 0
                 ),
             }), 503
 
 
-        # 8. Informar el resultado de la simulacion.
-        # No marcar solicitudes como recuperadas.
+        if resumen_cotizaciones["estado"] in ("bloqueado", "parcial"):
+            return jsonify({
+                "error": "Cotizaciones Sandbox requieren revision",
+                "resumen_cotizaciones": resumen_cotizaciones,
+                "resumen_casos": resumen_casos,
+                "escrituras_crm": (
+                    resumen_casos["creado"] > 0
+                    or resumen_cotizaciones["creadas"] > 0
+                ),
+            }), 503
 
+        # 9. Informar los dos flujos sin revelar datos del cliente.
         return jsonify({
             "estado": (
                 "sandbox_ejecutado"
-                if escritura_sandbox else "simulacion"
+                if escritura_sandbox or resumen_cotizaciones["creadas"] > 0
+                else "simulacion"
             ),
             "procesamiento": (
-                "creacion_casos_sandbox"
-                if escritura_sandbox
+                "escritura_sandbox_controlada"
+                if escritura_sandbox or resumen_cotizaciones["creadas"] > 0
                 else "verificacion_simulada"
             ),
 
@@ -472,5 +503,9 @@ def register_sofia_cron_routes(app):
                 if total_revisiones_generales > 0
                 else None
             ),
-            "escrituras_crm": resumen_casos["creado"] > 0,
+            "resumen_cotizaciones": resumen_cotizaciones,
+            "escrituras_crm": (
+                resumen_casos["creado"] > 0
+                or resumen_cotizaciones["creadas"] > 0
+            ),
         }), 200

@@ -1,10 +1,18 @@
 
 import os
 import requests
+import hashlib
+import threading
+import time
 
 
 SANDBOX_BASE = "https://sandbox.zohoapis.com"
 OAUTH_URL = "https://accounts.zoho.com/oauth/v2/token"
+
+# Cache de proceso: evitar exceder el limite de renovaciones Zoho.
+# En un nuevo proceso, un token nuevo se verifica nuevamente por /org.
+_TOKEN_LOCK = threading.Lock()
+_TOKEN_CACHE = {"key": None, "token": None, "hasta": 0.0}
 
 
 def obtener_token_sandbox():
@@ -19,6 +27,24 @@ def obtener_token_sandbox():
             "Credenciales del Sandbox no configuradas"
         )
 
+    # Verificar las credenciales y el entorno una vez por token activo.
+    clave = hashlib.sha256(
+        "\0".join((client_id, client_secret, refresh_token)).encode()
+    ).digest()
+
+    with _TOKEN_LOCK:
+        if (
+            _TOKEN_CACHE["key"] == clave
+            and isinstance(_TOKEN_CACHE["token"], str)
+            and time.monotonic() < _TOKEN_CACHE["hasta"]
+        ):
+            return _TOKEN_CACHE["token"]
+
+        return _renovar_y_verificar(clave, client_id, client_secret, refresh_token)
+
+
+def _renovar_y_verificar(clave, client_id, client_secret, refresh_token):
+    """Se llama con el bloqueo de cache adquirido."""
     respuesta = requests.post(
         OAUTH_URL,
         data={
@@ -93,6 +119,17 @@ def obtener_token_sandbox():
             "El token no pertenece al Sandbox de Sofia"
         )
 
+    # Margen de seguridad para no utilizar tokens cercanos a caducar.
+    try:
+        segundos = int(datos.get("expires_in", 3600))
+    except (TypeError, ValueError):
+        segundos = 3600
+    duracion = max(30, min(segundos - 120, 3000))
+    _TOKEN_CACHE.update({
+        "key": clave,
+        "token": token,
+        "hasta": time.monotonic() + duracion,
+    })
     return token
 
 

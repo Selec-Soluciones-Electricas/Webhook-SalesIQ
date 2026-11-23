@@ -27,7 +27,16 @@ def convertir_productos_retell(texto):
 
     productos = []
 
-    for linea in texto.splitlines():
+    # Separar productos que Retell entrega en una sola linea.
+    # Conserva las validaciones originales de cada producto.
+    texto_normalizado = re.sub(
+        r"\s+(?=producto\s+\d+\s*\|)",
+        "\n",
+        texto,
+        flags=re.IGNORECASE,
+    )
+
+    for linea in texto_normalizado.splitlines():
         if not linea.strip():
             continue
 

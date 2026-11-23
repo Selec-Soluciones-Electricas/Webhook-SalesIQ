@@ -154,6 +154,30 @@ def register_correo_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------------------------------
+    # Carga por persona: productos pendientes por cotizar para cada fecha límite de oferta
+    #   ?fecha=23-11-2026 (por defecto hoy)  &dias=3 (fechas siguientes, máx. 14)
+    #   &detalle=0 oculta la lista de licitaciones de cada persona
+    # -----------------------------------------------------
+    @app.route("/cron/correos/carga", methods=["GET", "POST"])
+    def carga_endpoint():
+        if not _secreto_valido():
+            return jsonify({"error": "No autorizado"}), 401
+        try:
+            from datetime import datetime as _dt
+            from agente.licitaciones import resumen_carga
+            fecha = _dt.strptime(request.args["fecha"], "%d-%m-%Y") if request.args.get("fecha") else None
+            resultado = resumen_carga(fecha, int(request.args.get("dias", 1)))
+            if request.args.get("detalle", "1") in ("0", "no", "false"):
+                for f in resultado["fechas"]:
+                    for p in f["personas"]:
+                        p.pop("detalle", None)
+            return jsonify(resultado)
+        except Exception as e:
+            print(f"[cron/correos/carga] ERROR: {e}", flush=True)
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # -----------------------------------------------------
     # Reintentar los correos cuya licitación quedó en "Error" (ej. Creator caído)
     #   ?horas=14&limite=20   sin aplicar -> solo lista (no gasta tokens)
     #   &aplicar=1            los procesa de nuevo y reemplaza su fila en Analytics

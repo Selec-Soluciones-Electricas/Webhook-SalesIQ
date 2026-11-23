@@ -814,26 +814,54 @@ def _valor(campo):
     return campo or ""
 
 
+def _clave_persona(nombre):
+    """'María  Rengifo' -> 'maria rengifo': para comparar nombres sin tildes, mayúsculas ni espacios extra."""
+    n = unicodedata.normalize("NFKD", str(nombre or ""))
+    return " ".join("".join(c for c in n if not unicodedata.combining(c)).lower().split())
+
+
+# Productos por licitación ya contados (los productos de una licitación casi no cambian)
+_productos_cache = {}
+
+
 def _productos_de(fila):
-    """Productos de una licitación: el campo Numero_Productos (el del gráfico) o, si viene vacío
-    (licitaciones creadas por API), las filas de Listado de productos."""
+    """
+    (productos, cómo se contaron) de una licitación:
+      1. el campo Numero_Productos (el del gráfico), si tiene valor;
+      2. si no (licitaciones creadas por API), las filas de Listado de productos del reporte;
+      3. si el reporte no trae el subformulario, se lee el registro completo (una vez por licitación).
+    """
     try:
-        n = int(float(str(fila.get("Numero_Productos") or "0").replace(",", ".")))
+        n = int(float(str(_valor(fila.get("Numero_Productos")) or "0").replace(",", ".")))
     except ValueError:
         n = 0
-    return n if n > 0 else len(fila.get("Listado_de_productos") or [])
+    if n > 0:
+        return n, "Numero_Productos"
+    if isinstance(fila.get("Listado_de_productos"), list) and fila["Listado_de_productos"]:
+        return len(fila["Listado_de_productos"]), "Listado_de_productos"
+    lic_id = fila.get("ID")
+    if not lic_id:
+        return 0, "sin dato"
+    if lic_id not in _productos_cache:
+        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/{lic_id}")
+        registro = datos.get("data") if status == 200 else None
+        lista = registro.get("Listado_de_productos") if isinstance(registro, dict) else None
+        if not isinstance(lista, list):
+            return 0, "sin dato (el reporte no muestra los productos)"
+        _productos_cache[lic_id] = len(lista)
+    return _productos_cache[lic_id], "registro completo"
 
 
-def carga_del_dia(portal=None, fecha=None):
+def carga_del_dia(portal=None, fecha=None, detalle=False):
     """
     Productos PENDIENTES POR COTIZAR por persona con FECHA LÍMITE DE OFERTA en `fecha`
     (datetime o date; por defecto hoy), de todas las licitaciones (agente y manuales):
     {"Maria Rengifo": {"productos": 56, "licitaciones": 7}, ...}, más la fuente usada.
     Es el mismo número del gráfico "Productos Pendientes por Cotizar" para esa fecha.
     (El parámetro portal se mantiene solo por compatibilidad: el cupo suma todos los portales.)
+    detalle=True agrega, por persona, la lista de licitaciones contadas (para revisar el conteo).
 
-    Se lee de Creator. Si Creator falla o el reporte no trae los campos necesarios, se usa lo
-    que este proceso lleva contado en memoria para esa fecha.
+    Se lee de Creator. Si Creator falla, se usa lo que este proceso lleva contado en memoria.
     """
     dia = fecha or datetime.now(CHILE_TZ)
     dia = dia.date() if hasattr(dia, "date") and callable(dia.date) else dia
@@ -851,12 +879,17 @@ def carga_del_dia(portal=None, fecha=None):
             raise RuntimeError(f"Creator {status}: {str(datos)[:200]}")
         carga = {}
         for f in datos.get("data") or []:
-            if "Asignado_a" not in f or ("Numero_Productos" not in f and "Listado_de_productos" not in f):
-                raise RuntimeError("el reporte no trae Asignado_a o Numero_Productos / Listado_de_productos")
-            persona = _valor(f.get("Asignado_a"))
+            if "Asignado_a" not in f:
+                raise RuntimeError("el reporte no trae el campo Asignado_a")
+            persona = _valor(f.get("Asignado_a")) or "(sin asignar)"
+            n, como = _productos_de(f)
             c = carga.setdefault(persona, {"productos": 0, "licitaciones": 0})
-            c["productos"] += _productos_de(f)
+            c["productos"] += n
             c["licitaciones"] += 1
+            if detalle:
+                c.setdefault("detalle", []).append({
+                    "id": f.get("ID"), "portal": _valor(f.get("Portal")),
+                    "cierre": _valor(f.get("fecha_limite_oferta")), "productos": n, "conteo": como})
         return carga, "creator"
     except Exception as e:
         log(f"carga del {texto_dia} desde Creator falló, se usa la memoria: {str(e)[:200]}")
@@ -896,10 +929,16 @@ def elegir_asignado(portal, carga=None, fecha=None):
         return nombres.get(str(ini).upper(), ini)
 
     maximo = int(os.getenv("ASIGNACION_MAX", "60"))
+    # Se compara sin tildes ni mayúsculas: "María Rengifo" en Creator = "Maria Rengifo" en la regla
+    por_clave = {}
+    for persona, c in (carga or {}).items():
+        t = por_clave.setdefault(_clave_persona(persona), {"productos": 0, "licitaciones": 0})
+        t["productos"] += c.get("productos", 0)
+        t["licitaciones"] += c.get("licitaciones", 0)
     def productos(p):
-        return (carga.get(p) or {}).get("productos", 0)
+        return por_clave.get(_clave_persona(p), {}).get("productos", 0)
     def licitaciones(p):
-        return (carga.get(p) or {}).get("licitaciones", 0)
+        return por_clave.get(_clave_persona(p), {}).get("licitaciones", 0)
 
     primero = nombre(regla["primero"])
     resto = list(dict.fromkeys(nombre(x) for x in regla.get("resto") or []))
@@ -925,6 +964,31 @@ def elegir_asignado(portal, carga=None, fecha=None):
     p = rotar(grupo)
     return p, f"todos completaron {maximo} para esa fecha límite: se sigue rotando"
 
+
+
+def resumen_carga(fecha=None, dias=1):
+    """
+    Productos pendientes por persona para cada fecha límite (desde `fecha`, `dias` días), y a quién
+    iría la próxima licitación de cada portal. Es lo que se ve en /cron/correos/carga.
+    """
+    inicio = fecha or datetime.now(CHILE_TZ)
+    inicio = inicio.date() if hasattr(inicio, "date") and callable(inicio.date) else inicio
+    maximo = int(os.getenv("ASIGNACION_MAX", "60"))
+    resultado = {"regla_activa": os.getenv("ASIGNACION_POR_TIPO", "off").lower() == "on",
+                 "maximo": maximo, "fechas": []}
+    for i in range(max(1, min(int(dias), 14))):
+        dia = inicio + timedelta(days=i)
+        carga, fuente = carga_del_dia(None, dia, detalle=True)
+        personas = sorted(
+            ({"persona": p, "productos": c["productos"], "licitaciones": c["licitaciones"],
+              "estado": "LLENO" if c["productos"] >= maximo else f"le quedan {maximo - c['productos']}",
+              "detalle": c.get("detalle", [])} for p, c in carga.items()),
+            key=lambda x: -x["productos"])
+        siguiente = {portal: elegir_asignado(portal, carga, dia)[0] for portal in _reglas()}
+        resultado["fechas"].append({"fecha_limite": dia.strftime("%d-%m-%Y"), "fuente": fuente,
+                                    "total_productos": sum(x["productos"] for x in personas),
+                                    "personas": personas, "proximo_asignado": siguiente})
+    return resultado
 
 # =========================================================
 # CREACIÓN
@@ -1366,6 +1430,18 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
     if status in (200, 201) and resp.get("code") == 3000:
         lic_id = (resp.get("data") or {}).get("ID")
         _sumar_carga(portal, asignado, len(productos), cierre)
+        # Numero_Productos queda vacío al crear por API (lo llena un script de entrada de usuario):
+        # se completa para que el gráfico y el cupo de 60 cuenten esta licitación.
+        if lic_id:
+            _productos_cache[lic_id] = len(productos)
+            campo_n = os.getenv("CREATOR_CAMPO_NUMERO_PRODUCTOS", "Numero_Productos")
+            try:
+                st_n, r_n = _creator("PATCH", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/{lic_id}",
+                                     json={"data": {campo_n: len(productos)}})
+                if not (st_n == 200 and r_n.get("code") == 3000):
+                    avisos.append(f"no se pudo guardar {campo_n} ({st_n}): {str(r_n)[:150]}")
+            except Exception as e:
+                avisos.append(f"no se pudo guardar {campo_n}: {e}")
         log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre}, "
             f"asignado {asignado}, {len(productos)} productos)")
         # Clientes directos (Komatsu, ENAMI, Corrupac, TGN): se adjunta el correo original (.eml)

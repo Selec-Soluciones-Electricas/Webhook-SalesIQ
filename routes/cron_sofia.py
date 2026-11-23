@@ -216,15 +216,39 @@ def register_sofia_cron_routes(app):
 
         consultas = consultas + postventas
 
+        # Modo automatico: solo postventas previamente validadas.
+        # Desactivado por defecto y limitado a Zoho Sandbox.
+        postventas_auto = (
+            os.getenv(
+                "SOFIA_SANDBOX_POSTVENTAS_AUTO_ENABLED", "false"
+            ).strip().lower() == "true"
+        )
+
+        escritura_casos_sandbox = (
+            os.getenv(
+                "SOFIA_SANDBOX_CASES_WRITES_ENABLED", "false"
+            ).strip().lower() == "true"
+        )
+
+        if escritura_casos_sandbox and postventas_auto:
+            from services.sofia.seleccion_postventas_auto import (
+                seleccionar_postventas_automaticas,
+            )
+
+            try:
+                consultas = seleccionar_postventas_automaticas(
+                    postventas
+                )
+            except ValueError:
+                return jsonify({
+                    "error": "Seleccion automatica de postventas invalida",
+                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
+                }), 503
+
         # Prueba controlada: procesar exclusivamente
         # la llamada autorizada cuando se habiliten
         # las escrituras de Casos en Sandbox.
-        if (
-            os.getenv(
-                "SOFIA_SANDBOX_CASES_WRITES_ENABLED",
-                "false",
-            ).strip().lower() == "true"
-        ):
+        if escritura_casos_sandbox and not postventas_auto:
             call_id_prueba = os.getenv(
                 "SOFIA_SANDBOX_CASES_ALLOWED_CALL_ID",
                 "",
@@ -316,7 +340,7 @@ def register_sofia_cron_routes(app):
                 "SOFIA_SANDBOX_CASES_WRITES_ENABLED", "false"
             ).strip().lower() == "true"
         )
-        if casos_escritura_habilitada:
+        if casos_escritura_habilitada and not postventas_auto:
             call_id_autorizado = os.getenv(
                 "SOFIA_SANDBOX_CASES_ALLOWED_CALL_ID", ""
             ).strip()

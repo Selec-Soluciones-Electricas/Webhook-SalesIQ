@@ -507,7 +507,12 @@ def procesar_pendientes_sofia(
                         if isinstance(postventa, dict)
                         else "respuesta_invalida"
                     ),
-                    "faltantes": [],
+                    "faltantes": (
+                        postventa["faltantes"].copy()
+                        if isinstance(postventa, dict)
+                        and isinstance(postventa.get("faltantes"), list)
+                        else []
+                    ),
                 })
 
 

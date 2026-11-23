@@ -75,6 +75,39 @@ def clasificar_postventa_sofia(llamada, agent_id):
             "motivo": "detalle_postventa_ausente",
         }
 
+
+    # Validar informacion minima para registrar
+    # automaticamente una postventa en Zoho CRM.
+    faltantes = []
+
+    if not limpiar("nombre_cliente"):
+        faltantes.append("nombre_cliente")
+
+    if not limpiar("rut_cliente"):
+        faltantes.append("rut_cliente")
+
+    if not (
+        limpiar("telefono_cliente")
+        or limpiar("email_cliente")
+    ):
+        faltantes.append("telefono_o_email")
+
+    if not (
+        limpiar("numero_factura")
+        or limpiar("numero_oc")
+    ):
+        faltantes.append("numero_factura_o_oc")
+
+    if not descripcion:
+        faltantes.append("descripcion_problema")
+
+    if faltantes:
+        return {
+            "estado": "revision",
+            "motivo": "datos_postventa_incompletos",
+            "faltantes": faltantes,
+        }
+
     contacto = {
         "nombre_cliente": limpiar("nombre_cliente"),
         "email_cliente": limpiar("email_cliente"),

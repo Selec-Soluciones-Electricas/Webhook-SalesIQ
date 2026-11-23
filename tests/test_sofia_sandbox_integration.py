@@ -112,6 +112,80 @@ ENV_WRITE = {
 
 
 class Flujo(unittest.TestCase):
+    def test_deal_existente_search_http400_lista_confirma_sin_escrituras(self):
+        """Search API falla, pero listado completo encuentra Deal existente."""
+        crm = ZohoFicticio()
+        datos = llamada("call_search400_existente")
+        crm.data["Deals"].append({
+            "id": "1234567890",
+            "Retell_Call_ID": datos["call_id"],
+        })
+        normal = crm.get
+        def get_con_busqueda_fallida(url, **kwargs):
+            if url == BASE + "Deals/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            return normal(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get_con_busqueda_fallida
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": ""}
+        with patch.dict(os.environ, env):
+            resultado = procesar_cotizaciones_cron_sandbox(
+                [datos], AGENTE, conexion=conexion, http_post=crm.post,
+            )
+        self.assertEqual(resultado["estado"], "sandbox_habilitado")
+        self.assertEqual(resultado["ya_registradas"], 1)
+        self.assertEqual(resultado["creadas"], 0)
+        self.assertEqual(crm.creados, [])
+
+    def test_deal_nuevo_search_http400_listado_completo_permite_crear(self):
+        """Un search defectuoso no bloquea nuevas cotizaciones si el listado es completo."""
+        crm = ZohoFicticio()
+        normal = crm.get
+        def get_con_busqueda_fallida(url, **kwargs):
+            if url == BASE + "Deals/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            return normal(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get_con_busqueda_fallida
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": ""}
+        with patch.dict(os.environ, env):
+            primera = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_search400_nueva")], AGENTE,
+                conexion=conexion, http_post=crm.post,
+            )
+            segunda = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_search400_nueva")], AGENTE,
+                conexion=conexion, http_post=crm.post,
+            )
+        self.assertEqual(primera["creadas"], 1)
+        self.assertEqual(segunda["ya_registradas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals"])
+
+    def test_deal_search_y_listado_fallidos_bloquean_escrituras(self):
+        """No se crea nada cuando ambas rutas de lectura son inconclusas."""
+        crm = ZohoFicticio()
+        normal = crm.get
+        def get_sin_busqueda_segura(url, **kwargs):
+            if url == BASE + "Deals/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            if url == BASE + "Deals":
+                return Response(401, {"code": "OAUTH_SCOPE_MISMATCH"})
+            return normal(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get_sin_busqueda_segura
+        env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+               "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": ""}
+        with patch.dict(os.environ, env):
+            resultado = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_search_y_listado_fallidos")], AGENTE,
+                conexion=conexion, http_post=crm.post,
+            )
+        self.assertEqual(resultado["estado"], "parcial")
+        self.assertEqual(resultado["motivo_bloqueo"], "listado_negocios_inconcluso")
+        self.assertEqual(crm.creados, [])
+
     def test_automatica_no_se_atasca_en_llamadas_ya_registradas(self):
         crm = ZohoFicticio()
         env = {**ENV_WRITE, "SOFIA_SANDBOX_DEALS_MODE": "automatico",

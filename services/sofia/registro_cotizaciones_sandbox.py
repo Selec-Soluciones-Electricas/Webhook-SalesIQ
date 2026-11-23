@@ -224,7 +224,15 @@ def registrar_cotizacion_sandbox(
             "negocio_id": negocio["registro_id"],
         }
 
-    if negocio["estado"] != "no_encontrado":
+    # Si /search falla (incluyendo INVALID_QUERY), no asumir ausencia.
+    # El listado completo decide si existe el Negocio; solo sus resultados
+    # confirmados permiten crear o reutilizar registros.
+    if negocio["estado"] not in ("no_encontrado", "bloqueado"):
+        return detener("busqueda_negocio_inconclusa")
+    if negocio["estado"] == "bloqueado" and negocio.get("motivo") not in (
+        "error_http", "error_consulta", "respuesta_invalida", "respuesta_ambigua",
+        "registro_invalido", "campo_invalido", "id_invalido",
+    ):
         return detener("busqueda_negocio_inconclusa")
 
     # Zoho puede demorar en indexar /search. Verificar el listado
@@ -346,7 +354,12 @@ def registrar_cotizacion_sandbox(
             "negocio_id": negocio["registro_id"],
         }
 
-    if negocio["estado"] != "no_encontrado":
+    if negocio["estado"] not in ("no_encontrado", "bloqueado"):
+        return detener("segunda_busqueda_inconclusa")
+    if negocio["estado"] == "bloqueado" and negocio.get("motivo") not in (
+        "error_http", "error_consulta", "respuesta_invalida", "respuesta_ambigua",
+        "registro_invalido", "campo_invalido", "id_invalido",
+    ):
         return detener("segunda_busqueda_inconclusa")
 
     # Verificar el listado tambien inmediatamente antes del POST.

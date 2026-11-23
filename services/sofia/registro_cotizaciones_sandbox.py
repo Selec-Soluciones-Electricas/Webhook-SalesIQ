@@ -246,6 +246,14 @@ def registrar_cotizacion_sandbox(
     if listado_negocio["estado"] != "no_encontrado":
         return detener("listado_negocios_inconcluso")
 
+    # Solo fallos de consulta (no de validacion ni duplicados) permiten
+    # consultar el listado completo como segunda fuente confiable.
+    fallos_busqueda_recuperables = {
+        "error_http", "error_consulta", "respuesta_invalida",
+        "respuesta_ambigua", "registro_invalido", "campo_invalido",
+        "id_invalido",
+    }
+
     # 2. Resolver Cuenta.
     cuenta = buscar_cuenta_sandbox_por_rut(
         cuenta_data["Billing_Code"],
@@ -254,8 +262,12 @@ def registrar_cotizacion_sandbox(
 
     if cuenta["estado"] == "encontrado":
         account_id = cuenta["account_id"]
-    elif cuenta["estado"] == "no_encontrado":
-        # Segunda fuente de lectura para reducir duplicados por indexacion.
+    elif cuenta["estado"] == "no_encontrado" or (
+        cuenta["estado"] == "bloqueado"
+        and cuenta.get("motivo") in fallos_busqueda_recuperables
+    ):
+        # Un fallo de /Accounts/search NO prueba que la Cuenta no exista.
+        # Confirmar mediante listado completo antes de cualquier POST.
         listado_cuenta = verificar_listado(
             "Accounts", "Billing_Code", cuenta_data["Billing_Code"]
         )
@@ -307,7 +319,13 @@ def registrar_cotizacion_sandbox(
         except Exception:
             return detener("contacto_no_verificado")
 
-    elif contacto["estado"] == "no_encontrado":
+    elif contacto["estado"] == "no_encontrado" or (
+        contacto["estado"] == "bloqueado"
+        and contacto.get("motivo") in fallos_busqueda_recuperables
+    ):
+        # Zoho puede rechazar /Contacts/search o demorar en indexarlo.
+        # Reutilizar solo coincidencia unica del listado completo, y validar
+        # su Cuenta asociada antes de continuar.
         listado_contacto = verificar_listado(
             "Contacts", "Email", contacto_data["Email"]
         )

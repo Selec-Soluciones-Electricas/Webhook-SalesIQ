@@ -112,6 +112,104 @@ ENV_WRITE = {
 
 
 class Flujo(unittest.TestCase):
+    def test_contacto_search_http400_listado_completo_crea_nuevo(self):
+        """HTTP 400 en /Contacts/search no bloquea si listado prueba ausencia."""
+        crm = ZohoFicticio()
+        original = crm.get
+        def get(url, **kwargs):
+            if url == BASE + "Contacts/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            return original(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get
+        with patch.dict(os.environ, ENV_WRITE):
+            primera = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_a")], AGENTE, conexion=conexion, http_post=crm.post
+            )
+            segunda = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_a")], AGENTE, conexion=conexion, http_post=crm.post
+            )
+        self.assertEqual(primera["creadas"], 1)
+        self.assertEqual(segunda["ya_registradas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals"])
+
+    def test_contacto_search_http400_reutiliza_contacto_de_misma_cuenta(self):
+        """Contacto creado previamente se recupera por lista, no se duplica."""
+        crm = ZohoFicticio()
+        normal = crm.get
+        with patch.dict(os.environ, ENV_WRITE):
+            previo = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_a")], AGENTE, conexion=crm.conexion, http_post=crm.post
+            )
+            self.assertEqual(previo["creadas"], 1)
+            def get(url, **kwargs):
+                if url == BASE + "Contacts/search":
+                    return Response(400, {"code": "INVALID_QUERY"})
+                return normal(url, **kwargs)
+            conexion = crm.conexion
+            conexion["http_get"] = get
+            siguiente = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_b")], AGENTE, conexion=conexion, http_post=crm.post
+            )
+        self.assertEqual(siguiente["creadas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals", "Deals"])
+
+    def test_contacto_search_y_listado_no_confirmados_detiene(self):
+        """No crear Contacto/Negocio si tampoco se puede leer /Contacts."""
+        crm = ZohoFicticio()
+        normal = crm.get
+        def get(url, **kwargs):
+            if url == BASE + "Contacts/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            if url == BASE + "Contacts":
+                return Response(503)
+            return normal(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get
+        with patch.dict(os.environ, ENV_WRITE):
+            resultado = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_a")], AGENTE, conexion=conexion, http_post=crm.post
+            )
+        self.assertEqual(resultado["estado"], "parcial")
+        self.assertEqual(resultado["motivo_bloqueo"], "listado_contactos_inconcluso")
+        self.assertEqual(crm.creados, ["Accounts"])
+
+    def test_cuenta_search_http400_listado_completo_permite_crear(self):
+        """Validar ausencia de Cuenta por listado cuando falla su busqueda."""
+        crm = ZohoFicticio()
+        normal = crm.get
+        def get(url, **kwargs):
+            if url == BASE + "Accounts/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            return normal(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get
+        with patch.dict(os.environ, ENV_WRITE):
+            resultado = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_a")], AGENTE, conexion=conexion, http_post=crm.post
+            )
+        self.assertEqual(resultado["creadas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals"])
+
+    def test_cuenta_search_y_listado_fallidos_bloquean(self):
+        crm = ZohoFicticio()
+        normal = crm.get
+        def get(url, **kwargs):
+            if url == BASE + "Accounts/search":
+                return Response(400, {"code": "INVALID_QUERY"})
+            if url == BASE + "Accounts":
+                return Response(500)
+            return normal(url, **kwargs)
+        conexion = crm.conexion
+        conexion["http_get"] = get
+        with patch.dict(os.environ, ENV_WRITE):
+            resultado = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_245_a")], AGENTE, conexion=conexion, http_post=crm.post
+            )
+        self.assertEqual(resultado["estado"], "parcial")
+        self.assertEqual(resultado["motivo_bloqueo"], "listado_cuentas_inconcluso")
+        self.assertEqual(crm.creados, [])
+
     def test_deal_existente_search_http400_lista_confirma_sin_escrituras(self):
         """Search API falla, pero listado completo encuentra Deal existente."""
         crm = ZohoFicticio()

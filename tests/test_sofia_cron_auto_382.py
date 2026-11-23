@@ -1,4 +1,4 @@
-﻿"""Pruebas aisladas del modo automatico de postventas de Sofia."""
+"""Pruebas aisladas del modo automatico de postventas de Sofia."""
 
 import importlib.util
 import os
@@ -39,6 +39,7 @@ def postventa(call_id):
         "tipo": "postventa",
         "estado": "candidata_caso",
         "faltantes": [],
+        "start_timestamp": 1795468501000,
     }
 
 
@@ -55,6 +56,7 @@ class CronPostventasAutomaticas(unittest.TestCase):
     def ejecutar(
         self, postventas, generales=None, *,
         auto=True, escrituras=True, existentes=(),
+        fecha_minima="1795468500000",
     ):
         generales = generales or []
         existentes = set(existentes)
@@ -192,6 +194,7 @@ class CronPostventasAutomaticas(unittest.TestCase):
                 "call_autorizada_382"
             ),
             "SOFIA_SANDBOX_CASES_OWNER_ID": "123456789",
+            "SOFIA_SANDBOX_POSTVENTAS_AUTO_DESDE_MS": fecha_minima,
         }
 
         ruta = (
@@ -289,6 +292,83 @@ class CronPostventasAutomaticas(unittest.TestCase):
         self.assertEqual(codigo, 200)
         self.assertTrue(all(x["simulacion"] for x in intentos))
         self.assertEqual(respuesta["resumen_casos"]["creado"], 0)
+
+
+    def test_auto_excluye_postventa_antigua(self):
+        antigua = postventa("call_antigua_402")
+        antigua["start_timestamp"] = 1795468499000
+
+        respuesta, codigo, intentos = self.ejecutar(
+            [antigua]
+        )
+
+        self.assertEqual(codigo, 200)
+        self.assertEqual(intentos, [])
+        self.assertEqual(
+            respuesta["resumen_casos"]["creado"], 0
+        )
+
+    def test_auto_bloquea_dos_postventas_nuevas(self):
+        respuesta, codigo, intentos = self.ejecutar([
+            postventa("call_nueva_a_402"),
+            postventa("call_nueva_b_402"),
+        ])
+
+        self.assertEqual(codigo, 503)
+        self.assertEqual(intentos, [])
+
+    def test_auto_excluye_existente_y_crea_nueva(self):
+        respuesta, codigo, intentos = self.ejecutar(
+            [
+                postventa("call_existente_402"),
+                postventa("call_nueva_402"),
+            ],
+            existentes={"call_existente_402"},
+        )
+
+        self.assertEqual(codigo, 200)
+        self.assertEqual(
+            [x["call_id"] for x in intentos],
+            ["call_nueva_402"],
+        )
+        self.assertEqual(
+            respuesta["casos_ya_registrados"], 1
+        )
+
+    def test_auto_rechaza_fecha_no_verificable(self):
+        sin_fecha = postventa("call_sin_fecha_402")
+        sin_fecha.pop("start_timestamp")
+
+        respuesta, codigo, intentos = self.ejecutar(
+            [sin_fecha]
+        )
+
+        self.assertEqual(codigo, 503)
+        self.assertEqual(intentos, [])
+
+    def test_auto_rechaza_fecha_minima_ausente(self):
+        respuesta, codigo, intentos = self.ejecutar(
+            [postventa("call_nueva_402")],
+            fecha_minima="",
+        )
+
+        self.assertEqual(codigo, 503)
+        self.assertEqual(intentos, [])
+
+    def test_auto_ignora_antigua_y_crea_reciente(self):
+        antigua = postventa("call_antigua_402")
+        antigua["start_timestamp"] = 1795468499000
+
+        respuesta, codigo, intentos = self.ejecutar([
+            antigua,
+            postventa("call_reciente_402"),
+        ])
+
+        self.assertEqual(codigo, 200)
+        self.assertEqual(
+            [x["call_id"] for x in intentos],
+            ["call_reciente_402"],
+        )
 
 
 if __name__ == "__main__":

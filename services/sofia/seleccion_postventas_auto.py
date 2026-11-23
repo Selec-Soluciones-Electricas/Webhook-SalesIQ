@@ -42,3 +42,49 @@ def seleccionar_postventas_automaticas(postventas):
         seleccionadas.append(postventa.copy())
 
     return seleccionadas
+
+def seleccionar_postventas_prueba_segura(
+    postventas,
+    *,
+    inicio_minimo_ms,
+):
+    """
+    Seleccion controlada para la primera prueba automatica.
+
+    Solo permite postventas validadas y posteriores
+    a la fecha minima indicada.
+
+    Si hay mas de una candidata nueva, bloquea
+    toda la seleccion.
+
+    No realiza conexiones ni escrituras.
+    """
+    if (
+        type(inicio_minimo_ms) is not int
+        or inicio_minimo_ms <= 0
+    ):
+        raise ValueError("Fecha minima invalida")
+
+    validadas = seleccionar_postventas_automaticas(
+        postventas
+    )
+
+    recientes = []
+
+    for postventa in validadas:
+        fecha = postventa.get("start_timestamp")
+
+        if type(fecha) is not int or fecha <= 0:
+            raise ValueError(
+                "Fecha de llamada no verificable"
+            )
+
+        if fecha >= inicio_minimo_ms:
+            recientes.append(postventa)
+
+    if len(recientes) > 1:
+        raise ValueError(
+            "Multiples postventas nuevas: revision requerida"
+        )
+
+    return recientes

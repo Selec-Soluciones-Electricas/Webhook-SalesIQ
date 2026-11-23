@@ -333,6 +333,49 @@ def register_sofia_cron_routes(app):
 
         consultas_planificadas = plan["seleccionadas"]
 
+        # Primera prueba automatica de postventas.
+        # Aplicar el limite DESPUES de verificar duplicados.
+        if escritura_casos_sandbox and postventas_auto:
+            from services.sofia.seleccion_postventas_auto import (
+                seleccionar_postventas_prueba_segura,
+            )
+
+            fecha_minima_texto = os.getenv(
+                "SOFIA_SANDBOX_POSTVENTAS_AUTO_DESDE_MS",
+                "",
+            ).strip()
+
+            if (
+                not fecha_minima_texto.isascii()
+                or not fecha_minima_texto.isdecimal()
+            ):
+                return jsonify({
+                    "error": "Fecha minima automatica no configurada",
+                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
+                }), 503
+
+            try:
+                pendientes_auto = [
+                    consulta
+                    for consulta in consultas
+                    if barrido["resultados"][
+                        consulta["call_id"]
+                    ]["estado"] == "no_encontrado"
+                ]
+
+                consultas_planificadas = (
+                    seleccionar_postventas_prueba_segura(
+                        pendientes_auto,
+                        inicio_minimo_ms=int(fecha_minima_texto),
+                    )
+                )
+
+            except (ValueError, KeyError, TypeError):
+                return jsonify({
+                    "error": "Postventas automaticas requieren revision",
+                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
+                }), 503
+
         # El primer despliegue de Casos usa una sola llamada autorizada.
         # Se implementara modo automatico tras validar la idempotencia.
         casos_escritura_habilitada = (

@@ -492,6 +492,7 @@ def procesar_pendientes_sofia(
                 postventas_detectadas.append({
                     **postventa,
                     "tipo": "postventa",
+                    "start_timestamp": llamada.get("start_timestamp"),
                 })
 
             else:

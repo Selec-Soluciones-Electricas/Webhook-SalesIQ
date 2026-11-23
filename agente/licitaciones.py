@@ -54,12 +54,15 @@ Variables de entorno:
       el propietario es el mismo que LICITACION_ASIGNADO)
   ASIGNACION_POR_TIPO=on  ASIGNACION_INICIALES  ASIGNACION_MAX=60  ASIGNACION_REGLAS (ver abajo)
   LUGAR_ENTREGA_DEFECTO=Santiago
+  MODIFICAR_DESDE_INVITACION=on  (si llega otra vez una invitación con otra fecha de cierre, se actualiza;
+      ver "MODIFICACIONES DE UNA LICITACIÓN YA CREADA". Requiere el scope ZohoCreator.report.UPDATE)
   GEN_ID=4710567000001934003
 """
 
 import html
 import os
 import re
+import threading
 import time
 import unicodedata
 from datetime import datetime, timedelta
@@ -1199,12 +1202,23 @@ def modificar_licitacion(m: dict, analisis: dict) -> dict:
     return resultado
 
 
+# Una creación (o modificación) a la vez: el servidor atiende varios correos en paralelo
+# (8 hilos) y dos correos de la misma licitación (ej. el original y un reenvío) podían
+# revisar "¿ya existe?" al mismo tiempo, no encontrarla y crearla los dos.
+_candado_creacion = threading.RLock()
+
+
 def crear_licitacion(m: dict, analisis: dict) -> dict:
+    with _candado_creacion:
+        return _crear_licitacion(m, analisis)
+
+
+def _crear_licitacion(m: dict, analisis: dict) -> dict:
     tipo = analisis.get("tipo")
     id_proceso = (analisis.get("id_proceso") or "").strip()
 
     if tipo in TIPOS_QUE_MODIFICAN:
-        return modificar_licitacion(m, analisis)    
+        return modificar_licitacion(m, analisis)
 
     if tipo not in TIPOS_QUE_CREAN:
         return {"omitida": f"tipo {tipo}"}
@@ -1240,6 +1254,7 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
             return aplicar_modificacion(existente, m, analisis, origen="Invitación recibida nuevamente",
                                         solo_si_cambia_fecha=True)
         return {"omitida": "ya existe", "id": existente}
+
     if portal == "Codelco":
         cliente_id, cliente_nombre = cliente_codelco()
     else:
@@ -1254,7 +1269,8 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
         avisos.append("el correo no indica fecha de cierre: se puso una provisoria (+3 días)")
 
     if excluidos:
-        avisos.append(f"{len(excluidos)} ítem(s) no se incluyeron (rodamientos, retenes o correas)")
+        avisos.append(f"{len(excluidos)} ítem(s) no se incluyeron (fuera del rubro: aseo, vestuario, guantes, "
+                      f"rodamientos, etc.)")
 
     productos = []
     for it in items:

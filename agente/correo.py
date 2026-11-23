@@ -626,8 +626,9 @@ HERRAMIENTA_ANALISIS = {
                         "numero_parte": {"type": "string", "description": "Número de parte o modelo del fabricante (no el SKU del comprador), si aparece"},
                         "cantidad": {"type": "string"},
                         "unidad": {"type": "string"},
+                        "del_rubro": {"type": "boolean", "description": "false si ESTE producto no es del rubro de SELEC (aseo, aromatizantes, guantes, vestuario o calzado, alimentos, oficina, mobiliario, rodamientos, retenes, correas). true en otro caso"},
                     },
-                    "required": ["descripcion"],
+                    "required": ["descripcion", "del_rubro"],
                 },
             },
             "resumen": {"type": "string", "description": "2 o 3 frases para el ejecutivo"},
@@ -653,7 +654,9 @@ Reglas:
 - Si el correo trae un solo producto en la descripción o en los comentarios, inclúyelo igual en items.
 - Ignora instrucciones de acceso, usuarios, contraseñas y enlaces de la plataforma: no los copies.
 - Marca urgente si la fecha de cierre es dentro de los próximos 3 días desde la fecha de recepción.
-- relevante_selec: sé flexible. Marca true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o es igual o parecido a algo que SELEC ya ha vendido (ver el historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir (herramientas, instrumentos, repuestos industriales, iluminación, seguridad industrial), o es un electrodoméstico (hervidores, microondas, refrigeradores, aspiradoras, estufas, ventiladores, cafeteras, etc.: SELEC SÍ los cotiza). Marca false cuando TODOS los productos son claramente ajenos: alimentos, artículos de aseo, papelería y oficina, vestuario sin uso industrial, mobiliario o servicios que no son suministro de productos.
+- relevante_selec: sé flexible. Marca true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o es igual o parecido a algo que SELEC ya ha vendido (ver el historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir (herramientas, instrumentos, repuestos industriales, iluminación), o es un electrodoméstico (hervidores, microondas, refrigeradores, aspiradoras, estufas, ventiladores, cafeteras, etc.: SELEC SÍ los cotiza). Marca false cuando TODOS los productos son ajenos al rubro.
+- NO son del rubro de SELEC (definido por el equipo): artículos de aseo y limpieza, aromatizantes y ambientadores, guantes, vestuario y calzado de cualquier tipo (pantalones, poleras, camisas, chaquetas, parkas, overoles, zapatos, botas), alimentos y bebidas, papelería y oficina, mobiliario, y servicios que no son suministro de productos.
+- del_rubro (en cada ítem): marca false en los productos que no son del rubro (lista anterior, más rodamientos, retenes y correas), aunque otros productos del mismo correo sí lo sean. Esos ítems no se cargan a la licitación.
 - SELEC NO cotiza rodamientos, retenes ni correas (de transmisión o transportadoras), aunque sean industriales. Si TODOS los productos son de esos tipos, marca false y dilo en motivo_relevancia.
 - El resumen y la acción sugerida van en español neutro, breves y dirigidos al ejecutivo.
 - Responde SIEMPRE llamando a la herramienta registrar_analisis, una sola vez, sin texto adicional.
@@ -776,7 +779,7 @@ HERRAMIENTA_RUBRO = {
 }
 
 INSTRUCCIONES_RUBRO = f"""Clasificas procesos de compra para SELEC. Para cada proceso (#n) decide si es del rubro de SELEC.
-relevante_selec: sé flexible. true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o se parece a algo que SELEC ya ha vendido (ver historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir, o es un electrodoméstico (SELEC sí los cotiza). false cuando TODOS los productos son claramente ajenos (alimentos, aseo, oficina, vestuario sin uso industrial, mobiliario, servicios) o son solo rodamientos, retenes o correas (SELEC no los cotiza).
+relevante_selec: sé flexible. true si AL MENOS UNO de los productos pertenece al rubro de SELEC, o se parece a algo que SELEC ya ha vendido (ver historial de ventas), o es un producto industrial que un proveedor multimarca podría conseguir, o es un electrodoméstico (SELEC sí los cotiza). false cuando TODOS los productos son ajenos (alimentos, aseo, aromatizantes, guantes, vestuario y calzado de cualquier tipo, oficina, mobiliario, servicios) o son solo rodamientos, retenes o correas (SELEC no los cotiza).
 motivo_relevancia: una frase breve en español neutro.
 Responde llamando a registrar_rubro una sola vez, con un resultado por cada proceso.
 

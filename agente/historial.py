@@ -57,9 +57,18 @@ TIPOS_EXCLUIDOS = {
     "rodamiento", "reten", "correa",
 }
 
+# Productos fuera del rubro (definido con el equipo): aseo, aromas, guantes, vestuario y calzado.
+NO_RUBRO_GENERAL = {
+    "aromatizante", "ambientador", "desodorante", "aromatizador", "jabon", "detergente", "cloro",
+    "lavaloza", "desinfectante", "limpiador", "escoba", "trapero", "basurero",
+    "guante", "pantalon", "polera", "camisa", "chaqueta", "parka", "overol", "buzo", "uniforme",
+    "vestuario", "ropa", "zapato", "zapatilla", "bota", "botin", "calzado", "calcetin", "gorro", "jockey",
+}
+TIPOS_EXCLUIDOS |= NO_RUBRO_GENERAL
+
 # Productos que SELEC decidió NO cotizar aunque sean industriales (definido con el equipo).
 # Se comparan con las primeras palabras significativas de cada ítem, sin tildes ni plural.
-PRODUCTOS_NO_RUBRO = {"rodamiento", "reten", "correa"}
+PRODUCTOS_NO_RUBRO = {"rodamiento", "reten", "correa"} | NO_RUBRO_GENERAL
 # Si el ítem es un servicio, no se compara con el historial
 PATRON_SERVICIO = re.compile(
     r"\b(mantencion|mantenimiento|servicio|instalacion|reparacion|arriendo|capacitacion|asesoria|"
@@ -231,14 +240,16 @@ def item_excluido(texto: str) -> str | None:
 
 def aplicar_exclusiones(analisis: dict) -> dict:
     """
-    Marca los ítems que SELEC no cotiza (analisis["items_excluidos"]). Si TODOS los ítems lo son,
+    Marca los ítems que SELEC no cotiza (analisis["items_excluidos"]): los de la lista
+    PRODUCTOS_NO_RUBRO y los que Claude marcó con del_rubro=false. Si TODOS los ítems lo son,
     el correo queda fuera del rubro aunque Claude o el historial digan lo contrario.
     """
     items = analisis.get("items") or []
     excluidos = []
     for i, it in enumerate(items):
         tipo = item_excluido(f"{it.get('descripcion') or ''} {it.get('marca_modelo') or ''}")
-        if tipo:
+        # También los que Claude marcó fuera del rubro (del_rubro=false)
+        if tipo or it.get("del_rubro") is False:
             excluidos.append(i)
     analisis["items_excluidos"] = excluidos
     if items and len(excluidos) == len(items):

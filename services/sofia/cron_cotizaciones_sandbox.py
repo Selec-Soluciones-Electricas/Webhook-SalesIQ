@@ -45,7 +45,7 @@ def procesar_cotizaciones_cron_sandbox(
         "motivo_bloqueo": None,
     }
     if not isinstance(llamadas, list) or not agent_id:
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "entrada_invalida"}
 
     # Desactivado por defecto incluso en Render.
     activar = (
@@ -72,7 +72,13 @@ def procesar_cotizaciones_cron_sandbox(
         elegibles.append((llamada, borrador))
 
     resumen["pendientes"] = len(elegibles)
-    if not activar:
+    # Diagnostico: comprueba OAuth y propietario aunque las escrituras esten apagadas.
+    # Si esta habilitado, siempre termina ANTES del escritor de cotizaciones.
+    diagnostico = (
+        os.getenv("SOFIA_SANDBOX_DEALS_DIAGNOSTIC_ONLY", "false").strip().lower()
+        == "true"
+    )
+    if not activar and not diagnostico:
         return resumen
 
     # No permitir que el flag de Casos ni el del CRM viejo habiliten esto.
@@ -88,11 +94,11 @@ def procesar_cotizaciones_cron_sandbox(
     # En ambos casos aun se requiere habilitar escrituras y pasar el corte.
     modo = os.getenv("SOFIA_SANDBOX_DEALS_MODE", "manual").strip().lower()
     if modo not in ("manual", "automatico"):
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "modo_invalido"}
     if modo == "manual" and not permitidos:
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "lista_manual_vacia"}
     if modo == "automatico" and permitidos:
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "lista_automatica_no_vacia"}
 
     if (
         not re.fullmatch(r"[0-9]{10,20}", propietario)
@@ -100,13 +106,13 @@ def procesar_cotizaciones_cron_sandbox(
         or not re.fullmatch(r"[0-9]{1,3}", dias_texto)
         or not re.fullmatch(r"[0-9]{1,2}", maximo_texto)
     ):
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "configuracion_invalida"}
 
     minimo = int(minimo_texto)
     dias = int(dias_texto)
     maximo = int(maximo_texto)
     if not (1 <= dias <= 180 and 1 <= maximo <= 10):
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "limites_fuera_rango"}
 
     if not elegibles:
         return {**resumen, "estado": "sandbox_habilitado"}
@@ -119,29 +125,56 @@ def procesar_cotizaciones_cron_sandbox(
         or not callable(conexion.get("http_get"))
         or not callable(http_post)
     ):
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "conexion_sandbox_invalida"}
 
-    # Se obtiene un unico token, ya verificado como Sandbox por crm_sandbox.
-    # Ademas, se confirma el propietario ANTES de crear la primera Cuenta.
+    # Diagnostico de preflight sin imprimir secretos, Call IDs ni datos personales.
     try:
         token = conexion["obtener_token"]()
-        conexion = dict(conexion)
-        conexion["obtener_token"] = lambda: token
+        if not isinstance(token, str) or not token:
+            raise ValueError("Token ausente")
+    except Exception as error:
+        import requests
+        motivo = (
+            "oauth_timeout"
+            if isinstance(error, requests.exceptions.Timeout)
+            else "oauth_no_disponible"
+        )
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": motivo}
+
+    conexion = dict(conexion)
+    conexion["obtener_token"] = lambda: token
+    try:
         validacion = conexion["http_get"](
             "https://sandbox.zohoapis.com/crm/v8/users/" + propietario,
             headers={"Authorization": "Zoho-oauthtoken " + token},
             timeout=20,
             allow_redirects=False,
         )
-        usuarios = validacion.json().get("users") if validacion.status_code == 200 else None
+    except Exception as error:
+        import requests
+        motivo = (
+            "owner_timeout"
+            if isinstance(error, requests.exceptions.Timeout)
+            else "owner_consulta_error"
+        )
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": motivo}
+
+    if validacion.status_code != 200:
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "owner_http_" + str(validacion.status_code)}
+    try:
+        usuarios = validacion.json().get("users")
         if (
             not isinstance(usuarios, list) or len(usuarios) != 1
             or str(usuarios[0].get("id")) != propietario
             or str(usuarios[0].get("status", "")).lower() != "active"
         ):
-            return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+            return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "owner_no_confirmado"}
     except Exception:
-        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "owner_respuesta_invalida"}
+
+    # Garantia: en modo diagnostico nunca entra al registro de CRM.
+    if diagnostico:
+        return {**resumen, "estado": "diagnostico", "motivo_bloqueo": "preflight_ok"}
 
     # Filtrar llamadas antiguas/no autorizadas ANTES de obtener OAuth.
     pendientes_autorizadas = []

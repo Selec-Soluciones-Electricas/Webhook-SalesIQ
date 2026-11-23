@@ -112,6 +112,74 @@ ENV_WRITE = {
 
 
 class Flujo(unittest.TestCase):
+    def test_modo_automatico_sin_whitelist_y_reintento(self):
+        crm = ZohoFicticio()
+        env = {
+            **ENV_WRITE,
+            "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+            "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": "",
+        }
+        with patch.dict(os.environ, env):
+            primero = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_auto_a")], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+            repetido = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_auto_a")], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+            siguiente = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_auto_b")], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+        self.assertEqual(primero["creadas"], 1)
+        self.assertEqual(repetido["ya_registradas"], 1)
+        self.assertEqual(siguiente["creadas"], 1)
+        self.assertEqual(crm.creados, ["Accounts", "Contacts", "Deals", "Deals"])
+
+    def test_automatico_excluye_llamadas_anteriores_y_no_escribe_sin_habilitar(self):
+        crm = ZohoFicticio()
+        env = {
+            **ENV_WRITE,
+            "SOFIA_SANDBOX_DEALS_MODE": "automatico",
+            "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": "",
+        }
+        with patch.dict(os.environ, env):
+            vieja = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_auto_vieja", marca=1999999999998)], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+        with patch.dict(os.environ, {
+            **env, "SOFIA_SANDBOX_DEALS_WRITES_ENABLED": "false"
+        }):
+            desactivada = procesar_cotizaciones_cron_sandbox(
+                [llamada("call_auto_nueva")], AGENTE,
+                conexion=crm.conexion, http_post=crm.post,
+            )
+        self.assertEqual(vieja["anteriores_al_inicio"], 1)
+        self.assertEqual(desactivada["estado"], "simulacion")
+        self.assertEqual(crm.creados, [])
+
+    def test_automatico_rechaza_configuracion_ambigua(self):
+        crm = ZohoFicticio()
+        opciones = [
+            ("automatico", "call_245_a"),
+            ("desconocido", ""),
+        ]
+        for modo, lista in opciones:
+            with self.subTest(modo=modo, lista=lista):
+                with patch.dict(os.environ, {
+                    **ENV_WRITE,
+                    "SOFIA_SANDBOX_DEALS_MODE": modo,
+                    "SOFIA_SANDBOX_DEALS_ALLOWED_CALL_IDS": lista,
+                }):
+                    resultado = procesar_cotizaciones_cron_sandbox(
+                        [llamada()], AGENTE,
+                        conexion=crm.conexion, http_post=crm.post,
+                    )
+                self.assertEqual(resultado["estado"], "bloqueado")
+                self.assertEqual(crm.creados, [])
+
 
     def test_lista_autorizada_obligatoria(self):
         crm = ZohoFicticio()

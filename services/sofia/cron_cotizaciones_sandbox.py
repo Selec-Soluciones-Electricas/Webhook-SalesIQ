@@ -82,12 +82,15 @@ def procesar_cotizaciones_cron_sandbox(
     permitidos = set(filter(None, (x.strip() for x in permitidos_texto.split(","))))
 
     # Sin lista explicita, nunca crear cotizaciones.
-    if not permitidos:
-        return {
-            **resumen,
-            "estado": "bloqueado",
-            "bloqueadas": 1,
-        }
+    # Proteccion: modo manual exige lista; modo automatico exige lista vacia.
+    # En ambos casos aun se requiere habilitar escrituras y pasar el corte.
+    modo = os.getenv("SOFIA_SANDBOX_DEALS_MODE", "manual").strip().lower()
+    if modo not in ("manual", "automatico"):
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+    if modo == "manual" and not permitidos:
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
+    if modo == "automatico" and permitidos:
+        return {**resumen, "estado": "bloqueado", "bloqueadas": 1}
 
     if (
         not re.fullmatch(r"[0-9]{10,20}", propietario)
@@ -146,7 +149,7 @@ def procesar_cotizaciones_cron_sandbox(
             resumen["anteriores_al_inicio"] += 1
             resumen["pendientes"] -= 1
             continue
-        if permitidos and borrador["call_id"] not in permitidos:
+        if modo == "manual" and borrador["call_id"] not in permitidos:
             resumen["fuera_de_lista"] += 1
             resumen["pendientes"] -= 1
             continue

@@ -172,9 +172,74 @@ def procesar_cotizaciones_cron_sandbox(
     except Exception:
         return {**resumen, "estado": "bloqueado", "bloqueadas": 1, "motivo_bloqueo": "owner_respuesta_invalida"}
 
-    # Garantia: en modo diagnostico nunca entra al registro de CRM.
+    # Solo lectura en modo diagnostico. Comprobar el listado exacto de Deals
+    # que consulta el escritor. Nunca se llama registrar_cotizacion_sandbox.
     if diagnostico:
-        return {**resumen, "estado": "diagnostico", "motivo_bloqueo": "preflight_ok"}
+        try:
+            respuesta = conexion["http_get"](
+                "https://sandbox.zohoapis.com/crm/v8/Deals",
+                headers={"Authorization": "Zoho-oauthtoken " + token},
+                params={"fields": "id,Retell_Call_ID", "page": 1, "per_page": 200},
+                timeout=20,
+                allow_redirects=False,
+            )
+        except Exception as error:
+            import requests
+            motivo = (
+                "deals_list_timeout"
+                if isinstance(error, requests.exceptions.Timeout)
+                else "deals_list_conexion_error"
+                if isinstance(error, requests.exceptions.RequestException)
+                else "deals_list_error"
+            )
+            return {**resumen, "estado": "diagnostico", "motivo_bloqueo": motivo}
+
+        http = respuesta.status_code
+        if http == 200:
+            try:
+                cuerpo = respuesta.json()
+                registros = cuerpo.get("data")
+                info = cuerpo.get("info")
+                if not isinstance(registros, list) or not isinstance(info, dict):
+                    motivo = "deals_200_formato_invalido"
+                elif not isinstance(info.get("more_records"), bool):
+                    motivo = "deals_200_paginacion_invalida"
+                elif info["more_records"]:
+                    motivo = "deals_200_mas_paginas"
+                else:
+                    # Solo informa si el Call ID ya existe, sin mostrarlo.
+                    objetivo = elegibles[0][1]["call_id"]
+                    encontrados = sum(
+                        isinstance(fila, dict)
+                        and str(fila.get("Retell_Call_ID") or "").strip() == objetivo
+                        for fila in registros
+                    )
+                    motivo = (
+                        "deals_200_encontrado"
+                        if encontrados == 1
+                        else "deals_200_duplicado"
+                        if encontrados > 1
+                        else "deals_200_no_encontrado"
+                    )
+            except Exception:
+                motivo = "deals_200_json_invalido"
+        elif http == 204:
+            motivo = "deals_204_sin_registros"
+        else:
+            try:
+                codigo = respuesta.json().get("code")
+            except Exception:
+                codigo = None
+            # Solo mostrar codigos permitidos, nunca datos del cuerpo de Zoho.
+            codigos_seguros = {
+                "OAUTH_SCOPE_MISMATCH", "INVALID_TOKEN", "AUTHENTICATION_FAILURE",
+                "INVALID_DATA", "INVALID_QUERY", "NO_PERMISSION", "INVALID_MODULE",
+                "INVALID_URL_PATTERN", "TOO_MANY_REQUESTS", "LIMIT_EXCEEDED",
+                "NOT_ALLOWED", "ACCESS_DENIED", "INTERNAL_ERROR", "INVALID_REQUEST",
+            }
+            sufijo = "_" + codigo if codigo in codigos_seguros else ""
+            motivo = "deals_http_" + str(http) + sufijo
+        return {**resumen, "estado": "diagnostico", "motivo_bloqueo": motivo}
 
     # Filtrar llamadas antiguas/no autorizadas ANTES de obtener OAuth.
     pendientes_autorizadas = []

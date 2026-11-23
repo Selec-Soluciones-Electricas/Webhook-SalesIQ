@@ -1069,9 +1069,142 @@ def cantidad_numero(texto):
     return int(n) if n == int(n) else round(n, 2)
 
 
+# =========================================================
+# MODIFICACIONES DE UNA LICITACIÓN YA CREADA
+# =========================================================
+#
+# Correos "modificacion_o_aclaracion" (cambio de fecha, aclaraciones, enmiendas):
+#   - Se busca la licitación por el mismo control de duplicados (LIC-<número> o Ref. correo).
+#   - Si la fecha de cierre del correo es distinta, se actualiza fecha_limite_oferta y la fecha
+#     sin hora (el workflow "Creado o editado" lleva el cambio al Negocio del CRM).
+#   - Se aplica en cualquier Fase (definido con el equipo).
+#   - Siempre se agrega una nota al FINAL de las Notas, con la fecha del correo y qué cambió.
+#   - Si la licitación no existe, se crea con los datos del correo (si es del rubro y trae productos).
+# Además, si llega otra vez la invitación de una licitación que ya existe y trae otra fecha de cierre,
+# se actualiza la fecha igual (MODIFICAR_DESDE_INVITACION=off lo desactiva).
+
+TIPOS_QUE_MODIFICAN = {"modificacion_o_aclaracion"}
+
+
+def _fecha_de_creator(valor):
+    """'28-Nov-2026 16:00:00' (formato de Creator) -> datetime, o None."""
+    m = re.search(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})(?:\s+(\d{1,2}):(\d{2}))?", _valor(valor) or "")
+    if not m or m.group(2).title() not in MESES:
+        return None
+    try:
+        return datetime(int(m.group(3)), MESES.index(m.group(2).title()) + 1, int(m.group(1)),
+                        int(m.group(4) or 0), int(m.group(5) or 0))
+    except ValueError:
+        return None
+
+
+def _fecha_legible(dt):
+    return dt.strftime("%d-%m-%Y %H:%M") if dt else "sin fecha"
+
+
+def _recibido_chile(m):
+    """Fecha y hora (Chile) en que llegó el correo, para la nota."""
+    texto = m.get("receivedDateTime") or ""
+    try:
+        dt = datetime.fromisoformat(texto.replace("Z", "+00:00")).astimezone(CHILE_TZ)
+    except ValueError:
+        dt = datetime.now(CHILE_TZ)
+    return dt.strftime("%d-%m-%Y %H:%M")
+
+
+def buscar_licitacion(m, analisis):
+    """ID de la licitación que corresponde a este correo (mismo control que los duplicados), o None."""
+    id_proceso = (analisis.get("id_proceso") or "").strip()
+    portal = _portal(analisis.get("plataforma") or "", m.get("remitente", ""))
+    _, claves = nombre_trato(portal, id_proceso, analisis, analisis.get("items") or [], m)
+    for clave in claves:
+        existente = licitacion_existente(clave)
+        if existente:
+            return existente
+    if portal == "Industrias":
+        return industria_existente(id_proceso)
+    return None
+
+
+def aplicar_modificacion(lic_id, m, analisis, origen="Modificación recibida por correo",
+                         solo_si_cambia_fecha=False):
+    """
+    Actualiza la fecha límite (si cambió) y agrega la nota con fecha al final de las Notas.
+    solo_si_cambia_fecha=True: si la fecha es la misma no se toca nada (invitaciones repetidas).
+    """
+    import hashlib
+
+    reporte = os.getenv("CREATOR_REPORT_LICITACION", "Licitaci_n_Report")
+    status, datos = _creator("GET", f"report/{reporte}/{lic_id}")
+    fila = datos.get("data") if status == 200 else None
+    if not isinstance(fila, dict):
+        raise RuntimeError(f"no se pudo leer la licitación {lic_id} en Creator ({status}): {str(datos)[:200]}")
+
+    avisos, cambios_texto, cambios = [], [], {}
+    antes = _fecha_de_creator(fila.get("fecha_limite_oferta"))
+    nueva = _fecha_creator(analisis.get("fecha_cierre"))
+    cambia_fecha = bool(nueva and (not antes or nueva != antes))
+
+    if solo_si_cambia_fecha and not cambia_fecha:
+        return {"omitida": "ya existe", "id": lic_id}
+
+    if cambia_fecha:
+        cambios["fecha_limite_oferta"] = _texto_fecha(nueva)
+        cambios[os.getenv("CREATOR_CAMPO_FECHA_LIMITE_SOLO", "Fecha_Limite_Oferta_Fecha1")] = \
+            f"{nueva.day:02d}-{MESES[nueva.month - 1]}-{nueva.year}"
+        cambios_texto.append(f"Fecha límite oferta: {_fecha_legible(antes)} → {_fecha_legible(nueva)}")
+    elif nueva:
+        cambios_texto.append(f"Fecha límite oferta sin cambios ({_fecha_legible(nueva)})")
+
+    # Nota al final de lo que ya está escrito. Si el reporte no trae Notas no se escribe,
+    # para no reemplazar lo que hay.
+    ref = hashlib.sha1((m.get("internetMessageId") or m.get("id") or "").encode()).hexdigest()[:8]
+    if "Notas" not in fila:
+        avisos.append("el reporte no devuelve el campo Notas: no se agregó la nota para no borrar lo escrito")
+    elif f"[ref {ref}]" in (fila.get("Notas") or ""):
+        avisos.append("la nota de este correo ya estaba (correo reprocesado)")
+    else:
+        salto = os.getenv("NOTAS_SALTO_LINEA", "<br>")
+        detalle = " ".join((analisis.get("resumen") or "").split())
+        partes = [f"{_recibido_chile(m)} · {origen}"]
+        if detalle:
+            partes.append(detalle)
+        partes += cambios_texto
+        nota = html.escape(". ".join(p.rstrip(". ") for p in partes) + ".") + f" [ref {ref}]"
+        cambios["Notas"] = (fila.get("Notas") or "") + f"{salto}{salto}{nota}"
+
+    if not cambios:
+        return {"omitida": "sin cambios que aplicar", "id": lic_id, "avisos": avisos}
+
+    status, resp = _creator("PATCH", f"report/{reporte}/{lic_id}", json={"data": cambios})
+    if not (status == 200 and resp.get("code") == 3000):
+        raise RuntimeError(f"Creator {status} al modificar {lic_id}: {str(resp)[:300]}")
+    resumen = "; ".join(cambios_texto) or "nota agregada"
+    log(f"licitación {lic_id} modificada: {resumen}")
+    for aviso in avisos:
+        log(f"⚠ {lic_id}: {aviso}")
+    return {"modificada": True, "id": lic_id, "cambios": resumen, "avisos": avisos}
+
+
+def modificar_licitacion(m: dict, analisis: dict) -> dict:
+    """Correo de modificación o aclaración: modifica la licitación existente o, si no existe, la crea."""
+    if not (analisis.get("id_proceso") or "").strip():
+        return {"omitida": "modificación sin ID de proceso"}
+    lic_id = buscar_licitacion(m, analisis)
+    if lic_id:
+        return aplicar_modificacion(lic_id, m, analisis)
+    resultado = crear_licitacion(m, {**analisis, "tipo": "invitacion_licitacion"})
+    if resultado.get("creada"):
+        resultado["avisos"] = ["se creó desde un correo de modificación (no existía)"] + (resultado.get("avisos") or [])
+    return resultado
+
+
 def crear_licitacion(m: dict, analisis: dict) -> dict:
     tipo = analisis.get("tipo")
     id_proceso = (analisis.get("id_proceso") or "").strip()
+
+    if tipo in TIPOS_QUE_MODIFICAN:
+        return modificar_licitacion(m, analisis)    
 
     if tipo not in TIPOS_QUE_CREAN:
         return {"omitida": f"tipo {tipo}"}
@@ -1094,15 +1227,19 @@ def crear_licitacion(m: dict, analisis: dict) -> dict:
 
     # Nombre de Trato según el tipo, y control de duplicados con ese nombre
     nombre, claves = nombre_trato(portal, id_proceso, analisis, items, m)
+    existente = None
     for clave in claves:
         existente = licitacion_existente(clave)
         if existente:
-            return {"omitida": "ya existe", "id": existente}
-    if portal == "Industrias":
+            break
+    if not existente and portal == "Industrias":
         existente = industria_existente(id_proceso)
-        if existente:
-            return {"omitida": "ya existe", "id": existente}
-
+    if existente:
+        # Invitación repetida con otra fecha de cierre: se actualiza la fecha (y queda la nota)
+        if os.getenv("MODIFICAR_DESDE_INVITACION", "on").lower() == "on" and analisis.get("fecha_cierre"):
+            return aplicar_modificacion(existente, m, analisis, origen="Invitación recibida nuevamente",
+                                        solo_si_cambia_fecha=True)
+        return {"omitida": "ya existe", "id": existente}
     if portal == "Codelco":
         cliente_id, cliente_nombre = cliente_codelco()
     else:

@@ -481,6 +481,8 @@ def texto_licitacion(lic) -> str:
         return ""
     if lic.get("creada"):
         return f"Creada (ID {lic.get('id')}, cliente {lic.get('cliente')})"
+    if lic.get("modificada"):
+        return f"Modificada (ID {lic.get('id')}): {lic.get('cambios')}"[:500]
     if lic.get("omitida"):
         return f"Omitida: {lic['omitida']}"[:500]
     if lic.get("error"):

@@ -216,6 +216,37 @@ def register_sofia_cron_routes(app):
 
         consultas = consultas + postventas
 
+        # Prueba controlada: procesar exclusivamente
+        # la llamada autorizada cuando se habiliten
+        # las escrituras de Casos en Sandbox.
+        if (
+            os.getenv(
+                "SOFIA_SANDBOX_CASES_WRITES_ENABLED",
+                "false",
+            ).strip().lower() == "true"
+        ):
+            call_id_prueba = os.getenv(
+                "SOFIA_SANDBOX_CASES_ALLOWED_CALL_ID",
+                "",
+            ).strip()
+
+            coincidencias = [
+                consulta
+                for consulta in consultas
+                if isinstance(consulta, dict)
+                and consulta.get("call_id") == call_id_prueba
+            ]
+
+            # Exigir exactamente una llamada candidata.
+            if len(coincidencias) != 1:
+                return jsonify({
+                    "error": "Llamada de prueba no disponible como Caso",
+                    "escrituras_crm": (
+                        resumen_cotizaciones["creadas"] > 0
+                    ),
+                }), 503
+
+            consultas = coincidencias
 
 
         # Consultar primero cuales Casos ya existen.

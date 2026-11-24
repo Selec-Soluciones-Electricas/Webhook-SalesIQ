@@ -32,6 +32,7 @@ Variables de entorno:
   CREATOR_OWNER=selecspa  CREATOR_APP=selec
   CREATOR_FORM_LICITACION=Licitaci_n  CREATOR_REPORT_LICITACION=Licitaci_n_Report
   CREATOR_REPORT_CLIENTES=Clientes_Report
+  CLIENTES_POR_DOMINIO="tgn.cl=TERMINAL GRANELES DEL NORTE S.A."  (cliente fijo según el dominio del correo)
   CREATOR_CLIENTE_POR_DEFINIR_ID (opcional) ID del cliente "Por Definir"; si no está, se busca por nombre
   CRM_CONTACTO_POR_DEFINIR_ID    ID del contacto "Por Definir" en Zoho CRM (por defecto 4358923000100932002)
   CRM_CONTACTO_WHEREX_ID         (opcional) ID del contacto "Cliente Wherex" en Zoho CRM.
@@ -317,6 +318,47 @@ def buscar_cliente(empresa, pistas=()):
                 log(f"cliente '{empresa}': " + ", ".join(f"{n} ({p:.2f})" for p, n, _ in puntajes[:4]))
             return mejor[2], mejor[1]
     return cliente_por_definir(), "Por Definir"
+
+
+# Clientes fijos por dominio del correo: si el remitente (o el contacto del correo reenviado)
+# es de ese dominio, la cuenta es siempre ese cliente, sin buscar por parecido.
+# CLIENTES_POR_DOMINIO="tgn.cl=TERMINAL GRANELES DEL NORTE S.A.;otro.cl=OTRO CLIENTE" reemplaza la lista.
+CLIENTES_POR_DOMINIO_DEFECTO = "tgn.cl=TERMINAL GRANELES DEL NORTE S.A."
+_clientes_dominio_cache = {}
+
+
+def _clientes_por_dominio():
+    texto = os.getenv("CLIENTES_POR_DOMINIO") or CLIENTES_POR_DOMINIO_DEFECTO
+    return {d.strip().lower().lstrip("@"): n.strip() for d, n in
+            (par.split("=", 1) for par in texto.split(";") if "=" in par) if d.strip() and n.strip()}
+
+
+def cliente_por_dominio(*correos):
+    """(id, nombre) del cliente fijo para el dominio de alguno de los correos, o None."""
+    mapa = _clientes_por_dominio()
+    for correo in correos:
+        correo = (correo or "").lower()
+        if "@" not in correo:
+            continue
+        dominio = correo.rsplit("@", 1)[-1].strip(" >")
+        for dom, nombre in mapa.items():
+            if dominio == dom or dominio.endswith("." + dom):
+                if nombre not in _clientes_dominio_cache:
+                    status, datos = _creator(
+                        "GET", f"report/{os.getenv('CREATOR_REPORT_CLIENTES', 'Clientes_Report')}",
+                        params={"criteria": f'(Nombre_de_Cuenta == "{_esc(nombre)}")'})
+                    filas = (datos.get("data") or []) if status == 200 else []
+                    if filas:
+                        _clientes_dominio_cache[nombre] = (filas[0]["ID"], filas[0].get("Nombre_de_Cuenta") or nombre)
+                    else:
+                        # Sin coincidencia exacta: el más parecido a ese nombre
+                        cid, cnom = buscar_cliente(nombre)
+                        if cnom == "Por Definir":
+                            log(f"cliente fijo '{nombre}' (dominio {dom}) no existe en Creator")
+                            return None
+                        _clientes_dominio_cache[nombre] = (cid, cnom)
+                return _clientes_dominio_cache[nombre]
+    return None
 
 
 _por_definir = {"id": None}
@@ -829,7 +871,8 @@ def _productos_de(fila):
     (productos, cómo se contaron) de una licitación:
       1. el campo Numero_Productos (el del gráfico), si tiene valor;
       2. si no (licitaciones creadas por API), las filas de Listado de productos del reporte;
-      3. si el reporte no trae el subformulario, se lee el registro completo (una vez por licitación).
+      3. si el reporte no trae el subformulario, se lee el registro completo (una vez por licitación),
+         solo con ASIGNACION_LEER_REGISTRO=on (gasta llamadas a la API; por defecto apagado).
     """
     try:
         n = int(float(str(_valor(fila.get("Numero_Productos")) or "0").replace(",", ".")))
@@ -842,6 +885,13 @@ def _productos_de(fila):
     lic_id = fila.get("ID")
     if not lic_id:
         return 0, "sin dato"
+    if lic_id in _productos_cache:
+        return _productos_cache[lic_id], "conteo guardado"
+    # Leer cada licitación una por una gastaba muchas llamadas a la API de Creator (se repetía
+    # en cada reinicio). Queda apagado: las antiguas se rellenan una vez con el script Deluge
+    # "rellenar_numero_productos" y las nuevas ya se crean con Numero_Productos.
+    if os.getenv("ASIGNACION_LEER_REGISTRO", "off").lower() != "on":
+        return 0, "sin dato (Numero_Productos vacío)"
     if lic_id not in _productos_cache:
         status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/{lic_id}")
         registro = datos.get("data") if status == 200 else None
@@ -1040,11 +1090,12 @@ def sincronizar_crm(lic_id):
     Si después de crearla no tiene ID_Deals_CRM, se edita por API (Fase con el mismo valor) para que
     el workflow "Creado o editado" vuelva a correr, como cuando se guarda a mano. El workflow solo
     crea el Negocio si ID_Deals_CRM está vacío, así que no se duplica.
-    CRM_SINCRONIZAR=off lo desactiva.  CRM_SINCRONIZAR_ESPERA=4 segundos antes de revisar.
+    CRM_SINCRONIZAR=off lo desactiva.  CRM_SINCRONIZAR_ESPERA=10 segundos antes de revisar (con menos, si el workflow
+    se demoraba, se reenviaba mientras aún corría y el Negocio podía quedar duplicado).
     """
     if os.getenv("CRM_SINCRONIZAR", "on").lower() == "off":
         return "negocio en CRM: sincronización desactivada"
-    espera = float(os.getenv("CRM_SINCRONIZAR_ESPERA", "4"))
+    espera = float(os.getenv("CRM_SINCRONIZAR_ESPERA", "10"))
     reporte = os.getenv("CREATOR_REPORT_LICITACION", "Licitaci_n_Report")
     try:
         time.sleep(espera)
@@ -1065,6 +1116,50 @@ def sincronizar_crm(lic_id):
                 "'Integracion Licitacion a CRM' ([Deals] Error al crear)")
     except Exception as e:
         return f"no se pudo revisar el envío al CRM: {type(e).__name__}: {str(e)[:150]}"
+
+
+def resincronizar_periodo(desde, hasta, aplicar=False, pausa=1.5):
+    """
+    Vuelve a enviar al CRM las licitaciones creadas o editadas entre `desde` y `hasta` (datetime,
+    hora Chile). Sirve para corregir lo que el workflow mandó al CRM con otra zona horaria
+    (ej. la cuenta estuvo en hora de Australia y las fechas límite llegaron corridas 14 horas).
+
+    Por cada licitación se edita por API su MISMA Fase: no cambia ningún dato en Creator, solo
+    hace que el workflow "Integracion Licitacion a CRM" vuelva a correr y actualice el Negocio
+    (si ya tiene ID_Deals_CRM lo actualiza, no crea otro).
+    aplicar=False: solo lista lo que haría (1 llamada a Creator).
+    """
+    reporte = os.getenv("CREATOR_REPORT_LICITACION", "Licitaci_n_Report")
+    t1, t2 = _texto_fecha(desde) + ":00", _texto_fecha(hasta) + ":59"
+    criterio = (f'((Added_Time >= "{t1}" && Added_Time <= "{t2}") || '
+                f'(Modified_Time >= "{t1}" && Modified_Time <= "{t2}"))')
+    status, datos = _creator("GET", f"report/{reporte}", params={"criteria": criterio, "max_records": 1000})
+    if datos.get("code") in (3100, 9280):
+        return {"encontradas": 0, "licitaciones": []}
+    if status != 200 or datos.get("code") not in (None, 3000):
+        raise RuntimeError(f"Creator {status}: {str(datos)[:300]}")
+    filas = datos.get("data") or []
+    lista = [{"id": f.get("ID"), "fase": _valor(f.get("Fase")), "asignado": _valor(f.get("Asignado_a")),
+              "fecha_limite": _valor(f.get("fecha_limite_oferta")), "portal": _valor(f.get("Portal"))}
+             for f in filas]
+    resultado = {"desde": t1, "hasta": t2, "encontradas": len(lista), "aplicar": aplicar,
+                 "licitaciones": lista}
+    if not aplicar:
+        return resultado
+    ok, errores = 0, []
+    for item in lista:
+        if not item["id"] or not item["fase"]:
+            errores.append({"id": item["id"], "error": "sin ID o sin Fase"})
+            continue
+        st, resp = _creator("PATCH", f"report/{reporte}/{item['id']}", json={"data": {"Fase": item["fase"]}})
+        if st == 200 and resp.get("code") == 3000:
+            ok += 1
+        else:
+            errores.append({"id": item["id"], "error": f"Creator {st}: {str(resp)[:150]}"})
+        time.sleep(pausa)  # para no saturar Creator ni el workflow del CRM
+    log(f"resincronización {t1} – {t2}: {ok} reenviadas, {len(errores)} con error")
+    resultado.update({"reenviadas": ok, "errores": errores})
+    return resultado
 
 
 MARCAS_EXCEL_CHINA = (
@@ -1319,8 +1414,12 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
                                         solo_si_cambia_fecha=True)
         return {"omitida": "ya existe", "id": existente}
 
+    fijo = cliente_por_dominio(m.get("remitente"), analisis.get("contacto_correo"),
+                               *re.findall(r"[\w.+-]+@[\w.-]+", m.get("cuerpo") or "")[:20])
     if portal == "Codelco":
         cliente_id, cliente_nombre = cliente_codelco()
+    elif fijo:
+        cliente_id, cliente_nombre = fijo
     else:
         cliente_id, cliente_nombre = buscar_cliente(
             empresa, pistas_cliente(empresa, analisis.get("contacto_correo"), m.get("remitente")))
@@ -1388,6 +1487,9 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
         "Lugar_de_entrega": lugar,
         "Notas": notas_productos(items, m.get("link_proceso", "")),
         "Listado_de_productos": productos,
+        # Numero_Productos lo llena un script "al ingresar" que no corre por API: se envía aquí,
+        # en la misma creación (editarlo después volvía a disparar el workflow del CRM).
+        os.getenv("CREATOR_CAMPO_NUMERO_PRODUCTOS", "Numero_Productos"): len(productos),
     }
 
     # Industrias: referencia del correo al final de las Notas (el nombre no lleva el ID)
@@ -1430,18 +1532,8 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
     if status in (200, 201) and resp.get("code") == 3000:
         lic_id = (resp.get("data") or {}).get("ID")
         _sumar_carga(portal, asignado, len(productos), cierre)
-        # Numero_Productos queda vacío al crear por API (lo llena un script de entrada de usuario):
-        # se completa para que el gráfico y el cupo de 60 cuenten esta licitación.
         if lic_id:
             _productos_cache[lic_id] = len(productos)
-            campo_n = os.getenv("CREATOR_CAMPO_NUMERO_PRODUCTOS", "Numero_Productos")
-            try:
-                st_n, r_n = _creator("PATCH", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}/{lic_id}",
-                                     json={"data": {campo_n: len(productos)}})
-                if not (st_n == 200 and r_n.get("code") == 3000):
-                    avisos.append(f"no se pudo guardar {campo_n} ({st_n}): {str(r_n)[:150]}")
-            except Exception as e:
-                avisos.append(f"no se pudo guardar {campo_n}: {e}")
         log(f"licitación creada en Creator: {datos['Nombre_de_Trato']} (ID {lic_id}, cliente {cliente_nombre}, "
             f"asignado {asignado}, {len(productos)} productos)")
         # Clientes directos (Komatsu, ENAMI, Corrupac, TGN): se adjunta el correo original (.eml)

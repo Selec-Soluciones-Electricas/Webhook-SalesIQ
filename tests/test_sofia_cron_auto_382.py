@@ -57,6 +57,7 @@ class CronPostventasAutomaticas(unittest.TestCase):
         self, postventas, generales=None, *,
         auto=True, escrituras=True, existentes=(),
         fecha_minima="1795468500000",
+        estados_casos=None,
     ):
         generales = generales or []
         existentes = set(existentes)
@@ -127,7 +128,9 @@ class CronPostventasAutomaticas(unittest.TestCase):
                 "estado": (
                     "creacion_simulada"
                     if kwargs["simulacion"]
-                    else "creado"
+                    else (estados_casos or {}).get(
+                        item["call_id"], "creado"
+                    )
                 ),
             }
 
@@ -308,14 +311,40 @@ class CronPostventasAutomaticas(unittest.TestCase):
             respuesta["resumen_casos"]["creado"], 0
         )
 
-    def test_auto_bloquea_dos_postventas_nuevas(self):
+    def test_auto_procesa_dos_postventas_nuevas(self):
         respuesta, codigo, intentos = self.ejecutar([
             postventa("call_nueva_a_402"),
             postventa("call_nueva_b_402"),
         ])
 
-        self.assertEqual(codigo, 503)
-        self.assertEqual(intentos, [])
+        self.assertEqual(codigo, 200)
+        self.assertEqual(len(intentos), 2)
+        self.assertEqual(respuesta["resumen_casos"]["creado"], 2)
+        self.assertEqual(
+            respuesta["postventas_auto_pendientes_por_continuar"], 0
+        )
+
+    def test_auto_limita_siete_postventas_a_tres(self):
+        datos = [
+            postventa(f"call_lote_{i}_423")
+            for i in range(7)
+        ]
+
+        respuesta, codigo, intentos = self.ejecutar(datos)
+
+        self.assertEqual(codigo, 200)
+        self.assertEqual(
+            [x["call_id"] for x in intentos],
+            [
+                "call_lote_0_423",
+                "call_lote_1_423",
+                "call_lote_2_423",
+            ],
+        )
+        self.assertEqual(respuesta["resumen_casos"]["creado"], 3)
+        self.assertEqual(
+            respuesta["postventas_auto_pendientes_por_continuar"], 4
+        )
 
     def test_auto_excluye_existente_y_crea_nueva(self):
         respuesta, codigo, intentos = self.ejecutar(
@@ -369,6 +398,36 @@ class CronPostventasAutomaticas(unittest.TestCase):
             [x["call_id"] for x in intentos],
             ["call_reciente_402"],
         )
+
+    def test_auto_detiene_lote_si_zoho_bloquea(self):
+        datos = [
+            postventa("call_primera_424"),
+            postventa("call_segunda_424"),
+            postventa("call_tercera_424"),
+        ]
+        respuesta, codigo, intentos = self.ejecutar(
+            datos,
+            estados_casos={"call_primera_424": "bloqueado"},
+        )
+        self.assertEqual(codigo, 503)
+        self.assertEqual(
+            [i["call_id"] for i in intentos],
+            ["call_primera_424"],
+        )
+        self.assertEqual(respuesta["resumen_casos"]["bloqueado"], 1)
+        self.assertEqual(respuesta["resumen_casos"]["creado"], 0)
+
+    def test_auto_rechaza_simulacion_inesperada(self):
+        respuesta, codigo, intentos = self.ejecutar(
+            [postventa("call_simulada_424")],
+            estados_casos={
+                "call_simulada_424": "creacion_simulada"
+            },
+        )
+        self.assertEqual(codigo, 503)
+        self.assertEqual(len(intentos), 1)
+        self.assertEqual(respuesta["resumen_casos"]["bloqueado"], 1)
+        self.assertEqual(respuesta["resumen_casos"]["creado"], 0)
 
 
 if __name__ == "__main__":

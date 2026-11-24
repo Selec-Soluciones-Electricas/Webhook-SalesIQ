@@ -332,12 +332,13 @@ def register_sofia_cron_routes(app):
             }), 503
 
         consultas_planificadas = plan["seleccionadas"]
+        postventas_auto_pendientes_por_continuar = 0
 
-        # Primera prueba automatica de postventas.
+        # Procesamiento automatico de postventas por lotes.
         # Aplicar el limite DESPUES de verificar duplicados.
         if escritura_casos_sandbox and postventas_auto:
             from services.sofia.seleccion_postventas_auto import (
-                seleccionar_postventas_prueba_segura,
+                seleccionar_postventas_lote_seguro,
             )
 
             fecha_minima_texto = os.getenv(
@@ -363,11 +364,14 @@ def register_sofia_cron_routes(app):
                     ]["estado"] == "no_encontrado"
                 ]
 
-                consultas_planificadas = (
-                    seleccionar_postventas_prueba_segura(
-                        pendientes_auto,
-                        inicio_minimo_ms=int(fecha_minima_texto),
-                    )
+                lote_postventas = seleccionar_postventas_lote_seguro(
+                    pendientes_auto,
+                    inicio_minimo_ms=int(fecha_minima_texto),
+                    max_por_ejecucion=3,
+                )
+                consultas_planificadas = lote_postventas["seleccionadas"]
+                postventas_auto_pendientes_por_continuar = (
+                    lote_postventas["pendientes_por_continuar"]
                 )
 
             except (ValueError, KeyError, TypeError):
@@ -527,7 +531,17 @@ def register_sofia_cron_routes(app):
                 if estado not in resumen_casos:
                     estado = "bloqueado"
 
+                # Una escritura real nunca debe terminar
+                # contabilizada como simulacion.
+                if escritura_sandbox and estado == "creacion_simulada":
+                    estado = "bloqueado"
+
                 resumen_casos[estado] += 1
+
+                # Detener el lote ante cualquier resultado
+                # no confirmado. No intentar otras inserciones.
+                if estado == "bloqueado":
+                    break
 
         except Exception:
             current_app.logger.exception(
@@ -600,6 +614,7 @@ def register_sofia_cron_routes(app):
             ),
 
             "borradores_casos_preparados": len(borradores),
+            "postventas_auto_pendientes_por_continuar": postventas_auto_pendientes_por_continuar,
 
             "resumen_casos": resumen_casos,
             "revisiones_generales": total_revisiones_generales,

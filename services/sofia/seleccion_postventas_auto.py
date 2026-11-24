@@ -88,3 +88,62 @@ def seleccionar_postventas_prueba_segura(
         )
 
     return recientes
+
+
+def seleccionar_postventas_lote_seguro(
+    postventas,
+    *,
+    inicio_minimo_ms,
+    max_por_ejecucion=3,
+):
+    """
+    Prepara lotes acotados de postventas pendientes.
+
+    El consumidor debe verificar previamente en Zoho
+    cuales Casos existen.
+
+    No realiza consultas ni escrituras.
+    """
+    if (
+        type(inicio_minimo_ms) is not int
+        or inicio_minimo_ms <= 0
+    ):
+        raise ValueError("Fecha minima invalida")
+
+    if (
+        type(max_por_ejecucion) is not int
+        or not 1 <= max_por_ejecucion <= 5
+    ):
+        raise ValueError("Limite de lote invalido")
+
+    validadas = seleccionar_postventas_automaticas(
+        postventas
+    )
+
+    recientes = []
+
+    for postventa in validadas:
+        fecha = postventa.get("start_timestamp")
+
+        if type(fecha) is not int or fecha <= 0:
+            raise ValueError("Fecha de llamada invalida")
+
+        if fecha >= inicio_minimo_ms:
+            recientes.append(postventa)
+
+    recientes.sort(
+        key=lambda p: (
+            p["start_timestamp"],
+            p["call_id"],
+        )
+    )
+
+    seleccionadas = recientes[:max_por_ejecucion]
+
+    return {
+        "seleccionadas": seleccionadas,
+        "total_recientes": len(recientes),
+        "pendientes_por_continuar": (
+            len(recientes) - len(seleccionadas)
+        ),
+    }

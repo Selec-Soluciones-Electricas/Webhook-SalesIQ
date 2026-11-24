@@ -122,7 +122,11 @@ def _creator(metodo, ruta, params=None, json=None):
     url = (f"https://www.zohoapis.com/creator/v2.1/data/"
            f"{os.getenv('CREATOR_OWNER', 'selecspa')}/{os.getenv('CREATOR_APP', 'selec')}/{ruta}")
     if metodo == "GET":
-        params = {"field_config": "all", "max_records": 200, **(params or {})}
+        if ruta.rstrip("/").split("/")[-1].isdigit():
+            # Un registro por ID (report/X/123): Creator rechaza max_records con 401 / code 1060
+            params = {"field_config": "all", **{k: v for k, v in (params or {}).items() if k != "max_records"}}
+        else:
+            params = {"field_config": "all", "max_records": 200, **(params or {})}
     resp = _pedir(metodo, url, headers={"Authorization": f"Zoho-oauthtoken {_access_token()}"},
                   params=params, json=json)
     try:

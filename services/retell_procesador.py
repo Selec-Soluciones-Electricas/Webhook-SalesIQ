@@ -534,7 +534,11 @@ def procesar_pendientes_sofia(
                 isinstance(consulta, dict)
                 and consulta.get("estado") == "candidata_caso"
             ):
-                consultas_detectadas.append(consulta)
+                consultas_detectadas.append({
+                    **consulta,
+                    "tipo": "consulta",
+                    "start_timestamp": llamada.get("start_timestamp"),
+                })
 
             else:
                 # No descartar silenciosamente una consulta

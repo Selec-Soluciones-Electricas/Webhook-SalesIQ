@@ -224,31 +224,59 @@ def register_sofia_cron_routes(app):
             ).strip().lower() == "true"
         )
 
+        # Automatizacion de consultas generales en Sandbox.
+        # Desactivada por defecto.
+        consultas_auto = (
+            os.getenv(
+                "SOFIA_SANDBOX_CONSULTAS_AUTO_ENABLED", "false"
+            ).strip().lower() == "true"
+        )
+
+
         escritura_casos_sandbox = (
             os.getenv(
                 "SOFIA_SANDBOX_CASES_WRITES_ENABLED", "false"
             ).strip().lower() == "true"
         )
 
-        if escritura_casos_sandbox and postventas_auto:
+        if escritura_casos_sandbox and (postventas_auto or consultas_auto):
             from services.sofia.seleccion_postventas_auto import (
                 seleccionar_postventas_automaticas,
             )
 
             try:
-                consultas = seleccionar_postventas_automaticas(
-                    postventas
-                )
+                solicitudes_automaticas = []
+
+                # Opcion 2: postventas previamente validadas.
+                if postventas_auto:
+                    solicitudes_automaticas.extend(
+                        seleccionar_postventas_automaticas(postventas)
+                    )
+
+                # Opcion 3: consultas generales candidatas.
+                # Su validacion final se hara despues
+                # de comprobar los duplicados en CRM.
+                if consultas_auto:
+                    solicitudes_automaticas.extend(
+                        consulta
+                        for consulta in consultas
+                        if isinstance(consulta, dict)
+                        and consulta.get("tipo") == "consulta"
+                    )
+
+                consultas = solicitudes_automaticas
+
             except ValueError:
                 return jsonify({
-                    "error": "Seleccion automatica de postventas invalida",
+                    "error": "Seleccion automatica de Casos invalida",
                     "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
                 }), 503
+
 
         # Prueba controlada: procesar exclusivamente
         # la llamada autorizada cuando se habiliten
         # las escrituras de Casos en Sandbox.
-        if escritura_casos_sandbox and not postventas_auto:
+        if escritura_casos_sandbox and not (postventas_auto or consultas_auto):
             call_id_prueba = os.getenv(
                 "SOFIA_SANDBOX_CASES_ALLOWED_CALL_ID",
                 "",
@@ -333,50 +361,100 @@ def register_sofia_cron_routes(app):
 
         consultas_planificadas = plan["seleccionadas"]
         postventas_auto_pendientes_por_continuar = 0
+        consultas_auto_pendientes_por_continuar = 0
 
-        # Procesamiento automatico de postventas por lotes.
-        # Aplicar el limite DESPUES de verificar duplicados.
-        if escritura_casos_sandbox and postventas_auto:
+        # Procesamiento automatico de Casos en Sandbox.
+        # Primero verificar duplicados; luego aplicar fechas
+        # y limites independientes para cada tipo.
+        if escritura_casos_sandbox and (postventas_auto or consultas_auto):
             from services.sofia.seleccion_postventas_auto import (
                 seleccionar_postventas_lote_seguro,
             )
-
-            fecha_minima_texto = os.getenv(
-                "SOFIA_SANDBOX_POSTVENTAS_AUTO_DESDE_MS",
-                "",
-            ).strip()
-
-            if (
-                not fecha_minima_texto.isascii()
-                or not fecha_minima_texto.isdecimal()
-            ):
-                return jsonify({
-                    "error": "Fecha minima automatica no configurada",
-                    "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
-                }), 503
+            from services.sofia.seleccion_consultas_auto import (
+                seleccionar_consultas_lote_seguro,
+            )
 
             try:
                 pendientes_auto = [
-                    consulta
-                    for consulta in consultas
+                    solicitud
+                    for solicitud in consultas
                     if barrido["resultados"][
-                        consulta["call_id"]
+                        solicitud["call_id"]
                     ]["estado"] == "no_encontrado"
                 ]
 
-                lote_postventas = seleccionar_postventas_lote_seguro(
-                    pendientes_auto,
-                    inicio_minimo_ms=int(fecha_minima_texto),
-                    max_por_ejecucion=3,
-                )
-                consultas_planificadas = lote_postventas["seleccionadas"]
-                postventas_auto_pendientes_por_continuar = (
-                    lote_postventas["pendientes_por_continuar"]
+                consultas_planificadas = []
+
+                # Opcion 2: Postventas.
+                if postventas_auto:
+                    fecha_postventas = os.getenv(
+                        "SOFIA_SANDBOX_POSTVENTAS_AUTO_DESDE_MS",
+                        "",
+                    ).strip()
+
+                    if (
+                        not fecha_postventas.isascii()
+                        or not fecha_postventas.isdecimal()
+                    ):
+                        raise ValueError("Fecha postventas invalida")
+
+                    lote_postventas = seleccionar_postventas_lote_seguro(
+                        [
+                            s for s in pendientes_auto
+                            if s.get("tipo") == "postventa"
+                        ],
+                        inicio_minimo_ms=int(fecha_postventas),
+                        max_por_ejecucion=3,
+                    )
+
+                    consultas_planificadas.extend(
+                        lote_postventas["seleccionadas"]
+                    )
+
+                    postventas_auto_pendientes_por_continuar = (
+                        lote_postventas["pendientes_por_continuar"]
+                    )
+
+                # Opcion 3: Consultas generales.
+                if consultas_auto:
+                    fecha_consultas = os.getenv(
+                        "SOFIA_SANDBOX_CONSULTAS_AUTO_DESDE_MS",
+                        "",
+                    ).strip()
+
+                    if (
+                        not fecha_consultas.isascii()
+                        or not fecha_consultas.isdecimal()
+                    ):
+                        raise ValueError("Fecha consultas invalida")
+
+                    lote_consultas = seleccionar_consultas_lote_seguro(
+                        [
+                            s for s in pendientes_auto
+                            if s.get("tipo") == "consulta"
+                        ],
+                        inicio_minimo_ms=int(fecha_consultas),
+                        max_por_ejecucion=3,
+                    )
+
+                    consultas_planificadas.extend(
+                        lote_consultas["seleccionadas"]
+                    )
+
+                    consultas_auto_pendientes_por_continuar = (
+                        lote_consultas["pendientes_por_continuar"]
+                    )
+
+                consultas_planificadas.sort(
+                    key=lambda s: (
+                        s["start_timestamp"],
+                        s["call_id"],
+                    )
                 )
 
             except (ValueError, KeyError, TypeError):
                 return jsonify({
-                    "error": "Postventas automaticas requieren revision",
+                    "error": "Seleccion automatica de Casos requiere revision",
                     "escrituras_crm": resumen_cotizaciones["creadas"] > 0,
                 }), 503
 
@@ -387,7 +465,7 @@ def register_sofia_cron_routes(app):
                 "SOFIA_SANDBOX_CASES_WRITES_ENABLED", "false"
             ).strip().lower() == "true"
         )
-        if casos_escritura_habilitada and not postventas_auto:
+        if casos_escritura_habilitada and not (postventas_auto or consultas_auto):
             call_id_autorizado = os.getenv(
                 "SOFIA_SANDBOX_CASES_ALLOWED_CALL_ID", ""
             ).strip()
@@ -615,6 +693,7 @@ def register_sofia_cron_routes(app):
 
             "borradores_casos_preparados": len(borradores),
             "postventas_auto_pendientes_por_continuar": postventas_auto_pendientes_por_continuar,
+            "consultas_auto_pendientes_por_continuar": consultas_auto_pendientes_por_continuar,
 
             "resumen_casos": resumen_casos,
             "revisiones_generales": total_revisiones_generales,

@@ -42,7 +42,7 @@ def convertir_productos_retell(texto):
 
         partes = [parte.strip() for parte in linea.split("|")]
 
-        if len(partes) != 5 or not re.fullmatch(
+        if len(partes) not in (4, 5) or not re.fullmatch(
             r"producto\s+\d+", partes[0], flags=re.IGNORECASE
         ):
             raise ValueError("Formato de productos no reconocido")
@@ -58,8 +58,10 @@ def convertir_productos_retell(texto):
 
             producto[clave] = valor.strip()
 
-        if set(producto) != set(campos.values()):
+        if not {"descripcion", "marca", "cantidad"}.issubset(producto):
             raise ValueError("Faltan campos obligatorios del producto")
+
+        producto.setdefault("numero_parte", "")
 
         try:
             cantidad = Decimal(producto["cantidad"].replace(",", "."))

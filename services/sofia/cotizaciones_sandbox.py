@@ -415,13 +415,13 @@ def preparar_registros_cotizacion_sandbox(
             for clave in ("descripcion", "marca", "numero_parte")
         }
 
-        if not all(campos.values()):
+        if not campos["descripcion"] or not campos["marca"]:
             return {"estado": "bloqueado", "motivo": "producto_incompleto"}
 
         descripcion.append(
             f"{numero}. {campos['descripcion']} | "
             f"Marca: {campos['marca']} | "
-            f"Parte: {campos['numero_parte']} | "
+            f"Parte: {campos['numero_parte'] or 'No informado'} | "
             f"Cantidad: {cantidad}"
         )
 

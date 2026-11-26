@@ -849,10 +849,12 @@ def contacto_portal(portal):
 INICIALES_DEFECTO = ("MR=Maria Rengifo,PC=Patricio Cifuentes,JP=Juan Puerta,"
                      "JG=Joaquin Gonzalez,CS=Carolina Salazar")
 REGLAS_DEFECTO = {
-    "Codelco": {"primero": "MR", "resto": ["PC", "JP", "JG"], "respaldo": ["CS"]},
-    "Wherex": {"primero": "JG", "resto": ["PC", "JP", "MR"], "respaldo": []},
-    "Senegocia": {"primero": "PC", "resto": ["JP", "JG", "MR"], "respaldo": []},
-    "Industrias": {"primero": "MR", "resto": ["JG", "JP", "PC"], "respaldo": ["CS"]},
+    # modo "primero": el primero recibe hasta llenar los 60; después, turno uno a uno entre el resto.
+    # modo "turno":   siempre uno a uno entre todos (primero y resto), saltando a los que llegaron a 60.
+    "Codelco": {"modo": "primero", "primero": "MR", "resto": ["PC", "JP", "JG"], "respaldo": ["CS"]},
+    "Wherex": {"modo": "turno", "primero": "JG", "resto": ["PC", "JP", "MR"], "respaldo": []},
+    "Senegocia": {"modo": "turno", "primero": "PC", "resto": ["JP", "JG", "MR"], "respaldo": []},
+    "Industrias": {"modo": "turno", "primero": "MR", "resto": ["JG", "JP", "PC"], "respaldo": ["CS"]},
 }
 
 # Respaldo en memoria por si Creator no responde: {fecha: {persona: {...}}}
@@ -972,6 +974,38 @@ def carga_del_dia(portal=None, fecha=None, detalle=False):
         return _carga_memoria.get(clave, {}), "memoria"
 
 
+# Último asignado por portal (respaldo en memoria si Creator no responde)
+_ultimo_memoria = {}
+
+
+def ultimo_asignado(portal, grupo):
+    """
+    A quién se le asignó la última licitación de este portal entre las personas del grupo.
+    Se mira la licitación más reciente (ID más alto) de los últimos días en Creator, así el turno
+    sigue aunque cambien las fechas límite o se reinicie el servicio. None si no hay.
+    """
+    claves = {_clave_persona(p): p for p in grupo}
+    desde = datetime.now(CHILE_TZ) - timedelta(days=int(os.getenv("ASIGNACION_TURNO_DIAS", "7")))
+    criterio = f'(Portal == "{_esc(portal)}" && Added_Time >= "{_texto_fecha(desde)}:00")'
+    try:
+        status, datos = _creator("GET", f"report/{os.getenv('CREATOR_REPORT_LICITACION', 'Licitaci_n_Report')}",
+                                 params={"criteria": criterio, "max_records": 1000})
+        if status == 200 and datos.get("code") in (None, 3000):
+            mejor = None
+            for f in datos.get("data") or []:
+                persona = claves.get(_clave_persona(_valor(f.get("Asignado_a"))))
+                if persona and str(f.get("ID") or "").isdigit():
+                    if not mejor or int(f["ID"]) > mejor[0]:
+                        mejor = (int(f["ID"]), persona)
+            if mejor:
+                return mejor[1]
+        elif datos.get("code") not in (3100, 9280):
+            raise RuntimeError(f"Creator {status}: {str(datos)[:150]}")
+    except Exception as e:
+        log(f"último asignado de {portal}: Creator falló, se usa la memoria: {str(e)[:150]}")
+    return claves.get(_clave_persona(_ultimo_memoria.get(portal)))
+
+
 def _sumar_carga(portal, persona, productos, fecha=None):
     dia = fecha or datetime.now(CHILE_TZ)
     dia = dia.date() if hasattr(dia, "date") and callable(dia.date) else dia
@@ -983,6 +1017,7 @@ def _sumar_carga(portal, persona, productos, fecha=None):
     c = _carga_memoria.setdefault(clave, {}).setdefault(persona, {"productos": 0, "licitaciones": 0})
     c["productos"] += productos
     c["licitaciones"] += 1
+    _ultimo_memoria[portal] = persona
 
 
 def elegir_asignado(portal, carga=None, fecha=None):
@@ -1020,25 +1055,52 @@ def elegir_asignado(portal, carga=None, fecha=None):
     resto = list(dict.fromkeys(nombre(x) for x in regla.get("resto") or []))
     respaldo = list(dict.fromkeys(nombre(x) for x in regla.get("respaldo") or []))
 
-    if productos(primero) < maximo:
-        return primero, f"primero de {portal} ({productos(primero)}/{maximo} para esa fecha límite)"
+    modo = regla.get("modo", "primero")
 
-    def rotar(grupo):
-        # El que lleva menos licitaciones hoy; empate -> orden de la regla
-        return min(grupo, key=lambda p: (licitaciones(p), grupo.index(p)))
+    turno = {}
+
+    def rotar(grupo, con_cupo=None):
+        """
+        Uno y uno, en el orden de la regla: le toca al siguiente del último que recibió una
+        licitación de este portal (saltando a los que llegaron a 60 en esa fecha límite).
+        Antes se elegía al que tenía menos licitaciones en esa fecha límite: con fechas distintas
+        todos tenían 0 y siempre ganaba el primero de la lista (ej. JG).
+        """
+        con_cupo = con_cupo or grupo
+        clave = tuple(grupo)
+        if clave not in turno:
+            turno[clave] = ultimo_asignado(portal, grupo)
+        ultimo = turno[clave]
+        inicio = grupo.index(ultimo) + 1 if ultimo in grupo else 0
+        for k in range(len(grupo)):
+            p = grupo[(inicio + k) % len(grupo)]
+            if p in con_cupo:
+                return p
+        return con_cupo[0]
+
+    if modo == "turno":
+        # Siempre uno a uno entre todos: MR, JG, JP, PC, MR... (salta a quien llegó a 60)
+        todos = list(dict.fromkeys([primero] + resto))
+        con_cupo = [p for p in todos if productos(p) < maximo]
+        if con_cupo:
+            p = rotar(todos, con_cupo)
+            return p, f"turno uno a uno en {portal} ({productos(p)}/{maximo} para esa fecha límite)"
+        resto = todos
+    elif productos(primero) < maximo:
+        return primero, f"primero de {portal} ({productos(primero)}/{maximo} para esa fecha límite)"
 
     con_cupo = [p for p in resto if productos(p) < maximo]
     if con_cupo:
-        p = rotar(con_cupo)
-        return p, f"{primero} completó {maximo}: rotación ({productos(p)}/{maximo} para esa fecha límite)"
+        p = rotar(resto, con_cupo)
+        return p, f"{primero} completó {maximo}: turno uno a uno ({productos(p)}/{maximo} para esa fecha límite)"
     con_cupo = [p for p in respaldo if productos(p) < maximo]
     if con_cupo:
-        p = rotar(con_cupo)
+        p = rotar(respaldo, con_cupo)
         return p, f"todos completaron {maximo}: respaldo ({productos(p)}/{maximo} para esa fecha límite)"
-    # Todos llenos y sin respaldo con cupo: se sigue rotando entre los demás
+    # Todos llenos y sin respaldo con cupo: se sigue el turno entre los demás
     grupo = resto or [primero]
     p = rotar(grupo)
-    return p, f"todos completaron {maximo} para esa fecha límite: se sigue rotando"
+    return p, f"todos completaron {maximo} para esa fecha límite: se sigue el turno"
 
 
 

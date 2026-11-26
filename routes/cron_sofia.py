@@ -55,6 +55,24 @@ def register_sofia_cron_routes(app):
 
                 resultados[modulo] = respuesta.status_code
 
+
+            # Diagnostico de paginacion, sin escrituras.
+            for pagina in (1, 2, 10):
+                respuesta = conexion["http_get"](
+                    conexion["base"] + "/crm/v8/Deals",
+                    headers={
+                        "Authorization": "Zoho-oauthtoken " + token
+                    },
+                    params={
+                        "fields": "id,Retell_Call_ID,Registro_de_prueba_Sof_a",
+                        "page": pagina,
+                        "per_page": 200,
+                    },
+                    timeout=20,
+                    allow_redirects=False,
+                )
+                resultados[f"Deals_pagina_{pagina}"] = respuesta.status_code
+
             correcto = all(
                 estado in (200, 204)
                 for estado in resultados.values()

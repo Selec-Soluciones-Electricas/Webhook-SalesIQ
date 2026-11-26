@@ -130,18 +130,31 @@ def registrar_negocio_prueba_produccion(llamada):
             pass
 
         vistos = {}
+        siguiente_token = None
         for pagina in range(1, 21):
+            parametros = {
+                "fields": "id,Retell_Call_ID,Registro_de_prueba_Sof_a",
+                "per_page": 200,
+            }
+            if pagina <= 10:
+                parametros["page"] = pagina
+            else:
+                # Zoho v8 requiere page_token despues de 2000 registros.
+                if not isinstance(siguiente_token, str) or not siguiente_token:
+                    return bloquear("token_paginacion_ausente")
+                parametros["page_token"] = siguiente_token
             respuesta = conexion["http_get"](
                 BASE + "/Deals",
                 headers=headers,
-                params={"fields": "id,Retell_Call_ID,Registro_de_prueba_Sof_a", "page": pagina, "per_page": 200},
+                params=parametros,
                 timeout=20,
                 allow_redirects=False,
             )
             if respuesta.status_code == 204 and pagina == 1:
                 break
             if respuesta.status_code != 200:
-                return bloquear("listado_inconcluso")
+                # Solo pagina y HTTP; no filtrar datos sensibles de Zoho.
+                return bloquear(f"listado_inconcluso_p{pagina}_http{respuesta.status_code}")
             cuerpo = respuesta.json()
             filas = cuerpo.get("data")
             info = cuerpo.get("info")
@@ -161,7 +174,13 @@ def registrar_negocio_prueba_produccion(llamada):
                     vistos[ident] = fila.get("Registro_de_prueba_Sof_a") is True
             if info["more_records"] is False:
                 break
+            if pagina >= 10:
+                # El token devuelto tras la pagina 10 permite continuar.
+                siguiente_token = info.get("next_page_token")
+                if not isinstance(siguiente_token, str) or not siguiente_token:
+                    return bloquear("token_paginacion_ausente")
         else:
+            # Si aun quedan Negocios sin revisar, no insertar ninguno.
             return bloquear("listado_incompleto")
         if len(vistos) == 1:
             return {"estado": "ya_registrado", "deal_id": next(iter(vistos)), "registro_de_prueba": next(iter(vistos.values()))}

@@ -110,6 +110,33 @@ def register_sofia_cron_routes(app):
 
                     info = siguiente.json().get("info") or {}
 
+            # Diagnosticar busqueda directa por Call ID.
+            # Solo lectura, sin mostrar datos del cliente.
+            call_id_prueba = os.getenv(
+                "SOFIA_PROD_DEALS_ALLOWED_CALL_ID", ""
+            ).strip()
+
+            if call_id_prueba.startswith("call_"):
+                prueba_busqueda = conexion["http_get"](
+                    conexion["base"] + "/crm/v8/Deals/search",
+                    headers={
+                        "Authorization": "Zoho-oauthtoken " + token
+                    },
+                    params={
+                        "criteria": (
+                            "(Retell_Call_ID:equals:"
+                            + call_id_prueba + ")"
+                        ),
+                        "fields": "id,Retell_Call_ID",
+                        "per_page": 2,
+                    },
+                    timeout=20,
+                    allow_redirects=False,
+                )
+
+                resultados["Deals_busqueda_http"] = (
+                    prueba_busqueda.status_code
+                )
             correcto = all(
                 estado in (200, 204)
                 for estado in resultados.values()

@@ -73,6 +73,103 @@ def register_sofia_cron_routes(app):
                 "escrituras_realizadas": False,
             }), 503
 
+    @app.post("/cron/sofia/caso-prueba-produccion")
+    def crear_un_caso_prueba_sofia_produccion():
+        # Ruta manual y protegida: no modifica el cron de Sandbox.
+        if not cron_autorizado():
+            return jsonify({"error": "No autorizado"}), 401
+
+        habilitado = (
+            os.getenv("SOFIA_PROD_CASES_WRITES_ENABLED", "false")
+            .strip().lower() == "true"
+        )
+        if not habilitado:
+            return jsonify({"estado": "desactivado"}), 403
+
+        call_id = os.getenv(
+            "SOFIA_PROD_CASES_ALLOWED_CALL_ID", ""
+        ).strip()
+        agente = os.getenv("RETELL_SOFIA_AGENT_ID", "").strip()
+        caracteres_validos = (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789_-"
+        )
+        if (
+            not call_id.startswith("call_")
+            or len(call_id) > 128
+            or any(c not in caracteres_validos for c in call_id)
+            or not agente
+        ):
+            return jsonify({
+                "estado": "bloqueado",
+                "motivo": "autorizacion_o_agente_invalido",
+            }), 503
+
+        try:
+            fin_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            inicio_ms = fin_ms - 48 * 60 * 60 * 1000
+            resultado = procesar_pendientes_sofia(
+                agente,
+                simulacion=True,
+                inicio_ms=inicio_ms,
+                fin_ms=fin_ms,
+                incluir_cotizaciones_sandbox=False,
+            )
+            if (
+                not isinstance(resultado, dict)
+                or resultado.get("estado") != "simulacion"
+            ):
+                return jsonify({
+                    "estado": "bloqueado",
+                    "motivo": "historial_no_confirmado",
+                }), 503
+
+            consultas = resultado.get("consultas_detectadas")
+            postventas = resultado.get("postventas_detectadas")
+            if not isinstance(consultas, list) or not isinstance(postventas, list):
+                return jsonify({
+                    "estado": "bloqueado",
+                    "motivo": "clasificaciones_no_disponibles",
+                }), 503
+
+            candidatas = [
+                c for c in consultas + postventas
+                if isinstance(c, dict) and c.get("call_id") == call_id
+            ]
+            if len(candidatas) != 1:
+                return jsonify({
+                    "estado": "no_disponible",
+                    "coincidencias": len(candidatas),
+                    "motivo": "llamada_no_elegible_o_fuera_de_48h",
+                }), 409
+
+            from services.sofia.registro_casos_produccion import (
+                procesar_caso_prueba_desde_clasificacion,
+            )
+            decision = procesar_caso_prueba_desde_clasificacion(
+                candidatas[0]
+            )
+            if not isinstance(decision, dict):
+                return jsonify({"estado": "resultado_incierto"}), 503
+            estado = decision.get("estado")
+            if estado in ("creado", "ya_registrado"):
+                return jsonify({
+                    "estado": estado,
+                    "case_id": decision.get("case_id"),
+                    "registro_de_prueba": True,
+                }), 200
+
+            return jsonify({
+                "estado": estado or "resultado_incierto",
+                "motivo": decision.get("motivo", "sin_detalle"),
+            }), 503
+        except Exception:
+            current_app.logger.exception(
+                "[SOFIA PROD] No fue posible confirmar el Caso"
+            )
+            return jsonify({"estado": "resultado_incierto"}), 503
+
     @app.post("/cron/sofia")
     def ejecutar_cron_sofia():
 

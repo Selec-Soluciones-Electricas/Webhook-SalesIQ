@@ -10,6 +10,69 @@ from utils.security import cron_autorizado
 
 def register_sofia_cron_routes(app):
 
+
+    @app.post("/cron/sofia/diagnostico-produccion")
+    def diagnostico_sofia_produccion():
+
+        if not cron_autorizado():
+            return jsonify({"error": "No autorizado"}), 401
+
+        from services.sofia.crm_produccion import (
+            obtener_conexion_produccion,
+        )
+
+        try:
+            conexion = obtener_conexion_produccion()
+            token = conexion["obtener_token"]()
+
+            modulos = {
+                "Deals": (
+                    "id,Retell_Call_ID,"
+                    "Registro_de_prueba_Sof_a"
+                ),
+                "Cases": (
+                    "id,Case_Number,ID_de_llamada_Retell,"
+                    "Registro_de_prueba_Sof_a"
+                ),
+            }
+
+            resultados = {}
+
+            for modulo, campos in modulos.items():
+                respuesta = conexion["http_get"](
+                    conexion["base"] + "/crm/v8/" + modulo,
+                    headers={
+                        "Authorization":
+                            "Zoho-oauthtoken " + token
+                    },
+                    params={
+                        "fields": campos,
+                        "per_page": 1,
+                    },
+                    timeout=20,
+                    allow_redirects=False,
+                )
+
+                resultados[modulo] = respuesta.status_code
+
+            correcto = all(
+                estado in (200, 204)
+                for estado in resultados.values()
+            )
+
+            return jsonify({
+                "estado": "ok" if correcto else "revision",
+                "organizacion": "verificada",
+                "modulos": resultados,
+                "escrituras_realizadas": False,
+            }), 200 if correcto else 503
+
+        except Exception:
+            return jsonify({
+                "estado": "error_conexion",
+                "escrituras_realizadas": False,
+            }), 503
+
     @app.post("/cron/sofia")
     def ejecutar_cron_sofia():
 

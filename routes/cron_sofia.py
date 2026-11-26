@@ -170,6 +170,72 @@ def register_sofia_cron_routes(app):
             )
             return jsonify({"estado": "resultado_incierto"}), 503
 
+    @app.post("/cron/sofia/cotizacion-prueba-produccion")
+    def crear_una_cotizacion_prueba_sofia_produccion():
+        # Ruta manual, separada del cron Sandbox.
+        if not cron_autorizado():
+            return jsonify({"error": "No autorizado"}), 401
+        if os.getenv("SOFIA_PROD_DEALS_WRITES_ENABLED", "false").strip().lower() != "true":
+            return jsonify({"estado": "desactivado"}), 403
+
+        call_id = os.getenv("SOFIA_PROD_DEALS_ALLOWED_CALL_ID", "").strip()
+        agente = os.getenv("RETELL_SOFIA_AGENT_ID", "").strip()
+        caracteres_validos = (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789_-"
+        )
+        if (
+            not call_id.startswith("call_")
+            or len(call_id) > 128
+            or any(c not in caracteres_validos for c in call_id)
+            or not agente
+        ):
+            return jsonify({"estado": "bloqueado", "motivo": "autorizacion_invalida"}), 503
+
+        try:
+            fin_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            inicio_ms = fin_ms - 48 * 60 * 60 * 1000
+            resultado = procesar_pendientes_sofia(
+                agente,
+                simulacion=True,
+                inicio_ms=inicio_ms,
+                fin_ms=fin_ms,
+                incluir_cotizaciones_sandbox=True,
+            )
+            if not isinstance(resultado, dict) or resultado.get("estado") != "simulacion":
+                return jsonify({"estado": "bloqueado", "motivo": "historial_no_confirmado"}), 503
+            candidatas = resultado.get("cotizaciones_sandbox_candidatas")
+            if not isinstance(candidatas, list):
+                return jsonify({"estado": "bloqueado", "motivo": "cotizaciones_no_disponibles"}), 503
+            encontradas = [
+                llamada for llamada in candidatas
+                if isinstance(llamada, dict)
+                and llamada.get("call_id") == call_id
+                and llamada.get("agent_id") == agente
+            ]
+            if len(encontradas) != 1:
+                return jsonify({"estado": "no_disponible", "coincidencias": len(encontradas)}), 409
+
+            from services.sofia.registro_cotizaciones_produccion import (
+                registrar_negocio_prueba_produccion,
+            )
+            decision = registrar_negocio_prueba_produccion(encontradas[0])
+            estado = decision.get("estado") if isinstance(decision, dict) else None
+            if estado in ("creado", "ya_registrado"):
+                return jsonify({
+                    "estado": estado,
+                    "deal_id": decision.get("deal_id"),
+                    "registro_de_prueba": decision.get("registro_de_prueba") is True,
+                }), 200
+            return jsonify({
+                "estado": estado or "resultado_incierto",
+                "motivo": (decision.get("motivo") if isinstance(decision, dict) else "sin_detalle"),
+            }), 503
+        except Exception:
+            current_app.logger.exception("[SOFIA PROD] Cotizacion prueba no confirmada")
+            return jsonify({"estado": "resultado_incierto"}), 503
+
     @app.post("/cron/sofia")
     def ejecutar_cron_sofia():
 

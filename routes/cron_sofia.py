@@ -73,6 +73,43 @@ def register_sofia_cron_routes(app):
                 )
                 resultados[f"Deals_pagina_{pagina}"] = respuesta.status_code
 
+
+            # Revisar paginacion posterior a 2000 registros.
+            # La variable respuesta corresponde a la pagina 10.
+            if respuesta.status_code == 200:
+                info = respuesta.json().get("info") or {}
+
+                for pagina_extra in range(11, 21):
+                    if info.get("more_records") is not True:
+                        break
+
+                    token_pagina = info.get("next_page_token")
+
+                    if not isinstance(token_pagina, str) or not token_pagina:
+                        resultados[f"Deals_pagina_{pagina_extra}"] = "sin_token"
+                        break
+
+                    siguiente = conexion["http_get"](
+                        conexion["base"] + "/crm/v8/Deals",
+                        headers={
+                            "Authorization": "Zoho-oauthtoken " + token
+                        },
+                        params={
+                            "fields": "id,Retell_Call_ID,Registro_de_prueba_Sof_a",
+                            "per_page": 200,
+                            "page_token": token_pagina,
+                        },
+                        timeout=20,
+                        allow_redirects=False,
+                    )
+
+                    resultados[f"Deals_pagina_{pagina_extra}"] = siguiente.status_code
+
+                    if siguiente.status_code != 200:
+                        break
+
+                    info = siguiente.json().get("info") or {}
+
             correcto = all(
                 estado in (200, 204)
                 for estado in resultados.values()

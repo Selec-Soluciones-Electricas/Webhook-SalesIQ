@@ -132,6 +132,8 @@ def registrar_negocio_prueba_produccion(llamada):
         vistos = {}
         siguiente_token = None
         for pagina in range(1, 21):
+            if busqueda.status_code == 204:
+                break
             parametros = {
                 "fields": "id,Retell_Call_ID,Registro_de_prueba_Sof_a",
                 "per_page": 200,

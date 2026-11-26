@@ -602,7 +602,7 @@ HERRAMIENTA_ANALISIS = {
                 ],
             },
             "plataforma": {"type": "string", "description": "Wherex, Senegocia, SAP Ariba, correo directo, etc."},
-            "id_proceso": {"type": "string", "description": "ID de la licitación, cotización o evento"},
+            "id_proceso": {"type": "string", "description": "ID de la licitación, cotización o evento. ENAMI: el \"N.º de petición de Oferta\" tal como aparece (ej. 10028359); algunos empiezan con M (ej. M10028359): conserva la M"},
             "empresa_compradora": {"type": "string", "description": "Razón social completa del comprador, tal como aparece en el correo o la firma (ej. Komatsu Cummins Chile Ltda.)"},
             "contacto_nombre": {"type": "string", "description": "Nombre completo de la persona que pide la cotización, sin cargo: la firma del correo o, en SAP Ariba (Codelco), el comprador que aparece en el \"De:\" o en el cuerpo. Vacío si no aparece ninguna persona"},
             "contacto_correo": {"type": "string", "description": "Correo de esa persona (el del \"De:\", o el remitente original si es un reenvío). Vacío si solo hay correos genéricos de la plataforma (ariba.com, no-reply)"},

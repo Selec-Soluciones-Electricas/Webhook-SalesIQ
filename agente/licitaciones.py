@@ -539,16 +539,38 @@ def extraer_numero(id_proceso, portal="", textos=()):
     return encontrado.group() if encontrado else None
 
 
-def numero_licitacion(id_proceso, portal="", textos=()):
+# ENAMI: el "N.º de petición de Oferta" es el número de licitación. Algunos empiezan con M (se conserva).
+PATRON_PETICION_ENAMI = re.compile(
+    r"petici[oó]n\s+(?:de\s+)?oferta\s*(?:n\s*[°º.o]*\s*)?[:#\-]?\s*(M?\d{5,})", re.I)
+
+
+def numero_enami(analisis, m):
+    """N.º de petición de Oferta de un correo de ENAMI (ej. "10028359" o "M10028359"), o None."""
+    correos = " ".join(str(x or "") for x in (m.get("remitente"), analisis.get("contacto_correo"),
+                                                analisis.get("empresa_compradora"), m.get("cuerpo", "")[:5000]))
+    if "enami" not in correos.lower():
+        return None
+    candidato = (analisis.get("id_proceso") or "").strip().upper()
+    if re.fullmatch(r"M?\d{5,}", candidato):
+        return candidato
+    for texto in (m.get("subject"), analisis.get("nombre_proceso"), m.get("cuerpo")):
+        encontrado = PATRON_PETICION_ENAMI.search(texto or "")
+        if encontrado:
+            return encontrado.group(1).upper()
+    return None
+
+
+def numero_licitacion(id_proceso, portal="", textos=(), numero=None):
     """
     Devuelve (campo_lookup, ID del registro con el número) o (None, motivo).
     Si el número no existe en Numeros_Licitaciones, se crea.
+    numero: si ya se sabe (ej. ENAMI "M10028359"), se usa tal cual.
     """
     lookup = campo_lookup_numero()
     if not lookup:
         return None, "no se encontró el campo 'Numero de Licitacion' en el formulario"
 
-    numero = extraer_numero(id_proceso, portal, textos)
+    numero = numero or extraer_numero(id_proceso, portal, textos)
     if not numero:
         return None, f"el ID '{id_proceso}' no tiene número"
 
@@ -1397,6 +1419,12 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
 
     empresa = (analisis.get("empresa_compradora") or "").strip()
     portal = _portal(analisis.get("plataforma") or "", m.get("remitente", ""))
+    if portal == "Industrias":
+        # ENAMI: el N.º de petición de Oferta es el ID (también para no duplicar por Ref. correo)
+        num_enami_id = numero_enami(analisis, m)
+        if num_enami_id:
+            id_proceso = num_enami_id
+            analisis["id_proceso"] = num_enami_id
 
     # Ítems que SELEC no cotiza (rodamientos, retenes, correas): no van a la licitación
     excluidos = set(analisis.get("items_excluidos") or [])
@@ -1517,12 +1545,15 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
     else:  # Senegocia / Wherex: "Cliente Senegocia", "Cliente Wherex"
         datos["Contactos_CRM"], _ = contacto_portal(portal)
 
-    # Numero de Licitacion (no aplica a Industrias): si falla, se crea igual y queda el aviso
-    if portal != "Industrias":
+    # Numero de Licitacion: portales con número y ENAMI (N.º de petición de Oferta).
+    # Las demás Industrias no tienen número. Si falla, se crea igual y queda el aviso.
+    num_enami = numero_enami(analisis, m) if portal == "Industrias" else None
+    if portal != "Industrias" or num_enami:
         try:
             lookup, valor = numero_licitacion(
                 id_proceso, portal,
                 (analisis.get("nombre_proceso"), m.get("subject"), id_proceso),
+                numero=num_enami,
             )
             if lookup:
                 datos[lookup] = valor

@@ -408,6 +408,23 @@ def register_sofia_cron_routes(app):
             }), 503
 
 
+        # Piloto independiente: apagado por defecto y limitado por Call ID.
+        # El cron y los escritores Sandbox permanecen intactos.
+        from services.sofia.cron_piloto_produccion import (
+            procesar_piloto_produccion,
+        )
+        try:
+            piloto_produccion = procesar_piloto_produccion(resultado)
+            if piloto_produccion.get("estado") == "piloto_ejecutado":
+                current_app.logger.info(
+                    "[SOFIA PROD PILOTO] Estados: %s",
+                    piloto_produccion.get("resultados", {}),
+                )
+        except Exception:
+            current_app.logger.exception(
+                "[SOFIA PROD PILOTO] Fallo; Sandbox sigue separado"
+            )
+
         # 5. Cotizaciones Sandbox independientes de Casos.
         # El procesador antiguo permanece SIEMPRE en simulacion.
         from services.sofia.cron_cotizaciones_sandbox import (

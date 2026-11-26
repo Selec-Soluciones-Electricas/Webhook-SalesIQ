@@ -55,6 +55,8 @@ Variables de entorno:
       el propietario es el mismo que LICITACION_ASIGNADO)
   ASIGNACION_POR_TIPO=on  ASIGNACION_INICIALES  ASIGNACION_MAX=60  ASIGNACION_REGLAS (ver abajo)
   LUGAR_ENTREGA_DEFECTO=Santiago
+  FECHA_INDUSTRIAS=on  (ENAMI/Komatsu/Corrupac/TGN: fecha límite = llegada del correo + 24/48/72 h hábiles
+      según 0-5 / 6-10 / 11+ productos; off = usar la fecha del correo)
   MODIFICAR_DESDE_INVITACION=on  (si llega otra vez una invitación con otra fecha de cierre, se actualiza;
       ver "MODIFICACIONES DE UNA LICITACIÓN YA CREADA". Requiere el scope ZohoCreator.report.UPDATE)
   GEN_ID=4710567000001934003
@@ -1442,11 +1444,51 @@ def modificar_licitacion(m: dict, analisis: dict) -> dict:
         return {"omitida": "modificación sin ID de proceso"}
     lic_id = buscar_licitacion(m, analisis)
     if lic_id:
+        portal = _portal(analisis.get("plataforma") or "", m.get("remitente", ""))
+        if _usa_plazo_industrias(portal):
+            # Industrias: la fecha límite es la calculada (24/48/72 h); el correo solo deja la nota
+            return aplicar_modificacion(lic_id, m, {**analisis, "fecha_cierre": ""})
         return aplicar_modificacion(lic_id, m, analisis)
     resultado = crear_licitacion(m, {**analisis, "tipo": "invitacion_licitacion"})
     if resultado.get("creada"):
         resultado["avisos"] = ["se creó desde un correo de modificación (no existía)"] + (resultado.get("avisos") or [])
     return resultado
+
+
+# =========================================================
+# FECHA LÍMITE DE INDUSTRIAS (ENAMI, KOMATSU, CORRUPAC, TGN)
+# =========================================================
+# Definido con el equipo: estos clientes no traen fecha límite (o no se usa la que traen).
+# Se calcula desde que llegó el correo, en horas HÁBILES (sin sábados ni domingos), según
+# la cantidad de productos: 0-5 -> 24 h, 6-10 -> 48 h, 11 o más -> 72 h.
+# FECHA_INDUSTRIAS=off vuelve a usar la fecha del correo.
+
+def _llegada_chile(m):
+    texto = m.get("receivedDateTime") or ""
+    try:
+        return datetime.fromisoformat(texto.replace("Z", "+00:00")).astimezone(CHILE_TZ).replace(tzinfo=None)
+    except ValueError:
+        return datetime.now(CHILE_TZ).replace(tzinfo=None)
+
+
+def _sumar_dias_habiles(desde, dias):
+    """Suma días de 24 h saltando sábados y domingos: viernes 10:00 + 1 = lunes 10:00."""
+    fecha = desde
+    while dias > 0:
+        fecha += timedelta(days=1)
+        if fecha.weekday() < 5:
+            dias -= 1
+    return fecha
+
+
+def plazo_industrias(m, n_productos):
+    """(fecha límite, horas) para Industrias según la cantidad de productos."""
+    horas = 24 if n_productos <= 5 else 48 if n_productos <= 10 else 72
+    return _sumar_dias_habiles(_llegada_chile(m), horas // 24).replace(second=0, microsecond=0), horas
+
+
+def _usa_plazo_industrias(portal):
+    return portal == "Industrias" and os.getenv("FECHA_INDUSTRIAS", "on").lower() == "on"
 
 
 # Una creación (o modificación) a la vez: el servidor atiende varios correos en paralelo
@@ -1476,11 +1518,10 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
 
     cierre = _fecha_creator(analisis.get("fecha_cierre"))
     ahora = datetime.now(CHILE_TZ).replace(tzinfo=None)
-    if cierre and cierre < ahora:
-        return {"omitida": f"cerrada el {analisis.get('fecha_cierre')}"}
-
     empresa = (analisis.get("empresa_compradora") or "").strip()
     portal = _portal(analisis.get("plataforma") or "", m.get("remitente", ""))
+    if cierre and cierre < ahora and not _usa_plazo_industrias(portal):
+        return {"omitida": f"cerrada el {analisis.get('fecha_cierre')}"}
     if portal == "Industrias":
         # ENAMI: el N.º de petición de Oferta es el ID (también para no duplicar por Ref. correo)
         num_enami_id = numero_enami(analisis, m)
@@ -1491,6 +1532,13 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
     # Ítems que SELEC no cotiza (rodamientos, retenes, correas): no van a la licitación
     excluidos = set(analisis.get("items_excluidos") or [])
     items = [it for i, it in enumerate(analisis.get("items") or []) if i not in excluidos]
+
+    # Industrias: la fecha límite se calcula por cantidad de productos (24/48/72 h hábiles)
+    plazo_txt = ""
+    if _usa_plazo_industrias(portal):
+        cierre, horas = plazo_industrias(m, len(items))
+        plazo_txt = (f"fecha límite calculada: {len(items)} productos -> {horas} h hábiles desde la llegada "
+                     f"del correo ({_llegada_chile(m).strftime('%d-%m-%Y %H:%M')})")
 
     # Nombre de Trato según el tipo, y control de duplicados con ese nombre
     nombre, claves = nombre_trato(portal, id_proceso, analisis, items, m)
@@ -1503,7 +1551,8 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
         existente = industria_existente(id_proceso)
     if existente:
         # Invitación repetida con otra fecha de cierre: se actualiza la fecha (y queda la nota)
-        if os.getenv("MODIFICAR_DESDE_INVITACION", "on").lower() == "on" and analisis.get("fecha_cierre"):
+        if (os.getenv("MODIFICAR_DESDE_INVITACION", "on").lower() == "on" and analisis.get("fecha_cierre")
+                and not _usa_plazo_industrias(portal)):
             return aplicar_modificacion(existente, m, analisis, origen="Invitación recibida nuevamente",
                                         solo_si_cambia_fecha=True)
         return {"omitida": "ya existe", "id": existente}
@@ -1521,6 +1570,8 @@ def _crear_licitacion(m: dict, analisis: dict) -> dict:
     avisos = []
     if cliente_nombre == "Por Definir":
         avisos.append(f"cliente '{empresa}' no encontrado en Creator: se asignó 'Por Definir'")
+    if plazo_txt:
+        avisos.append(plazo_txt)
     if not cierre:
         cierre = (ahora + timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
         avisos.append("el correo no indica fecha de cierre: se puso una provisoria (+3 días)")

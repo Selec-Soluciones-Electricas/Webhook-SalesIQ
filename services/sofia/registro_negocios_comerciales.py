@@ -147,8 +147,12 @@ def registrar_negocio_comercial(llamada, *, autorizar=False, conexion=None, http
     datos = analisis.get("custom_analysis_data") if isinstance(analisis, dict) else None
     if not isinstance(datos, dict) or str(datos.get("tipo_solicitud") or "").lower().strip() != "cotizacion":
         return _bloqueado("no_es_cotizacion")
-    # El modo comercial usa SIEMPRE validación estricta de RUT y productos.
-    borrador = preparar_borrador_cotizacion_sandbox(llamada)
+    # Solo las pruebas explícitamente autorizadas pueden omitir el dígito
+    # verificador. Se siguen exigiendo formato, productos y datos de contacto.
+    borrador = preparar_borrador_cotizacion_sandbox(
+        llamada,
+        permitir_rut_ficticio=_encendido("SOFIA_PROD_COMMERCIAL_RUT_SIN_DV_ENABLED"),
+    )
     if borrador.get("estado") != "borrador_preparado" or borrador.get("call_id") != call_id:
         return _bloqueado("datos_por_revisar")
     if conexion is None:

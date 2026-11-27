@@ -175,7 +175,13 @@ def resolver_clientes_cotizacion_comercial(
     cuenta_data = dict(preparado["cuenta"])
     contacto_data = dict(preparado["contacto"])
     rut = normalizar_rut(cuenta_data.get("Billing_Code"))
-    if rut is None or not validar_rut_chileno(rut):
+    # En pruebas autorizadas se admite un RUT con formato válido aunque
+    # falle su dígito verificador; la clave única de Zoho sigue protegiendo
+    # las Cuentas y su asociación a Contactos.
+    if rut is None or (
+        not _activo("SOFIA_PROD_COMMERCIAL_RUT_SIN_DV_ENABLED")
+        and not validar_rut_chileno(rut)
+    ):
         return _bloquear("rut_real_invalido")
     correo = contacto_data.get("Email")
     if not isinstance(correo, str) or not correo.strip():

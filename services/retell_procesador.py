@@ -444,8 +444,11 @@ def procesar_pendientes_sofia(
             activo, configuracion_automatica,
         )
         permitir_rut_prueba = (
-            activo("SOFIA_PROD_DEALS_WRITES_ENABLED")
-            and configuracion_automatica().get("estado") == "autorizado"
+            activo("SOFIA_PROD_COMMERCIAL_RUT_SIN_DV_ENABLED")
+            or (
+                activo("SOFIA_PROD_DEALS_WRITES_ENABLED")
+                and configuracion_automatica().get("estado") == "autorizado"
+            )
         )
 
     # Revisar primero las llamadas mas antiguas.

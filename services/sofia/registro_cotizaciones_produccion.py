@@ -15,7 +15,7 @@ from services.sofia.cotizaciones_sandbox import (
     preparar_registros_cotizacion_sandbox,
 )
 from services.sofia.marcas_prueba import marcar_registro_prueba
-from services.sofia.autorizacion_produccion import llamada_autorizada
+from services.sofia.autorizacion_produccion import llamada_autorizada, configuracion_automatica
 
 BASE = "https://www.zohoapis.com/crm/v8"
 
@@ -42,7 +42,12 @@ def registrar_negocio_prueba_produccion(llamada):
     ):
         return bloquear("llamada_no_autorizada")
 
-    borrador = preparar_borrador_cotizacion_sandbox(llamada)
+    permitir_rut_prueba = (
+        configuracion_automatica().get("estado") == "autorizado"
+    )
+    borrador = preparar_borrador_cotizacion_sandbox(
+        llamada, permitir_rut_ficticio=permitir_rut_prueba
+    )
     if not isinstance(borrador, dict) or borrador.get("estado") != "borrador_preparado":
         return bloquear("datos_por_revisar")
     if borrador.get("call_id") != call_id:

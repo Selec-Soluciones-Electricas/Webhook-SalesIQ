@@ -438,12 +438,23 @@ def procesar_pendientes_sofia(
     consultas_detectadas = []
     consultas_en_revision = []
 
+    permitir_rut_prueba = False
+    if simulacion and incluir_cotizaciones_sandbox:
+        from services.sofia.autorizacion_produccion import (
+            activo, configuracion_automatica,
+        )
+        permitir_rut_prueba = (
+            activo("SOFIA_PROD_DEALS_WRITES_ENABLED")
+            and configuracion_automatica().get("estado") == "autorizado"
+        )
+
     # Revisar primero las llamadas mas antiguas.
     for llamada in reversed(llamadas):
 
         clasificacion = clasificar_llamada_recuperacion(
             llamada,
             agente_autorizado,
+            permitir_rut_ficticio=permitir_rut_prueba,
         )
 
         estado = clasificacion.get("estado")

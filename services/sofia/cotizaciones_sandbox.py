@@ -9,7 +9,7 @@ from services.retell_validacion import (
 )
 
 
-def preparar_borrador_cotizacion_sandbox(llamada):
+def preparar_borrador_cotizacion_sandbox(llamada, *, permitir_rut_ficticio=False):
     """
     Valida una llamada y prepara los datos de cotizacion.
     No busca, crea ni modifica registros en CRM.
@@ -23,7 +23,7 @@ def preparar_borrador_cotizacion_sandbox(llamada):
 
     try:
         validacion = preparar_cotizacion_desde_llamada_retell(
-            llamada
+            llamada, permitir_rut_ficticio=permitir_rut_ficticio
         )
     except Exception:
         return {

@@ -416,7 +416,7 @@ def register_sofia_cron_routes(app):
         try:
             piloto_produccion = procesar_piloto_produccion(resultado)
             if piloto_produccion.get("estado") == "piloto_ejecutado":
-                current_app.logger.info(
+                current_app.logger.warning(
                     "[SOFIA PROD PILOTO] Estados: %s",
                     piloto_produccion.get("resultados", {}),
                 )

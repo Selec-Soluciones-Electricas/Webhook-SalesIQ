@@ -11,6 +11,17 @@ from utils.security import cron_autorizado
 def register_sofia_cron_routes(app):
 
 
+    @app.post("/cron/sofia/comercial/diagnostico-campos")
+    def diagnostico_campos_sofia_comercial():
+        # Protegido con el secreto habitual del cron; solo GET a Zoho.
+        if not cron_autorizado():
+            return jsonify({"error": "No autorizado"}), 401
+        from services.sofia.metadatos_comerciales import (
+            diagnosticar_campos_comerciales,
+        )
+        resultado = diagnosticar_campos_comerciales()
+        return jsonify(resultado), 200 if resultado.get("estado") == "listo" else 409
+
     @app.post("/cron/sofia/diagnostico-produccion")
     def diagnostico_sofia_produccion():
 
@@ -574,6 +585,27 @@ def register_sofia_cron_routes(app):
                 )
         except Exception:
             current_app.logger.exception("[SOFIA PROD AUTO TEST] Fallo; no reintentar escrituras inciertas")
+
+        # Modo comercial permanente: independiente del piloto, apagado por
+        # defecto y con preflight de metadatos/llaves unicas de Zoho.
+        from services.sofia.cron_comercial_produccion import procesar_cron_comercial
+        try:
+            comercial = procesar_cron_comercial(resultado)
+            if comercial.get("estado") == "comercial_ejecutado":
+                current_app.logger.warning(
+                    "[SOFIA PROD COMERCIAL] Recuento: %s Pendientes: %s",
+                    comercial.get("recuento", {}),
+                    comercial.get("pendientes_por_continuar", 0),
+                )
+            elif comercial.get("estado") == "bloqueado":
+                current_app.logger.warning(
+                    "[SOFIA PROD COMERCIAL] Bloqueado: %s",
+                    comercial.get("motivo", "sin_detalle"),
+                )
+        except Exception:
+            current_app.logger.exception(
+                "[SOFIA PROD COMERCIAL] Fallo sin reintento automatico"
+            )
 
         # 5. Cotizaciones Sandbox independientes de Casos.
         # El procesador antiguo permanece SIEMPRE en simulacion.

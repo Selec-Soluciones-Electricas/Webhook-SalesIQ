@@ -92,4 +92,18 @@ def procesar_piloto_produccion(resultado):
             "resultado_incierto", "rechazado",
         ) else "resultado_incierto"
 
+        # Notificar solo en el instante de crear un Caso NUEVO.
+        # Un ya_registrado nunca reenvia correo, incluso en siguientes cron.
+        if modulo == "Cases" and estado == "creado":
+            try:
+                from services.sofia.notificaciones_casos import notificar_caso_creado
+                aviso = notificar_caso_creado(decision, coincidencias[0])
+                estados["Cases_email"] = (
+                    aviso.get("estado", "resultado_incierto")
+                    if isinstance(aviso, dict)
+                    else "resultado_incierto"
+                )
+            except Exception:
+                estados["Cases_email"] = "resultado_incierto"
+
     return {"estado": "piloto_ejecutado", "resultados": estados}

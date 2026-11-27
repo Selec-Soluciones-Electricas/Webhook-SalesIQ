@@ -1,0 +1,184 @@
+"""Avisos de nuevos Casos de Sofia, desactivados por defecto.
+
+Solo se intenta enviar después de una creación confirmada, una vez por Call ID.
+Los Casos que ya existían jamás disparan el aviso automático. No reintenta.
+Durante el piloto, los Casos marcados como prueba se envían a un buzón de prueba.
+"""
+import os
+import re
+from html import escape
+from urllib.parse import urlparse
+
+import requests
+
+from services.sofia.crm_produccion import obtener_conexion_produccion
+
+BASE = "https://www.zohoapis.com/crm/v8"
+ORG_UI = "org706345205"
+
+
+def _activo(nombre):
+    return os.getenv(nombre, "false").strip().lower() == "true"
+
+
+def _email(valor):
+    return isinstance(valor, str) and re.fullmatch(
+        r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+        valor.strip(),
+    ) is not None
+
+
+def _url_retell(call_id):
+    plantilla = os.getenv("SOFIA_RETELL_CALL_URL_TEMPLATE", "").strip()
+    if plantilla.count("{call_id}") != 1:
+        return None
+    url = plantilla.replace("{call_id}", call_id)
+    destino = urlparse(url)
+    dominio = (destino.hostname or "").lower()
+    if destino.scheme != "https" or not (
+        dominio == "retellai.com" or dominio.endswith(".retellai.com")
+    ) or destino.username or destino.password:
+        return None
+    return url
+
+
+def _destinatarios(tipo, *, prueba):
+    if prueba and not _activo("SOFIA_PROD_CASES_MAIL_REAL_RECIPIENTS_ENABLED"):
+        email = os.getenv("SOFIA_PROD_CASES_MAIL_TEST_TO", "").strip()
+        if not _email(email):
+            return None
+        return [{"email": email, "user_name": "Prueba Sofia"}]
+
+    nombres = (
+        ("Deivys", "Carolina", "Luis")
+        if tipo == "postventa"
+        else ("Patricio", "Carolina", "Luis")
+    )
+    resultado = []
+    vistos = set()
+    for nombre in nombres:
+        email = os.getenv("SOFIA_MAIL_" + nombre.upper(), "").strip()
+        if not _email(email):
+            return None
+        if email.lower() in vistos:
+            return None
+        vistos.add(email.lower())
+        resultado.append({"email": email, "user_name": nombre})
+    return resultado
+
+
+def notificar_caso_creado(decision, clasificacion):
+    """Intenta un envío una sola vez, exclusivamente tras una creación confirmada.
+
+    No registra datos del cliente en logs y no realiza un segundo POST si el
+    resultado del envío es desconocido. Devuelve estados seguros para logging.
+    """
+    def bloquear(motivo, estado="bloqueado"):
+        return {"estado": estado, "motivo": motivo}
+
+    if not _activo("SOFIA_PROD_CASES_MAILS_ENABLED"):
+        return {"estado": "desactivado"}
+    if not isinstance(decision, dict) or decision.get("estado") != "creado":
+        return bloquear("caso_no_recien_creado")
+    if not isinstance(clasificacion, dict):
+        return bloquear("clasificacion_invalida")
+    tipo = clasificacion.get("tipo_solicitud")
+    if tipo not in ("postventa", "consulta"):
+        return bloquear("tipo_invalido")
+    call_id = clasificacion.get("call_id")
+    case_id = str(decision.get("case_id") or "")
+    if (
+        not isinstance(call_id, str)
+        or re.fullmatch(r"call_[A-Za-z0-9_-]{1,123}", call_id) is None
+        or not case_id.isascii()
+        or not case_id.isdecimal()
+        or call_id != os.getenv("SOFIA_PROD_CASES_ALLOWED_CALL_ID", "").strip()
+    ):
+        return bloquear("identificador_no_autorizado")
+    remitente = os.getenv("SOFIA_PROD_CASES_MAIL_FROM", "").strip()
+    if not _email(remitente):
+        return bloquear("remitente_no_configurado")
+    retell_url = _url_retell(call_id)
+    if not retell_url:
+        return bloquear("enlace_retell_no_configurado")
+
+    try:
+        conexion = obtener_conexion_produccion()
+        token = conexion["obtener_token"]()
+        headers = {"Authorization": "Zoho-oauthtoken " + token}
+        lectura = conexion["http_get"](
+            BASE + "/Cases/" + case_id,
+            headers=headers,
+            params={
+                "fields": "id,Subject,Description,Case_Number,ID_de_llamada_Retell,Registro_de_prueba_Sof_a"
+            },
+            timeout=20,
+            allow_redirects=False,
+        )
+        if lectura.status_code != 200:
+            return bloquear("caso_no_verificable")
+        datos = lectura.json().get("data")
+        if not isinstance(datos, list) or len(datos) != 1 or not isinstance(datos[0], dict):
+            return bloquear("caso_no_verificable")
+        caso = datos[0]
+        if str(caso.get("id") or "") != case_id or caso.get("ID_de_llamada_Retell") != call_id:
+            return bloquear("caso_inconsistente")
+        # Mientras los escritores crean exclusivamente registros de prueba,
+        # no enviar mensajes desde Casos reales de otro origen.
+        if caso.get("Registro_de_prueba_Sof_a") is not True:
+            return bloquear("no_es_registro_prueba")
+        descripcion = caso.get("Description")
+        if not isinstance(descripcion, str) or not descripcion.startswith("[PRUEBA SOFIA]"):
+            return bloquear("marca_descripcion_ausente")
+        asunto = str(caso.get("Subject") or "").strip()
+        if not asunto.startswith("SOFIA_" + tipo.upper() + "_"):
+            return bloquear("asunto_inconsistente")
+        destinatarios = _destinatarios(tipo, prueba=True)
+        if not destinatarios:
+            return bloquear("destinatarios_no_configurados")
+
+        url_caso = f"https://crm.zoho.com/crm/{ORG_UI}/tab/Cases/{case_id}"
+        descripcion_html = escape(descripcion[:15000])
+        numero = escape(str(caso.get("Case_Number") or case_id))
+        contenido = (
+            "<p>Se registró un nuevo Caso de Sofía para gestión.</p>"
+            f"<p><b>Tipo:</b> {escape(tipo.title())}<br>"
+            f"<b>Número de Caso:</b> {numero}<br>"
+            f'<b>Zoho CRM:</b> <a href="{escape(url_caso, quote=True)}">Abrir Caso</a><br>'
+            f'<b>Llamada Retell:</b> <a href="{escape(retell_url, quote=True)}">Abrir llamada</a></p>'
+            "<p><b>Descripción del Caso:</b></p>"
+            f'<pre style="font-family:Arial,sans-serif;white-space:pre-wrap">{descripcion_html}</pre>'
+            "<p>Mensaje automático del sistema Sofía — SELEC.</p>"
+        )
+        payload = {"data": [{
+            "from": {
+                "email": remitente,
+                "user_name": os.getenv("SOFIA_PROD_CASES_MAIL_FROM_NAME", "Sofia - SELEC"),
+            },
+            "to": destinatarios,
+            "subject": "[PRUEBA SOFIA] Nuevo Caso de " + tipo + " #" + str(caso.get("Case_Number") or case_id),
+            "content": contenido,
+            "mail_format": "html",
+        }]}
+        # SOLO un POST, sin reintentos; si expira, el resultado es incierto.
+        respuesta = requests.post(
+            BASE + "/Cases/" + case_id + "/actions/send_mail",
+            headers={**headers, "Content-Type": "application/json"},
+            json=payload,
+            timeout=20,
+            allow_redirects=False,
+        )
+        if respuesta.status_code not in (200, 201, 202):
+            return bloquear("zoho_rechazo_envio")
+        cuerpo = respuesta.json()
+        filas = cuerpo.get("data") if isinstance(cuerpo, dict) else None
+        if (
+            isinstance(filas, list) and len(filas) == 1
+            and isinstance(filas[0], dict)
+            and filas[0].get("code") == "SUCCESS"
+            and filas[0].get("status") == "success"
+        ):
+            return {"estado": "enviado"}
+        return bloquear("envio_no_confirmado", "resultado_incierto")
+    except Exception:
+        return bloquear("excepcion_envio_no_confirmado", "resultado_incierto")

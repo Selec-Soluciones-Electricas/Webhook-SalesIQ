@@ -55,14 +55,18 @@ def procesar_produccion_automatica(resultado):
             candidatos.append((fecha, call_id, modulo, item))
 
     candidatos.sort(key=lambda fila: (fila[0], fila[1]))
-    total_pendiente = max(0, len(candidatos) - config["maximo"])
+    total_pendiente = 0
+    intentos = 0
     estados = {
         "Cases": "desactivado" if not activo("SOFIA_PROD_CASES_WRITES_ENABLED") else "sin_nuevas",
         "Deals": "desactivado" if not activo("SOFIA_PROD_DEALS_WRITES_ENABLED") else "sin_nuevas",
         "Cases_email": "desactivado" if not activo("SOFIA_PROD_CASES_MAILS_ENABLED") else "sin_nuevas",
     }
     recuento = {"creados": 0, "ya_registrados": 0, "bloqueados": 0, "resultado_incierto": 0}
-    for _, _, modulo, item in candidatos[:config["maximo"]]:
+    for indice, (_, _, modulo, item) in enumerate(candidatos):
+        if intentos >= config["maximo"]:
+            total_pendiente = len(candidatos) - indice
+            break
         if modulo == "Cases":
             from services.sofia.registro_casos_produccion import (
                 procesar_caso_prueba_desde_clasificacion,
@@ -77,6 +81,8 @@ def procesar_produccion_automatica(resultado):
         if estado not in ("creado", "ya_registrado", "bloqueado", "desactivado", "rechazado", "resultado_incierto"):
             estado = "resultado_incierto"
         estados[modulo] = estado
+        if estado != "ya_registrado":
+            intentos += 1
         if estado == "creado":
             recuento["creados"] += 1
         elif estado == "ya_registrado":

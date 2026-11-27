@@ -79,10 +79,33 @@ class TestAutoProduccion(unittest.TestCase):
             with patch("services.sofia.registro_casos_produccion.procesar_caso_prueba_desde_clasificacion", return_value={"estado":"ya_registrado"}) as crear_case, patch("services.sofia.registro_cotizaciones_produccion.registrar_negocio_prueba_produccion", return_value={"estado":"creado"}) as crear_deal, patch("services.sofia.notificaciones_casos.notificar_caso_creado") as mail:
                 salida=procesar_produccion_automatica(resultado(casos, negocios))
                 self.assertEqual(salida["estado"], "automatico_pruebas_ejecutado")
-                self.assertEqual(salida["pendientes_por_continuar"],1)
+                self.assertEqual(salida["pendientes_por_continuar"],0)
                 self.assertEqual(crear_case.call_count,2)
-                crear_deal.assert_not_called()
+                crear_deal.assert_called_once()
                 mail.assert_not_called()
+                self.assertEqual(salida["recuento"]["creados"], 1)
+                self.assertEqual(salida["recuento"]["ya_registrados"], 2)
+                self.assertEqual(salida["resultados"]["Deals"], "creado")
+
+    def test_limite_dos_casos_nuevos(self):
+        casos = [
+            caso("call_nueva_a", NOW),
+            caso("call_nueva_b", NOW + 1),
+            caso("call_nueva_c", NOW + 2),
+        ]
+        with patch.dict(os.environ, ENV, clear=True):
+            with patch(
+                "services.sofia.registro_casos_produccion.procesar_caso_prueba_desde_clasificacion",
+                return_value={"estado": "creado", "case_id": "1234"},
+            ) as crear_case, patch(
+                "services.sofia.notificaciones_casos.notificar_caso_creado",
+                return_value={"estado": "enviado"},
+            ) as mail:
+                salida = procesar_produccion_automatica(resultado(casos))
+                self.assertEqual(crear_case.call_count, 2)
+                self.assertEqual(mail.call_count, 2)
+                self.assertEqual(salida["recuento"]["creados"], 2)
+                self.assertEqual(salida["pendientes_por_continuar"], 1)
 
     def test_caso_nuevo_notifica_una_sola_vez(self):
         with patch.dict(os.environ, ENV, clear=True):

@@ -4,6 +4,7 @@ No permite escritura sin: consentimiento mediante flags, cutoff, datos válidos,
 metadatos de Zoho (incluidas claves únicas) y bloqueo de modos piloto. El
 escritor vuelve a verificar duplicados en CRM antes de cada POST.
 """
+import logging
 import os
 import re
 
@@ -106,5 +107,11 @@ def procesar_cron_comercial(resultado, *, diagnosticar=None, escribir=None, noti
         else:
             recuento["bloqueados"] += 1
             escrituras += 1
+            codigo = decision.get("motivo") if isinstance(decision, dict) else None
+            if not isinstance(codigo, str) or re.fullmatch(r"[a-z0-9_]{1,80}", codigo) is None:
+                codigo = "codigo_no_disponible"
+            logging.getLogger(__name__).warning(
+                "[SOFIA BLOQUEO COMERCIAL] motivo=%s", codigo
+            )
     return {"estado": "comercial_ejecutado", "recuento": recuento,
             "correos": correos, "pendientes_por_continuar": pendientes}

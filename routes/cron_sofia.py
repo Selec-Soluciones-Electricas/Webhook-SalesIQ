@@ -596,7 +596,7 @@ def register_sofia_cron_routes(app):
             )
             if not isinstance(candidatas_diag, list):
                 candidatas_diag = []
-                muestra = [
+            muestra = [
                 {
                     "id_final": str(c.get("call_id", ""))[-6:],
                     "fecha": c.get("start_timestamp"),

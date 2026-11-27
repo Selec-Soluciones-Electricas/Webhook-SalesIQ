@@ -67,7 +67,7 @@ def _destinatarios(tipo, *, prueba):
     return resultado
 
 
-def notificar_caso_creado(decision, clasificacion):
+def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False):
     """Intenta un envío una sola vez, exclusivamente tras una creación confirmada.
 
     No registra datos del cliente en logs y no realiza un segundo POST si el
@@ -76,7 +76,7 @@ def notificar_caso_creado(decision, clasificacion):
     def bloquear(motivo, estado="bloqueado"):
         return {"estado": estado, "motivo": motivo}
 
-    if not _activo("SOFIA_PROD_CASES_MAILS_ENABLED"):
+    if not solo_diagnostico and not _activo("SOFIA_PROD_CASES_MAILS_ENABLED"):
         return {"estado": "desactivado"}
     if not isinstance(decision, dict) or decision.get("estado") != "creado":
         return bloquear("caso_no_recien_creado")
@@ -160,6 +160,11 @@ def notificar_caso_creado(decision, clasificacion):
             "content": contenido,
             "mail_format": "html",
         }]}
+        if solo_diagnostico:
+            return {
+                "estado": "listo_para_enviar",
+                "motivo": "validaciones_superadas",
+            }
         # SOLO un POST, sin reintentos; si expira, el resultado es incierto.
         respuesta = requests.post(
             BASE + "/Cases/" + case_id + "/actions/send_mail",

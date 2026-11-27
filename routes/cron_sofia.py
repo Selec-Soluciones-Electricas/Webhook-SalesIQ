@@ -318,6 +318,109 @@ def register_sofia_cron_routes(app):
             current_app.logger.exception("[SOFIA PROD] Cotizacion prueba no confirmada")
             return jsonify({"estado": "resultado_incierto"}), 503
 
+    @app.post("/cron/sofia/diagnostico-correo")
+    def diagnostico_correo_sofia():
+        if not cron_autorizado():
+            return jsonify({"error": "No autorizado"}), 401
+
+        # El diagnostico exige escrituras y correos apagados.
+        for variable in (
+            "SOFIA_PROD_CASES_WRITES_ENABLED",
+            "SOFIA_PROD_CASES_MAILS_ENABLED",
+        ):
+            if os.getenv(variable, "false").strip().lower() == "true":
+                return jsonify({
+                    "estado": "bloqueado",
+                    "motivo": "interruptores_activos",
+                }), 409
+
+        import re
+        from services.sofia.crm_produccion import (
+            obtener_conexion_produccion,
+        )
+        from services.sofia.notificaciones_casos import (
+            notificar_caso_creado,
+        )
+
+        call_id = os.getenv(
+            "SOFIA_PROD_CASES_ALLOWED_CALL_ID", ""
+        ).strip()
+
+        if not re.fullmatch(r"call_[A-Za-z0-9_-]{1,123}", call_id):
+            return jsonify({
+                "estado": "bloqueado",
+                "motivo": "call_id_invalido",
+            }), 400
+
+        try:
+            conexion = obtener_conexion_produccion()
+            token = conexion["obtener_token"]()
+
+            respuesta = conexion["http_get"](
+                conexion["base"] + "/crm/v8/Cases/search",
+                headers={
+                    "Authorization": "Zoho-oauthtoken " + token
+                },
+                params={
+                    "criteria": (
+                        "(ID_de_llamada_Retell:equals:"
+                        + call_id + ")"
+                    ),
+                    "fields": "id,ID_de_llamada_Retell",
+                    "per_page": 2,
+                },
+                timeout=20,
+                allow_redirects=False,
+            )
+
+            if respuesta.status_code != 200:
+                return jsonify({
+                    "estado": "bloqueado",
+                    "motivo": "busqueda_caso",
+                    "http": respuesta.status_code,
+                }), 200
+
+            filas = respuesta.json().get("data")
+            if not isinstance(filas, list):
+                raise ValueError("Respuesta invalida")
+
+            coincidentes = [
+                fila for fila in filas
+                if isinstance(fila, dict)
+                and fila.get("ID_de_llamada_Retell") == call_id
+            ]
+
+            if len(coincidentes) != 1:
+                return jsonify({
+                    "estado": "bloqueado",
+                    "motivo": "caso_no_unico",
+                }), 200
+
+            case_id = str(coincidentes[0].get("id") or "")
+            if not case_id.isascii() or not case_id.isdecimal():
+                raise ValueError("ID invalido")
+
+            resultado = notificar_caso_creado(
+                {"estado": "creado", "case_id": case_id},
+                {
+                    "call_id": call_id,
+                    "tipo_solicitud": "postventa",
+                },
+                solo_diagnostico=True,
+            )
+
+            return jsonify({
+                "estado": resultado.get("estado"),
+                "motivo": resultado.get("motivo"),
+                "correos_enviados": 0,
+            }), 200
+
+        except Exception:
+            return jsonify({
+                "estado": "error_diagnostico",
+                "correos_enviados": 0,
+            }), 503
+
     @app.post("/cron/sofia")
     def ejecutar_cron_sofia():
 

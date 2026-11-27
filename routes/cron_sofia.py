@@ -400,19 +400,44 @@ def register_sofia_cron_routes(app):
             if not case_id.isascii() or not case_id.isdecimal():
                 raise ValueError("ID invalido")
 
+            from flask import request
+            enviar = request.args.get("enviar") == "1"
+            if enviar:
+                # Sólo la llamada de prueba ya validada, nunca otros Casos.
+                if call_id != "call_3f3dc3b18363780b813db3434e7":
+                    return jsonify({"estado": "bloqueado", "motivo": "llamada_incorrecta"}), 403
+                if os.getenv("SOFIA_PROD_CASES_MAIL_MANUAL_TEST_ENABLED", "false").strip().lower() != "true":
+                    return jsonify({"estado": "desactivado"}), 403
+                if os.getenv("SOFIA_PROD_CASES_MAIL_REAL_RECIPIENTS_ENABLED", "false").strip().lower() == "true":
+                    return jsonify({"estado": "bloqueado", "motivo": "destinatarios_reales_activos"}), 403
+                if os.getenv("SOFIA_PROD_CASES_MAIL_TEST_TO", "").strip().lower() != "ederth@selec.cl":
+                    return jsonify({"estado": "bloqueado", "motivo": "destinatario_incorrecto"}), 403
+                # Bloqueo atomico de repeticion dentro de este despliegue.
+                # El disco temporal se borra al redeplegar; dejar la bandera apagada
+                # salvo durante el unico intento expresamente autorizado.
+                import tempfile
+                ruta_marca = os.path.join(
+                    tempfile.gettempdir(),
+                    "sofia_correo_prueba_call_3f3dc3b18363780b813db3434e7.lock",
+                )
+                try:
+                    fd = os.open(ruta_marca, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError:
+                    return jsonify({"estado": "bloqueado", "motivo": "intento_ya_realizado"}), 409
+                os.close(fd)
+
             resultado = notificar_caso_creado(
                 {"estado": "creado", "case_id": case_id},
-                {
-                    "call_id": call_id,
-                    "tipo_solicitud": "postventa",
-                },
-                solo_diagnostico=True,
+                {"call_id": call_id, "tipo_solicitud": "postventa"},
+                solo_diagnostico=not enviar,
+                envio_manual_prueba=enviar,
             )
 
             return jsonify({
                 "estado": resultado.get("estado"),
                 "motivo": resultado.get("motivo"),
-                "correos_enviados": 0,
+                "correos_enviados": 1 if resultado.get("estado") == "enviado" else 0,
+                "intento_manual": enviar,
             }), 200
 
         except Exception:

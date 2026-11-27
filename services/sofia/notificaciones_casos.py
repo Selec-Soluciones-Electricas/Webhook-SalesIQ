@@ -67,7 +67,7 @@ def _destinatarios(tipo, *, prueba):
     return resultado
 
 
-def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False):
+def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False, envio_manual_prueba=False):
     """Intenta un envío una sola vez, exclusivamente tras una creación confirmada.
 
     No registra datos del cliente en logs y no realiza un segundo POST si el
@@ -76,7 +76,17 @@ def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False):
     def bloquear(motivo, estado="bloqueado"):
         return {"estado": estado, "motivo": motivo}
 
-    if not solo_diagnostico and not _activo("SOFIA_PROD_CASES_MAILS_ENABLED"):
+    if envio_manual_prueba:
+        # Unicamente la ruta manual protegida puede solicitar este modo.
+        if not _activo("SOFIA_PROD_CASES_MAIL_MANUAL_TEST_ENABLED"):
+            return bloquear("prueba_manual_desactivada")
+        if (_activo("SOFIA_PROD_CASES_MAILS_ENABLED")
+                or _activo("SOFIA_PROD_CASES_WRITES_ENABLED")
+                or _activo("SOFIA_PROD_CASES_MAIL_REAL_RECIPIENTS_ENABLED")):
+            return bloquear("interruptores_no_seguros")
+        if os.getenv("SOFIA_PROD_CASES_MAIL_TEST_TO", "").strip().lower() != "ederth@selec.cl":
+            return bloquear("destinatario_prueba_incorrecto")
+    elif not solo_diagnostico and not _activo("SOFIA_PROD_CASES_MAILS_ENABLED"):
         return {"estado": "desactivado"}
     if not isinstance(decision, dict) or decision.get("estado") != "creado":
         return bloquear("caso_no_recien_creado")
@@ -174,7 +184,40 @@ def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False):
             allow_redirects=False,
         )
         if respuesta.status_code not in (200, 201, 202):
-            return bloquear("zoho_rechazo_envio")
+            codigo = "DESCONOCIDO"
+
+            try:
+                cuerpo_error = respuesta.json()
+
+                if isinstance(cuerpo_error, dict):
+                    filas_error = cuerpo_error.get("data", [])
+
+                    if isinstance(filas_error, list) and filas_error:
+                        primer_error = filas_error[0]
+
+                        if isinstance(primer_error, dict):
+                            codigo = str(
+                                primer_error.get("code") or "DESCONOCIDO"
+                            )
+
+                    elif isinstance(cuerpo_error.get("code"), str):
+                        codigo = cuerpo_error["code"]
+
+            except (ValueError, TypeError):
+                pass
+
+            if codigo not in (
+                "INVALID_OAUTHSCOPE",
+                "OAUTH_SCOPE_MISMATCH",
+                "NO_PERMISSION",
+                "NOT_ALLOWED",
+                "INVALID_DATA",
+                "MANDATORY_NOT_FOUND",
+                "LIMIT_EXCEEDED",
+            ):
+                codigo = "OTRO_ERROR"
+
+            return bloquear("zoho_rechazo_" + codigo)
         cuerpo = respuesta.json()
         filas = cuerpo.get("data") if isinstance(cuerpo, dict) else None
         if (

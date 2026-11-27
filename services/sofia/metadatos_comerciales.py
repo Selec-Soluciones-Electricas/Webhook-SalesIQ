@@ -55,7 +55,25 @@ def diagnosticar_campos_comerciales(*, conexion=None):
                 headers={"Authorization": "Zoho-oauthtoken " + token},
                 params={"module": modulo}, timeout=20, allow_redirects=False,
             )
+            info["http_status"] = int(r.status_code)
             if r.status_code != 200:
+                try:
+                    error = r.json()
+                    codigo = error.get("code") if isinstance(error, dict) else None
+                    permitidos = {
+                        "OAUTH_SCOPE_MISMATCH",
+                        "INVALID_OAUTHSCOPE",
+                        "INVALID_OAUTHTOKEN",
+                        "NO_PERMISSION",
+                        "NOT_ALLOWED",
+                        "INVALID_MODULE",
+                        "INVALID_QUERY",
+                    }
+                    info["codigo_zoho"] = (
+                        codigo if codigo in permitidos else "OTRO"
+                    )
+                except (ValueError, TypeError):
+                    info["codigo_zoho"] = "SIN_CODIGO_JSON"
                 info["sin_permisos_o_metadatos"] = True
                 todos_listos = False
                 continue
@@ -94,7 +112,8 @@ def diagnosticar_campos_comerciales(*, conexion=None):
                 info["estado"] = "listo"
             else:
                 todos_listos = False
-        except Exception:
+        except Exception as e:
+            info["error_tipo"] = type(e).__name__
             info["sin_permisos_o_metadatos"] = True
             todos_listos = False
     diagnostico["estado"] = "listo" if todos_listos else "bloqueado"

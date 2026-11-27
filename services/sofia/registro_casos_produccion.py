@@ -8,11 +8,12 @@ from services.sofia.crm_produccion import (
 from services.sofia.marcas_prueba import (
     marcar_registro_prueba,
 )
+from services.sofia.autorizacion_produccion import llamada_autorizada
 
 BASE = "https://www.zohoapis.com/crm/v8"
 
 
-def registrar_caso_prueba_produccion(campos):
+def registrar_caso_prueba_produccion(campos, *, start_timestamp=None):
     """Crea un Caso de prueba autorizado, sin tocar otros registros."""
 
     # Desactivado por defecto.
@@ -25,12 +26,8 @@ def registrar_caso_prueba_produccion(campos):
         return {"estado": "bloqueado", "motivo": "datos_invalidos"}
 
     call_id = campos.get("ID_de_llamada_Retell")
-    autorizado = os.getenv(
-        "SOFIA_PROD_CASES_ALLOWED_CALL_ID", ""
-    ).strip()
-
-    # Solo una llamada expresamente autorizada.
-    if not autorizado or call_id != autorizado:
+    # El piloto usa Call ID; el modo automatico usa fecha minima validada.
+    if not llamada_autorizada("Cases", call_id, start_timestamp):
         return {"estado": "bloqueado", "motivo": "no_autorizado"}
 
     try:
@@ -222,4 +219,6 @@ def procesar_caso_prueba_desde_clasificacion(clasificacion):
             "motivo": "preparacion_invalida",
         }
 
-    return registrar_caso_prueba_produccion(campos)
+    return registrar_caso_prueba_produccion(
+        campos, start_timestamp=clasificacion.get("start_timestamp")
+    )

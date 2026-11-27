@@ -25,6 +25,9 @@ def procesar_piloto_produccion(resultado):
     """
     if not _activo("SOFIA_PROD_CRON_PILOT_ENABLED"):
         return {"estado": "desactivado"}
+    # Nunca ejecutar ambos caminos de produccion en la misma corrida.
+    if _activo("SOFIA_PROD_CRON_AUTO_ENABLED"):
+        return {"estado": "bloqueado", "motivo": "piloto_y_automatico_incompatibles"}
 
     if not isinstance(resultado, dict) or resultado.get("estado") != "simulacion":
         return {"estado": "bloqueado", "motivo": "resultado_invalido"}

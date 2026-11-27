@@ -107,8 +107,7 @@ def preparar_borrador_caso_consulta(clasificacion):
         f"Resultado de atencion: {resultado}\n\n"
         f"Resumen de la llamada:\n{resumen}\n\n"
         f"{seccion_contacto}"
-        "Registro preparado automaticamente. "
-        "No implica que se haya enviado una notificacion."
+        "Registro generado automaticamente por Sofia."
     )
 
 

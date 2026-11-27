@@ -553,6 +553,28 @@ def register_sofia_cron_routes(app):
                 "[SOFIA PROD PILOTO] Fallo; Sandbox sigue separado"
             )
 
+        # Modo automatico en CRM PRODUCCION. Se mantiene separado del piloto
+        # manual y conserva escritores de prueba hasta aprobar modo real.
+        from services.sofia.cron_automatico_produccion import (
+            procesar_produccion_automatica,
+        )
+        try:
+            automatico_produccion = procesar_produccion_automatica(resultado)
+            if automatico_produccion.get("estado") == "automatico_pruebas_ejecutado":
+                current_app.logger.warning(
+                    "[SOFIA PROD AUTO TEST] Estados: %s Recuento: %s Pendientes: %s",
+                    automatico_produccion.get("resultados", {}),
+                    automatico_produccion.get("recuento", {}),
+                    automatico_produccion.get("pendientes_por_continuar", 0),
+                )
+            elif automatico_produccion.get("estado") == "bloqueado":
+                current_app.logger.warning(
+                    "[SOFIA PROD AUTO TEST] Bloqueado: %s",
+                    automatico_produccion.get("motivo", "sin_detalle"),
+                )
+        except Exception:
+            current_app.logger.exception("[SOFIA PROD AUTO TEST] Fallo; no reintentar escrituras inciertas")
+
         # 5. Cotizaciones Sandbox independientes de Casos.
         # El procesador antiguo permanece SIEMPRE en simulacion.
         from services.sofia.cron_cotizaciones_sandbox import (

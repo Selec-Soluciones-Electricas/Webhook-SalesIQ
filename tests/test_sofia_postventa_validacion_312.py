@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from services.retell_postventas import clasificar_postventa_sofia
 
 AGENTE = "agente_ficticio"
@@ -41,8 +41,9 @@ class ValidacionPostventa(unittest.TestCase):
         resultado = self.clasificar({
             "nombre_cliente": "Cliente ficticio",
         })
+        # No hay telefono ni correo: debe quedar para revision.
         self.assertEqual(resultado["estado"], "revision")
-        self.assertIn("rut_cliente", resultado["faltantes"])
+        self.assertIn("telefono_o_email", resultado["faltantes"])
 
     def test_telefono_y_factura(self):
         resultado = self.clasificar({
@@ -68,11 +69,10 @@ class ValidacionPostventa(unittest.TestCase):
             "descripcion_problema": "",
         }
         resultado = self.clasificar(datos)
-        self.assertEqual(resultado["estado"], "revision")
-        self.assertIn(
-            "descripcion_problema",
-            resultado["faltantes"],
-        )
+        # Nuevo requisito: registrar llamadas incompletas si hay contacto
+        # util y resumen. Se conserva una advertencia en el Caso.
+        self.assertEqual(resultado["estado"], "candidata_caso")
+        self.assertIn("descripcion_problema", resultado["resumen"])
 
     def test_sin_rut(self):
         datos = {
@@ -82,8 +82,9 @@ class ValidacionPostventa(unittest.TestCase):
         }
         del datos["rut_cliente"]
         resultado = self.clasificar(datos)
-        self.assertEqual(resultado["estado"], "revision")
-        self.assertIn("rut_cliente", resultado["faltantes"])
+        # Se registra con advertencia porque si existe medio de contacto.
+        self.assertEqual(resultado["estado"], "candidata_caso")
+        self.assertIn("rut_cliente", resultado["resumen"])
 
     def test_descripcion_sin_resumen(self):
         resultado = self.clasificar({

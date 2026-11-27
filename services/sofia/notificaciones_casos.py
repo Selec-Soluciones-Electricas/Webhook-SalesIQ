@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import requests
 
 from services.sofia.crm_produccion import obtener_conexion_produccion
+from services.sofia.autorizacion_produccion import llamada_autorizada
 
 BASE = "https://www.zohoapis.com/crm/v8"
 ORG_UI = "org706345205"
@@ -102,7 +103,7 @@ def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False, en
         or re.fullmatch(r"call_[A-Za-z0-9_-]{1,123}", call_id) is None
         or not case_id.isascii()
         or not case_id.isdecimal()
-        or call_id != os.getenv("SOFIA_PROD_CASES_ALLOWED_CALL_ID", "").strip()
+        or not llamada_autorizada("Cases", call_id, clasificacion.get("start_timestamp"))
     ):
         return bloquear("identificador_no_autorizado")
     remitente = os.getenv("SOFIA_PROD_CASES_MAIL_FROM", "").strip()
@@ -149,11 +150,15 @@ def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False, en
 
         url_caso = f"https://crm.zoho.com/crm/{ORG_UI}/tab/Cases/{case_id}"
         descripcion_html = escape(descripcion[:15000])
-        numero = escape(str(caso.get("Case_Number") or case_id))
+        numero_crm = str(caso.get("Case_Number") or "").strip()
+        # Referencia CORTA visible; no cambia el ID real usado por CRM ni por los enlaces.
+        numero_visible = (numero_crm if numero_crm and not (numero_crm.isdecimal() and len(numero_crm) > 12)
+                          else "S-" + case_id[-8:])
+        numero = escape(numero_visible)
         contenido = (
             "<p>Se registró un nuevo Caso de Sofía para gestión.</p>"
             f"<p><b>Tipo:</b> {escape(tipo.title())}<br>"
-            f"<b>Número de Caso:</b> {numero}<br>"
+            f"<b>Referencia de Caso:</b> {numero}<br>"
             f'<b>Zoho CRM:</b> <a href="{escape(url_caso, quote=True)}">Abrir Caso</a><br>'
             f'<b>Llamada Retell:</b> <a href="{escape(retell_url, quote=True)}">Abrir llamada</a></p>'
             "<p><b>Descripción del Caso:</b></p>"
@@ -166,7 +171,7 @@ def notificar_caso_creado(decision, clasificacion, *, solo_diagnostico=False, en
                 "user_name": os.getenv("SOFIA_PROD_CASES_MAIL_FROM_NAME", "Sofia - SELEC"),
             },
             "to": destinatarios,
-            "subject": "[PRUEBA SOFIA] Nuevo Caso de " + tipo + " #" + str(caso.get("Case_Number") or case_id),
+            "subject": "[PRUEBA SOFIA] Nuevo Caso de " + tipo + " #" + numero_visible,
             "content": contenido,
             "mail_format": "html",
         }]}

@@ -15,6 +15,7 @@ from services.sofia.cotizaciones_sandbox import (
     preparar_registros_cotizacion_sandbox,
 )
 from services.sofia.marcas_prueba import marcar_registro_prueba
+from services.sofia.autorizacion_produccion import llamada_autorizada
 
 BASE = "https://www.zohoapis.com/crm/v8"
 
@@ -31,14 +32,13 @@ def registrar_negocio_prueba_produccion(llamada):
     if os.getenv("SOFIA_PROD_DEALS_WRITES_ENABLED", "false").strip().lower() != "true":
         return {"estado": "desactivado"}
 
-    permitido = os.getenv("SOFIA_PROD_DEALS_ALLOWED_CALL_ID", "").strip()
     if not isinstance(llamada, dict):
         return bloquear("llamada_invalida")
     call_id = llamada.get("call_id")
     if (
         not isinstance(call_id, str)
         or not re.fullmatch(r"call_[A-Za-z0-9_-]{1,123}", call_id)
-        or call_id != permitido
+        or not llamada_autorizada("Deals", call_id, llamada.get("start_timestamp"))
     ):
         return bloquear("llamada_no_autorizada")
 

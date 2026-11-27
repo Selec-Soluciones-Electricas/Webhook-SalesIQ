@@ -39,13 +39,13 @@ class BusquedaClientesSoloLectura(unittest.TestCase):
         self.conexion["http_get"].return_value = respuesta(500)
         self.assertEqual(buscar_cuenta_por_rut("76111111-6", conexion=self.conexion)["estado"], "bloqueado")
 
-    def test_contacto_vinculado_a_otra_cuenta_bloquea(self):
+    def test_contacto_de_otra_cuenta_no_impide_crear_en_la_correcta(self):
         self.conexion["http_get"].return_value = respuesta(200, {
             "data": [{"id": "999", "Email": "cliente@example.com", "Account_Name": {"id": "888"}}],
             "info": {"more_records": False},
         })
         r = buscar_contacto_por_correo("cliente@example.com", account_id="777", conexion=self.conexion)
-        self.assertEqual(r["motivo"], "contacto_cuenta_distinta_o_sin_vinculo")
+        self.assertEqual(r["estado"], "no_encontrado")
 
     def test_contacto_misma_cuenta(self):
         self.conexion["http_get"].return_value = respuesta(200, {

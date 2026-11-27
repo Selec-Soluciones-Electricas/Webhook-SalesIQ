@@ -8,7 +8,7 @@ from services.sofia.crm_produccion import obtener_conexion_produccion
 BASE = "https://www.zohoapis.com/crm/v8"
 CAMPOS = {
     "Accounts": ("Account_Name", "Billing_Code", "Phone"),
-    "Contacts": ("First_Name", "Last_Name", "Email", "Phone", "Account_Name"),
+    "Contacts": ("First_Name", "Last_Name", "Email", "Phone", "Account_Name", "Clave_Sof_a_Contacto"),
     "Deals": (
         "Deal_Name", "Stage", "Closing_Date", "Type", "Lead_Source",
         "Retell_Call_ID", "Cantidad_de_productos", "Description",
@@ -17,7 +17,7 @@ CAMPOS = {
 }
 CLAVES_UNICAS = {
     "Accounts": "Billing_Code",
-    "Contacts": "Email",
+    "Contacts": "Clave_Sof_a_Contacto",
     "Deals": "Retell_Call_ID",
 }
 # Campos cuyo valor se asigna antes de crear el registro. Campos del sistema

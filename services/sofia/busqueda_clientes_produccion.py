@@ -98,6 +98,11 @@ def buscar_cuenta_por_rut(rut, *, conexion=None):
 
 
 def buscar_contacto_por_correo(correo, *, account_id=None, conexion=None):
+    """Busca un correo, opcionalmente DENTRO de una cuenta concreta.
+
+    Los correos pueden repetirse en distintas empresas. Si hay más de uno
+    dentro de la misma cuenta no se elige arbitrariamente ninguno.
+    """
     if not isinstance(correo, str) or not _CORREO.fullmatch(correo.strip()):
         return {"estado": "bloqueado", "motivo": "correo_invalido"}
     correo = correo.strip()
@@ -111,7 +116,7 @@ def buscar_contacto_por_correo(correo, *, account_id=None, conexion=None):
         token = conexion["obtener_token"]()
         consulta = _consultar(
             conexion, token, "Contacts",
-            {"email": correo, "fields": "id,Email,Account_Name", "per_page": 200},
+            {"email": correo, "fields": "id,Email,Account_Name,Clave_Sof_a_Contacto", "per_page": 200},
         )
         if consulta["estado"] == "bloqueado":
             return consulta
@@ -121,21 +126,29 @@ def buscar_contacto_por_correo(correo, *, account_id=None, conexion=None):
         for fila in consulta["registros"]:
             if not isinstance(fila, dict):
                 return {"estado": "bloqueado", "motivo": "fila_invalida"}
-            if str(fila.get("Email") or "").casefold() != correo.casefold():
+            if str(fila.get("Email") or "").strip().casefold() != correo.casefold():
                 continue
             ident = fila.get("id")
             if not _id_valido(ident):
                 return {"estado": "bloqueado", "motivo": "id_invalido"}
+            relacionado = fila.get("Account_Name")
+            relacionado_id = str(relacionado.get("id") or "") if isinstance(relacionado, dict) else ""
+            # En modo por cuenta, ignorar coincidencias de OTRAS empresas.
+            # No tocar ni reubicar esos contactos existentes.
+            if account_id is not None and relacionado_id != str(account_id):
+                continue
             coincidencias[str(ident)] = fila
         if len(coincidencias) > 1:
-            return {"estado": "bloqueado", "motivo": "correo_duplicado"}
-        if len(coincidencias) == 0:
+            return {"estado": "bloqueado", "motivo": "correo_duplicado_en_cuenta" if account_id else "correo_duplicado"}
+        if not coincidencias:
+            # Sin coincidencia exacta por correo puede significar datos indexados
+            # incorrectamente; en búsquedas por cuenta, otros dueños sí se ignoran.
+            if account_id is not None:
+                return {"estado": "no_encontrado", "contact_id": None}
             return {"estado": "bloqueado", "motivo": "resultados_sin_coincidencia_exacta"}
         contact_id, contacto = next(iter(coincidencias.items()))
         relacionado = contacto.get("Account_Name")
         relacionado_id = str(relacionado.get("id") or "") if isinstance(relacionado, dict) else ""
-        if account_id is not None and relacionado_id != str(account_id):
-            return {"estado": "bloqueado", "motivo": "contacto_cuenta_distinta_o_sin_vinculo"}
         return {"estado": "encontrado", "contact_id": contact_id, "account_id": relacionado_id or None}
     except Exception:
         return {"estado": "bloqueado", "motivo": "consulta_inconclusa"}

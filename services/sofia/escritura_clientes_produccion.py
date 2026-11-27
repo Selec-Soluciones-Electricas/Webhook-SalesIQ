@@ -5,6 +5,7 @@ Bloqueado por defecto; exige autorización explícita y dos interruptores.
 No modifica registros preexistentes. No registra datos personales en logs.
 """
 
+import hashlib
 import os
 
 import requests
@@ -19,6 +20,20 @@ from services.sofia.cotizaciones_sandbox import preparar_registros_cotizacion_sa
 from services.sofia.crm_produccion import obtener_conexion_produccion
 
 BASE = "https://www.zohoapis.com/crm/v8"
+CAMPO_CLAVE_CONTACTO = "Clave_Sof_a_Contacto"
+
+
+def clave_contacto_sofia(account_id, correo):
+    """Clave estable por Cuenta + correo, sin exponer el correo en texto plano.
+
+    Accounts y Contacts ya deben haberse verificado. La unicidad se impone
+    globalmente en Zoho sobre este campo, sin cambiar la unicidad de Email.
+    """
+    if not _id_valido(account_id) or not isinstance(correo, str) or not correo.strip():
+        raise ValueError("contacto_invalido")
+    digest = hashlib.sha256(correo.strip().casefold().encode("utf-8")).hexdigest()
+    return "SFC1:" + str(account_id) + ":" + digest
+
 
 
 def _activo(nombre):
@@ -53,7 +68,7 @@ def _leer(conexion, token, modulo, ident, campos):
         return None
 
 
-def _listar_busqueda_segura(conexion, token, modulo, campo, valor):
+def _listar_busqueda_segura(conexion, token, modulo, campo, valor, *, account_id=None):
     """Confirma unicidad/ausencia recorriendo todos los registros, o bloquea.
 
     Listados demasiado grandes/incompletos no autorizan insertar. Esto evita
@@ -62,7 +77,7 @@ def _listar_busqueda_segura(conexion, token, modulo, campo, valor):
     encontrados = {}
     pagina_token = None
     for pagina in range(1, 21):
-        parametros = {"fields": f"id,{campo}", "per_page": 200}
+        parametros = {"fields": f"id,{campo}" + (",Account_Name" if modulo == "Contacts" else ""), "per_page": 200}
         if pagina <= 10:
             parametros["page"] = pagina
         else:
@@ -94,7 +109,11 @@ def _listar_busqueda_segura(conexion, token, modulo, campo, valor):
                 if modulo == "Accounts":
                     coincide = normalizar_rut(candidato) == valor
                 else:
-                    coincide = isinstance(candidato, str) and candidato.casefold() == valor.casefold()
+                    coincide = isinstance(candidato, str) and candidato.strip().casefold() == valor.strip().casefold()
+                    if coincide and account_id is not None:
+                        relacionado = fila.get("Account_Name")
+                        relacionado_id = str(relacionado.get("id") or "") if isinstance(relacionado, dict) else ""
+                        coincide = relacionado_id == str(account_id)
                 if coincide:
                     encontrados[ident] = True
             if info["more_records"] is False:
@@ -182,29 +201,16 @@ def resolver_clientes_cotizacion_comercial(
     conexion = dict(conexion)
     conexion["obtener_token"] = lambda: token
     cuenta = buscar_cuenta_por_rut(rut, conexion=conexion)
-    contacto = buscar_contacto_por_correo(correo, conexion=conexion)
     if cuenta.get("estado") not in ("encontrado", "no_encontrado"):
         return _bloquear("cuenta_no_verificable")
-    if contacto.get("estado") not in ("encontrado", "no_encontrado"):
-        return _bloquear("contacto_no_verificable")
     account_id = cuenta.get("account_id")
-    contact_id = contacto.get("contact_id")
-    # No crear cuenta si un contacto ya existe y su cuenta no coincide.
-    if contact_id and (not account_id or contacto.get("account_id") != account_id):
-        return _bloquear("contacto_no_pertenece_a_cuenta")
+    contact_id = None
 
     # Una búsqueda indexada no sustituye a la lectura directa del registro.
     if account_id:
         cuenta_leida = _leer(conexion, token, "Accounts", account_id, "id,Billing_Code")
         if not cuenta_leida or normalizar_rut(cuenta_leida.get("Billing_Code")) != rut:
             return _bloquear("cuenta_existente_no_verificable")
-    if contact_id:
-        contacto_leido = _leer(conexion, token, "Contacts", contact_id, "id,Email,Account_Name")
-        vinculo = contacto_leido.get("Account_Name") if contacto_leido else None
-        if (not isinstance(vinculo, dict) or str(vinculo.get("id") or "") != account_id
-                or str(contacto_leido.get("Email") or "").casefold() != correo.casefold()):
-            return _bloquear("contacto_existente_no_verificable")
-
     # Verificar listado de manera completa antes de crear Cuenta/Contacto.
     if account_id is None:
         listado = _listar_busqueda_segura(conexion, token, "Accounts", "Billing_Code", rut)
@@ -221,8 +227,23 @@ def resolver_clientes_cotizacion_comercial(
             if not cuenta_leida or normalizar_rut(cuenta_leida.get("Billing_Code")) != rut:
                 return _bloquear("cuenta_creada_no_verificable", "resultado_incierto")
 
+    # Buscar por correo DENTRO de la cuenta ya verificada; un mismo correo
+    # puede pertenecer a otra empresa sin que ello impida este contacto.
+    contacto = buscar_contacto_por_correo(correo, account_id=account_id, conexion=conexion)
+    if contacto.get("estado") not in ("encontrado", "no_encontrado"):
+        return _bloquear("contacto_no_verificable")
+    contact_id = contacto.get("contact_id")
+    if contact_id and contacto.get("account_id") != account_id:
+        return _bloquear("contacto_no_pertenece_a_cuenta")
+    if contact_id:
+        contacto_leido = _leer(conexion, token, "Contacts", contact_id, "id,Email,Account_Name")
+        vinculo = contacto_leido.get("Account_Name") if contacto_leido else None
+        if (not isinstance(vinculo, dict) or str(vinculo.get("id") or "") != account_id
+                or str(contacto_leido.get("Email") or "").strip().casefold() != correo.strip().casefold()):
+            return _bloquear("contacto_existente_no_verificable")
+
     if contact_id is None:
-        listado = _listar_busqueda_segura(conexion, token, "Contacts", "Email", correo)
+        listado = _listar_busqueda_segura(conexion, token, "Contacts", "Email", correo, account_id=account_id)
         if listado["estado"] == "encontrado":
             contact_id = listado["registro_id"]
             contacto_leido = _leer(conexion, token, "Contacts", contact_id, "id,Email,Account_Name")
@@ -234,14 +255,21 @@ def resolver_clientes_cotizacion_comercial(
             return _bloquear("contacto_sin_ausencia_confirmada")
         else:
             contacto_data["Account_Name"] = {"id": account_id}
+            contacto_data[CAMPO_CLAVE_CONTACTO] = clave_contacto_sofia(account_id, correo)
             resultado = _insertar(conexion, token, "Contacts", contacto_data, http_post)
             if resultado["estado"] != "creado":
+                # DUPLICATE_DATA por la clave única no debe reintentarse con POST.
+                # La ejecución siguiente puede localizar el Contacto existente.
                 return resultado
             contact_id = resultado["registro_id"]
-            contacto_leido = _leer(conexion, token, "Contacts", contact_id, "id,Email,Account_Name")
+            contacto_leido = _leer(
+                conexion, token, "Contacts", contact_id,
+                "id,Email,Account_Name," + CAMPO_CLAVE_CONTACTO,
+            )
             vinculo = contacto_leido.get("Account_Name") if contacto_leido else None
             if (not isinstance(vinculo, dict) or str(vinculo.get("id") or "") != account_id
-                    or str(contacto_leido.get("Email") or "").casefold() != correo.casefold()):
+                    or str(contacto_leido.get("Email") or "").strip().casefold() != correo.strip().casefold()
+                    or contacto_leido.get(CAMPO_CLAVE_CONTACTO) != contacto_data[CAMPO_CLAVE_CONTACTO]):
                 return _bloquear("contacto_creado_no_verificable", "resultado_incierto")
 
     return {"estado": "resueltos", "account_id": account_id, "contact_id": contact_id}

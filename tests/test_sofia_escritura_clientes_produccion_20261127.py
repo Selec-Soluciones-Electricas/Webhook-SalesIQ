@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-from services.sofia.escritura_clientes_produccion import resolver_clientes_cotizacion_comercial
+from services.sofia.escritura_clientes_produccion import resolver_clientes_cotizacion_comercial, clave_contacto_sofia
 
 ENV = {"SOFIA_PROD_COMMERCIAL_ENABLED": "true",
        "SOFIA_PROD_COMMERCIAL_CLIENTS_WRITES_ENABLED": "true"}
@@ -74,6 +74,7 @@ class EscrituraClientesSegura(unittest.TestCase):
             return_value={"estado": "encontrado", "account_id": "100"},
         ), patch("services.sofia.escritura_clientes_produccion.buscar_contacto_por_correo",
                  return_value={"estado": "encontrado", "contact_id": "200", "account_id": "300"}):
+            self.get.return_value = resp(200, {"data": [{"id": "100", "Billing_Code": "76111111-6"}]})
             self.assertEqual(self.resolver(autorizar=True)["motivo"], "contacto_no_pertenece_a_cuenta")
             self.post.assert_not_called()
 
@@ -87,7 +88,8 @@ class EscrituraClientesSegura(unittest.TestCase):
                 resp(204),
                 resp(200, {"data": [{"id": "100", "Billing_Code": "76111111-6"}]}),
                 resp(204),
-                resp(200, {"data": [{"id": "200", "Email": "ana@example.com", "Account_Name": {"id": "100"}}]}),
+                resp(200, {"data": [{"id": "200", "Email": "ana@example.com", "Account_Name": {"id": "100"},
+                                     "Clave_Sof_a_Contacto": clave_contacto_sofia("100", "ana@example.com") }]}),
             ]
             self.post.side_effect = [
                 resp(201, {"data": [{"code": "SUCCESS", "status": "success", "details": {"id": "100"}}]}),
@@ -96,7 +98,9 @@ class EscrituraClientesSegura(unittest.TestCase):
             r = self.resolver(autorizar=True)
             self.assertEqual(r, {"estado": "resueltos", "account_id": "100", "contact_id": "200"})
             self.assertEqual(self.post.call_count, 2)
-            self.assertIn("Account_Name", self.post.call_args.kwargs["json"]["data"][0])
+            datos_contacto = self.post.call_args.kwargs["json"]["data"][0]
+            self.assertIn("Account_Name", datos_contacto)
+            self.assertEqual(datos_contacto["Clave_Sof_a_Contacto"], clave_contacto_sofia("100", "ana@example.com"))
 
     def test_busqueda_ambigua_no_escribe(self):
         with patch.dict(os.environ, ENV, clear=True), patch(

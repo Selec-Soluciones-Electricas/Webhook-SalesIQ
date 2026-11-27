@@ -23,6 +23,8 @@ def convertir_productos_retell(texto):
         "marca": "marca",
         "numero de parte": "numero_parte",
         "cantidad": "cantidad",
+        "tamano": "tamano",
+        "tamaño": "tamano",
     }
 
     productos = []
@@ -60,6 +62,9 @@ def convertir_productos_retell(texto):
 
         if not {"descripcion", "marca", "cantidad"}.issubset(producto):
             raise ValueError("Faltan campos obligatorios del producto")
+
+        if "tamano" in producto:
+            producto["descripcion"] += " | Tamaño: " + producto.pop("tamano")
 
         producto.setdefault("numero_parte", "")
 

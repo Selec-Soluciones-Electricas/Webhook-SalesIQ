@@ -596,6 +596,37 @@ def register_sofia_cron_routes(app):
             )
             if not isinstance(candidatas_diag, list):
                 candidatas_diag = []
+                muestra = [
+                {
+                    "id_final": str(c.get("call_id", ""))[-6:],
+                    "fecha": c.get("start_timestamp"),
+                    "tipo_fecha": type(
+                        c.get("start_timestamp")
+                    ).__name__,
+                }
+                for c in candidatas_diag
+                if isinstance(c, dict)
+            ]
+
+            revisiones = resultado.get("revisiones_detectadas", [])
+            if not isinstance(revisiones, list):
+                revisiones = []
+
+            motivos = [
+                {
+                    "id_final": str(r.get("call_id", ""))[-6:],
+                    "motivo": r.get("motivo"),
+                    "faltantes": r.get("faltantes"),
+                }
+                for r in revisiones
+                if isinstance(r, dict)
+            ]
+
+            current_app.logger.warning(
+                "[SOFIA DIAG DETALLE] candidatas=%s revisiones=%s",
+                muestra,
+                motivos,
+            )
 
             inicio_diag = os.getenv(
                 "SOFIA_PROD_COMMERCIAL_START_MS", ""

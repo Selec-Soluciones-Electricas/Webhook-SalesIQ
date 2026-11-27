@@ -4,7 +4,9 @@ from services.retell_validacion import (
 )
 
 
-def clasificar_llamada_recuperacion(llamada, agent_id):
+def clasificar_llamada_recuperacion(
+    llamada, agent_id, *, permitir_rut_ficticio=False
+):
     """
     Clasifica llamadas para una futura recuperacion.
 
@@ -63,7 +65,8 @@ def clasificar_llamada_recuperacion(llamada, agent_id):
 
     try:
         resultado = preparar_cotizacion_desde_llamada_retell(
-            llamada
+            llamada,
+            permitir_rut_ficticio=permitir_rut_ficticio
         )
     except Exception:
         return {"estado": "revision", "motivo": "error_validacion"}

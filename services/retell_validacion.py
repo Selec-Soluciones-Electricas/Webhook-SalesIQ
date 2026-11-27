@@ -1,4 +1,4 @@
-
+import re
 from services.retell_productos import convertir_productos_retell
 from services.retell_validadores import (
     validar_rut_chileno,
@@ -18,7 +18,7 @@ CAMPOS_COTIZACION = {
 }
 
 
-def preparar_cotizacion_retell(datos):
+def preparar_cotizacion_retell(datos, *, permitir_rut_ficticio=False):
     """Prepara una cotizacion para las validaciones de SELEC."""
 
     if not isinstance(datos, dict):
@@ -61,7 +61,22 @@ def preparar_cotizacion_retell(datos):
     # Validar los datos del cliente antes de procesar la cotizacion
     errores_validacion = []
 
-    if not validar_rut_chileno(cotizacion["rut"]):
+    rut_normalizado = (
+        cotizacion["rut"]
+        .replace(".", "")
+        .replace(" ", "")
+        .upper()
+    )
+
+    if permitir_rut_ficticio:
+        rut_valido = re.fullmatch(
+            r"[0-9]{7,8}-[0-9K]",
+            rut_normalizado
+        ) is not None
+    else:
+        rut_valido = validar_rut_chileno(cotizacion["rut"])
+
+    if not rut_valido:
         errores_validacion.append("rut_cliente (RUT invalido)")
 
     if not validar_email_retell(cotizacion["correo"]):
@@ -100,7 +115,9 @@ def preparar_cotizacion_retell(datos):
 
 
 
-def preparar_cotizacion_desde_llamada_retell(llamada):
+def preparar_cotizacion_desde_llamada_retell(
+    llamada, *, permitir_rut_ficticio=False
+):
     """
     Prepara una cotizacion usando los datos de una llamada
     analizada por Retell.
@@ -147,7 +164,10 @@ def preparar_cotizacion_desde_llamada_retell(llamada):
         }
 
     # Utilizar nuestras validaciones existentes
-    resultado = preparar_cotizacion_retell(datos)
+    resultado = preparar_cotizacion_retell(
+        datos,
+        permitir_rut_ficticio=permitir_rut_ficticio
+    )
 
     if not resultado["lista"]:
         return resultado

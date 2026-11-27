@@ -591,6 +591,36 @@ def register_sofia_cron_routes(app):
         from services.sofia.cron_comercial_produccion import procesar_cron_comercial
         try:
             comercial = procesar_cron_comercial(resultado)
+            candidatas_diag = resultado.get(
+                "cotizaciones_sandbox_candidatas", []
+            )
+            if not isinstance(candidatas_diag, list):
+                candidatas_diag = []
+
+            inicio_diag = os.getenv(
+                "SOFIA_PROD_COMMERCIAL_START_MS", ""
+            )
+
+            elegibles_diag = sum(
+                1 for llamada in candidatas_diag
+                if isinstance(llamada, dict)
+                and isinstance(llamada.get("start_timestamp"), int)
+                and inicio_diag.isdecimal()
+                and llamada["start_timestamp"] >= int(inicio_diag)
+            )
+
+            current_app.logger.warning(
+                "[SOFIA DIAGNOSTICO COMERCIAL] "
+                "estado=%s candidatas=%s posteriores_inicio=%s "
+                "cron_habilitado=%s",
+                comercial.get("estado"),
+                len(candidatas_diag),
+                elegibles_diag,
+                os.getenv(
+                    "SOFIA_PROD_COMMERCIAL_CRON_ENABLED",
+                    "false"
+                ).lower() == "true",
+            )
             if comercial.get("estado") == "comercial_ejecutado":
                 current_app.logger.warning(
                     "[SOFIA PROD COMERCIAL] Recuento: %s Correos: %s Pendientes: %s",

@@ -17,7 +17,7 @@ def _activo(nombre):
     return os.getenv(nombre, "false").strip().lower() == "true"
 
 
-def procesar_cron_comercial(resultado, *, diagnosticar=None, escribir=None):
+def procesar_cron_comercial(resultado, *, diagnosticar=None, escribir=None, notificar=None):
     if not _activo("SOFIA_PROD_COMMERCIAL_CRON_ENABLED"):
         return {"estado": "desactivado"}
     cfg = _configuracion()
@@ -65,6 +65,7 @@ def procesar_cron_comercial(resultado, *, diagnosticar=None, escribir=None):
                 "rechazados": 0, "resultado_incierto": 0}
     escrituras = 0
     pendientes = 0
+    correos = {"enviados": 0, "bloqueados": 0, "resultado_incierto": 0}
     for indice, (_, _, llamada) in enumerate(lista):
         if escrituras >= int(limite):
             pendientes = len(lista) - indice
@@ -77,6 +78,23 @@ def procesar_cron_comercial(resultado, *, diagnosticar=None, escribir=None):
         if estado == "creado":
             recuento["creados"] += 1
             escrituras += 1
+            try:
+                if notificar is None:
+                    from services.sofia.notificaciones_negocios_comerciales import (
+                        notificar_negocio_comercial_creado,
+                    )
+                    aviso = notificar_negocio_comercial_creado(decision, llamada)
+                else:
+                    aviso = notificar(decision, llamada)
+                estado_correo = aviso.get("estado") if isinstance(aviso, dict) else "resultado_incierto"
+            except Exception:
+                estado_correo = "resultado_incierto"
+            if estado_correo == "enviado":
+                correos["enviados"] += 1
+            elif estado_correo == "resultado_incierto":
+                correos["resultado_incierto"] += 1
+            elif estado_correo != "desactivado":
+                correos["bloqueados"] += 1
         elif estado == "ya_registrado":
             recuento["ya_registrados"] += 1
         elif estado == "rechazado":
@@ -89,4 +107,4 @@ def procesar_cron_comercial(resultado, *, diagnosticar=None, escribir=None):
             recuento["bloqueados"] += 1
             escrituras += 1
     return {"estado": "comercial_ejecutado", "recuento": recuento,
-            "pendientes_por_continuar": pendientes}
+            "correos": correos, "pendientes_por_continuar": pendientes}

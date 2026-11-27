@@ -593,8 +593,9 @@ def register_sofia_cron_routes(app):
             comercial = procesar_cron_comercial(resultado)
             if comercial.get("estado") == "comercial_ejecutado":
                 current_app.logger.warning(
-                    "[SOFIA PROD COMERCIAL] Recuento: %s Pendientes: %s",
+                    "[SOFIA PROD COMERCIAL] Recuento: %s Correos: %s Pendientes: %s",
                     comercial.get("recuento", {}),
+                    comercial.get("correos", {}),
                     comercial.get("pendientes_por_continuar", 0),
                 )
             elif comercial.get("estado") == "bloqueado":

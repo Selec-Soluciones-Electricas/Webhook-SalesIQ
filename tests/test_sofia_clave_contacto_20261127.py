@@ -65,19 +65,19 @@ class ClaveYContactosCompartidos(unittest.TestCase):
         r = buscar_contacto_por_correo("ana@example.com", account_id="100", conexion=c)
         self.assertEqual(r["motivo"], "correo_duplicado_en_cuenta")
 
-    def test_listado_exhaustivo_ignora_contacto_de_otra_cuenta(self):
-        c = {"base": "https://www.zohoapis.com", "http_get": Mock(return_value=respuesta(200, {"data": [
+    def test_busqueda_directa_ignora_contacto_de_otra_cuenta(self):
+        c = {"base": "https://www.zohoapis.com", "obtener_token": lambda: "prueba", "http_get": Mock(return_value=respuesta(200, {"data": [
             {"id": "501", "Email": "ana@example.com", "Account_Name": {"id": "200"}},
         ], "info": {"more_records": False}}))}
         r = _listar_busqueda_segura(c, "prueba", "Contacts", "Email", "ana@example.com", account_id="100")
         self.assertEqual(r["estado"], "no_encontrado")
+        c["http_get"].assert_called_once()
+        self.assertTrue(c["http_get"].call_args.args[0].endswith("/Contacts/search"))
+        self.assertEqual(c["http_get"].call_args.kwargs["params"]["email"], "ana@example.com")
 
     def test_creacion_de_contacto_usa_clave_unica_sin_alterar_otros(self):
         get = Mock(side_effect=[
             respuesta(200, {"data": [{"id": "100", "Billing_Code": "76111111-6"}]}),
-            respuesta(200, {"data": [
-                {"id": "501", "Email": "ana@example.com", "Account_Name": {"id": "200"}},
-            ], "info": {"more_records": False}}),
             respuesta(200, {"data": [{
                 "id": "502", "Email": "ana@example.com", "Account_Name": {"id": "100"},
                 "Clave_Sof_a_Contacto": clave_contacto_sofia("100", "ana@example.com"),
@@ -101,6 +101,11 @@ class ClaveYContactosCompartidos(unittest.TestCase):
         envio = post.call_args.kwargs["json"]["data"][0]
         self.assertEqual(envio["Account_Name"]["id"], "100")
         self.assertEqual(envio["Clave_Sof_a_Contacto"], clave_contacto_sofia("100", "ana@example.com"))
+        # La busqueda directa no consume una pagina de contactos; solo se leen
+        # la Cuenta existente y el Contacto creado para verificar sus vinculos.
+        self.assertEqual(get.call_count, 2)
+        self.assertTrue(get.call_args_list[0].args[0].endswith("/Accounts/100"))
+        self.assertTrue(get.call_args_list[1].args[0].endswith("/Contacts/502"))
 
     def test_metadatos_exigen_clave_unica_no_email_global(self):
         self.assertEqual(CLAVES_UNICAS["Contacts"], "Clave_Sof_a_Contacto")

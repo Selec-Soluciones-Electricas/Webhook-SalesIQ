@@ -69,63 +69,30 @@ def _leer(conexion, token, modulo, ident, campos):
 
 
 def _listar_busqueda_segura(conexion, token, modulo, campo, valor, *, account_id=None):
-    """Confirma unicidad/ausencia recorriendo todos los registros, o bloquea.
+    """Segunda busqueda exacta, sin barrer miles de Clientes/Contactos.
 
-    Listados demasiado grandes/incompletos no autorizan insertar. Esto evita
-    tratar un resultado incompleto o indexación tardía como ausencia.
+    El cron valida previamente la unicidad de Billing_Code y
+    Clave_Sof_a_Contacto. Una ausencia indexada no garantiza por si sola
+    inexistencia inmediata; ante una carrera, la clave unica de Zoho
+    debe rechazar la insercion en lugar de duplicar el registro.
     """
-    encontrados = {}
-    pagina_token = None
-    for pagina in range(1, 21):
-        parametros = {"fields": f"id,{campo}" + (",Account_Name" if modulo == "Contacts" else ""), "per_page": 200}
-        if pagina <= 10:
-            parametros["page"] = pagina
-        else:
-            if not isinstance(pagina_token, str) or not pagina_token:
-                return _bloquear("paginacion_incompleta")
-            parametros["page_token"] = pagina_token
-        try:
-            resp = conexion["http_get"](
-                f"{BASE}/{modulo}",
-                headers={"Authorization": "Zoho-oauthtoken " + token},
-                params=parametros, timeout=20, allow_redirects=False,
-            )
-            if resp.status_code == 204 and pagina == 1:
-                return {"estado": "no_encontrado"}
-            if resp.status_code != 200:
-                return _bloquear("listado_http_inconcluso")
-            cuerpo = resp.json()
-            filas = cuerpo.get("data") if isinstance(cuerpo, dict) else None
-            info = cuerpo.get("info") if isinstance(cuerpo, dict) else None
-            if not isinstance(filas, list) or not isinstance(info, dict) or type(info.get("more_records")) is not bool:
-                return _bloquear("listado_invalido")
-            for fila in filas:
-                if not isinstance(fila, dict):
-                    return _bloquear("fila_invalida")
-                ident = str(fila.get("id") or "")
-                if not _id_valido(ident):
-                    return _bloquear("id_invalido")
-                candidato = fila.get(campo)
-                if modulo == "Accounts":
-                    coincide = normalizar_rut(candidato) == valor
-                else:
-                    coincide = isinstance(candidato, str) and candidato.strip().casefold() == valor.strip().casefold()
-                    if coincide and account_id is not None:
-                        relacionado = fila.get("Account_Name")
-                        relacionado_id = str(relacionado.get("id") or "") if isinstance(relacionado, dict) else ""
-                        coincide = relacionado_id == str(account_id)
-                if coincide:
-                    encontrados[ident] = True
-            if info["more_records"] is False:
-                if len(encontrados) > 1:
-                    return _bloquear("duplicados_en_listado")
-                return ({"estado": "encontrado", "registro_id": next(iter(encontrados))}
-                        if encontrados else {"estado": "no_encontrado"})
-            if pagina >= 10:
-                pagina_token = info.get("next_page_token")
-        except Exception:
-            return _bloquear("listado_inconcluso")
-    return _bloquear("listado_demasiado_grande")
+    if modulo == "Accounts" and campo == "Billing_Code" and account_id is None:
+        encontrado = buscar_cuenta_por_rut(valor, conexion=conexion)
+        if encontrado.get("estado") == "encontrado":
+            return {"estado": "encontrado", "registro_id": encontrado["account_id"]}
+        if encontrado.get("estado") == "no_encontrado":
+            return {"estado": "no_encontrado"}
+        return _bloquear("cuenta_busqueda_inconclusa")
+    if modulo == "Contacts" and campo == "Email" and account_id is not None:
+        encontrado = buscar_contacto_por_correo(
+            valor, account_id=account_id, conexion=conexion,
+        )
+        if encontrado.get("estado") == "encontrado":
+            return {"estado": "encontrado", "registro_id": encontrado["contact_id"]}
+        if encontrado.get("estado") == "no_encontrado":
+            return {"estado": "no_encontrado"}
+        return _bloquear("contacto_busqueda_inconclusa")
+    return _bloquear("busqueda_no_autorizada")
 
 
 def _insertar(conexion, token, modulo, datos, http_post):

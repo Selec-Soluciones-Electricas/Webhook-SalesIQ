@@ -71,55 +71,55 @@ def _configuracion():
 
 
 def _buscar_negocio_unico(conexion, token, call_id):
-    """Sólo considera ausencia confirmada por listado exhaustivo (hasta 4.000).
+    """Busca el Call ID exacto sin recorrer todo CRM.
 
-    La búsqueda indexada puede no estar al día: incluso si devuelve 204,
-    usamos el listado para descartar duplicados antes de cada creación.
+    El preflight del cron exige un campo Retell_Call_ID unico. En caso de
+    indexacion demorada, Zoho impide crear el mismo valor por segunda vez.
+    Si el resultado no es concluyente, se bloquea en lugar de escribir.
     """
-    vistos = {}
-    page_token = None
-    for pagina in range(1, 21):
-        params = {"fields": "id,Retell_Call_ID", "per_page": 200}
-        if pagina <= 10:
-            params["page"] = pagina
-        else:
-            if not page_token:
-                return _bloqueado("paginacion_inconclusa")
-            params["page_token"] = page_token
-        try:
-            r = conexion["http_get"](
-                BASE + "/Deals",
-                headers={"Authorization": "Zoho-oauthtoken " + token},
-                params=params, timeout=20, allow_redirects=False,
-            )
-            if r.status_code == 204 and pagina == 1:
-                return {"estado": "no_encontrado"}
-            if r.status_code != 200:
-                return _bloqueado("listado_zoho_inconcluso")
-            body = r.json()
-            filas = body.get("data") if isinstance(body, dict) else None
-            info = body.get("info") if isinstance(body, dict) else None
-            if not isinstance(filas, list) or not isinstance(info, dict) or type(info.get("more_records")) is not bool:
-                return _bloqueado("listado_invalido")
-            for fila in filas:
-                if not isinstance(fila, dict):
-                    return _bloqueado("fila_invalida")
-                if fila.get("Retell_Call_ID") == call_id:
-                    ident = str(fila.get("id") or "")
-                    if not _id_valido(ident):
-                        return _bloqueado("id_invalido")
-                    vistos[ident] = True
-            if info["more_records"] is False:
-                if len(vistos) > 1:
-                    return _bloqueado("deals_duplicados")
-                if vistos:
-                    return {"estado": "ya_registrado", "deal_id": next(iter(vistos))}
-                return {"estado": "no_encontrado"}
-            if pagina >= 10:
-                page_token = info.get("next_page_token")
-        except Exception:
-            return _bloqueado("consulta_inconclusa")
-    return _bloqueado("listado_demasiado_extenso")
+    if not isinstance(call_id, str) or CALL_RE.fullmatch(call_id) is None:
+        return _bloqueado("identificador_invalido")
+    try:
+        r = conexion["http_get"](
+            BASE + "/Deals/search",
+            headers={"Authorization": "Zoho-oauthtoken " + token},
+            params={
+                "criteria": "(Retell_Call_ID:equals:" + call_id + ")",
+                "fields": "id,Retell_Call_ID",
+                "per_page": 200,
+            },
+            timeout=20,
+            allow_redirects=False,
+        )
+        if r.status_code == 204:
+            return {"estado": "no_encontrado"}
+        if r.status_code != 200:
+            return _bloqueado("busqueda_zoho_inconclusa")
+        body = r.json()
+        filas = body.get("data") if isinstance(body, dict) else None
+        info = body.get("info") if isinstance(body, dict) else None
+        if (not isinstance(filas, list) or not filas
+                or not isinstance(info, dict)
+                or info.get("more_records") is not False):
+            return _bloqueado("busqueda_zoho_incompleta")
+        coincidencias = set()
+        for fila in filas:
+            if not isinstance(fila, dict):
+                return _bloqueado("fila_invalida")
+            if fila.get("Retell_Call_ID") != call_id:
+                continue  # La busqueda de Zoho puede devolver coincidencias parciales.
+            ident = str(fila.get("id") or "")
+            if not _id_valido(ident):
+                return _bloqueado("id_invalido")
+            coincidencias.add(ident)
+        if len(coincidencias) > 1:
+            return _bloqueado("deals_duplicados")
+        if len(coincidencias) == 1:
+            return {"estado": "ya_registrado", "deal_id": next(iter(coincidencias))}
+        # Evitar interpretar una respuesta 200 inexacta como ausencia segura.
+        return _bloqueado("busqueda_sin_coincidencia_exacta")
+    except Exception:
+        return _bloqueado("consulta_inconclusa")
 
 
 def registrar_negocio_comercial(llamada, *, autorizar=False, conexion=None, http_post=None):
